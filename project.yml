@@ -35,3 +35,28 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.eiraowo
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+  EiraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/Unit
+      # 整个目录原样拷进测试包，测试里按 Fixtures/<文件名> 取
+      - path: Tests/Fixtures
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: Eira
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.eiraowo.tests
+schemes:
+  Eira:
+    build:
+      targets:
+        Eira: all
+        EiraTests: [test]
+    test:
+      config: Debug
+      targets:
+        - EiraTests

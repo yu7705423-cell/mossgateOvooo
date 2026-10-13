@@ -65,7 +65,11 @@ enum KVKey {
 
 enum AppPaths {
     /// 全部本地数据都在这里：数据库与图片、文件。放在 Application Support，不进「文件」app，也不会被系统当缓存清掉。
+    /// 测试用：设了就用这个目录，不碰 app 自己的数据。
+    nonisolated(unsafe) static var overrideRoot: URL?
+
     static var root: URL {
+        if let overrideRoot { return overrideRoot }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("Eira", isDirectory: true)
     }

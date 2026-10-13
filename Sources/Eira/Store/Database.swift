@@ -20,7 +20,8 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 ///
 /// 所有读写走同一条串行队列，一条连接。
 final class Database: @unchecked Sendable {
-    static let shared: Database = {
+    /// 测试里会换成临时目录里的一份，见 Tests/Support.swift。
+    nonisolated(unsafe) static var shared: Database = {
         do { return try Database(url: Database.defaultURL) }
         catch { fatalError("打不开本地数据库：\(error.localizedDescription)") }
     }()

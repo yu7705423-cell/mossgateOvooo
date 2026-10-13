@@ -60,7 +60,18 @@
 - **协议**：回复解析（`Prompt/ReplyParser.swift`）里的正则照抄网页版 `reply.js`，提示词区块抬头照抄 `engine.js` 与 `context/*.js`。
   改之前先对照网页版。
 
-## 5. 分支
+## 5. 自动测试
+
+不靠人一个个点。`Tests/Unit` 在每次编译时先在模拟器上跑，任何一项不过就不出 ipa。
+
+- **测试用的备份由网页版自己的代码打**：`node scripts/make-fixtures.mjs <网页版仓库目录>` 调网页版的 zip.js、vault.js、typed.js
+  生成 `Tests/Fixtures`。网页版的备份格式变了，重跑一次。
+- **花钱的次数必须有测试**（`CostTests`）：网络一律接住，数真正打出去几次。新加任何会调接口的功能，
+  先在这里加一项「接口一直失败时打出去几次」的断言（同网页版 `autocost` 的规矩）。
+- 改导入、回复解析、提示词拼装，先加一条会失败的测试再改。
+- 每个测试用临时目录里的一份新库（`StoreTestCase`），不碰 app 自己的数据。
+
+## 6. 分支
 
 - `main` 是默认分支。工作流文件必须在 `main` 上，Actions 页面才会出现「Run workflow」按钮。
 - 日常改动在开发分支上做，用户说合再合进 `main`。

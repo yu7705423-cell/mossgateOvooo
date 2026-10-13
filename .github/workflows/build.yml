@@ -24,6 +24,27 @@ jobs:
           brew install xcodegen
           xcodegen generate
 
+      - name: 自动测试
+        # 在模拟器上跑 Tests/Unit：导入网页版备份、回复切分、提示词拼装、请求次数。
+        # 任何一项不过，这次编译就算失败，不出 ipa
+        run: |
+          set -o pipefail
+          UDID="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          d = json.load(sys.stdin)["devices"]
+          runtimes = sorted((k for k in d if "iOS" in k), reverse=True)
+          print(next(x["udid"] for k in runtimes for x in d[k] if x["name"].startswith("iPhone")))
+          ')"
+          echo "模拟器 $UDID"
+          xcodebuild test \
+            -project Eira.xcodeproj \
+            -scheme Eira \
+            -destination "id=$UDID" \
+            -derivedDataPath build-test \
+            CODE_SIGNING_ALLOWED=NO \
+            | tee test.log | grep -E 'error:|Test Case .* (passed|failed)|Executed|TEST (SUCCEEDED|FAILED)' || true
+          grep -q 'TEST SUCCEEDED' test.log
+
       - name: 编译
         run: |
           set -o pipefail
@@ -58,5 +79,7 @@ jobs:
         if: failure()
         with:
           name: build-log
-          path: build.log
+          path: |
+            build.log
+            test.log
           retention-days: 7
