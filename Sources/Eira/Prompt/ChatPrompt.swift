@@ -17,8 +17,10 @@ enum ChatPrompt {
         var seenImages: [String] = []
     }
 
-    static func build(chat: Chat, char: Character, settings s: AppSettings, now: Date = Date()) throws -> Built {
-        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError }
+    /// excludeTurn：重新生成时去掉的那一轮，拿同样的前文重写一遍（网页版 streamReply 的 excludeTurn）。
+    static func build(chat: Chat, char: Character, settings s: AppSettings, now: Date = Date(),
+                      excludeTurn: String? = nil) throws -> Built {
+        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let charName = char.name.isEmpty ? "对方" : char.name

@@ -76,7 +76,18 @@ struct Message: Identifiable, Equatable, Sendable {
     var error: String { row.string("error") }
     var turnId: String { row.string("turnId") }
     var imageId: String { row.string("imageId") }
-    var isRecalled: Bool { row["recalled"]?.object != nil }
+    /// 此刻算不算已撤回。角色撤回的那一条记的是「发出后再过一会儿」，在那之前照常显示（网页版 recall.js）。
+    var isRecalled: Bool { isRecalled(at: Date()) }
+    func isRecalled(at now: Date) -> Bool {
+        guard let r = row["recalled"]?.object else { return false }
+        return (r["at"]?.number ?? 0) <= now.millis
+    }
+    /// 还要过多久才折起来，秒。
+    var recallWait: Double {
+        guard let at = row["recalled"]?["at"]?.number else { return 0 }
+        return max(0, (at - Date().millis) / 1000)
+    }
+    var recalledBy: String { row["recalled"]?["by"]?.string ?? "" }
 
     /// 新建一条。和网页版 reply.js 的 base 同样的几项。
     static func new(chatId: String, role: Role, authorId: String, content: String, kind: String = "text",

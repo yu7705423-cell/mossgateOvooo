@@ -8,20 +8,36 @@ enum ChatEngine {
     /// 每落一条调一次，界面据此刷新。
     typealias OnRow = @Sendable (Message) -> Void
 
+    /// 一轮回复的几个版本。存在这一轮第一条上：swipes 是每个版本的原文，served 是每个版本用的哪套接口。
+    struct Versions: Sendable {
+        var swipes: [String]
+        var index: Int
+        var served: [JSONValue]
+    }
+
     /// 生成这一轮。失败时写一条 status 为 error 的消息（网页版同样），再把错误抛给界面。
-    static func reply(chatId: String, onRow: @escaping OnRow) async throws {
+    ///
+    /// regenerate 为 true 时重新生成最后一轮：拿去掉这一轮之后的同样前文再请求一次（网页版 streamReply 的 excludeTurn），
+    /// **成功之后**才换掉旧的那几条，新的原文追加成一个新版本。失败时旧的那一轮原样留着，不写失败的消息。
+    static func reply(chatId: String, regenerate: Bool = false, onRow: @escaping OnRow) async throws {
         guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
         guard let charId = chat.characterIds.first, let char = try Repo.character(charId) else {
             throw StoreError(message: "这段会话的角色不存在")
         }
+        var old: Turn?
+        if regenerate {
+            guard let t = try lastTurn(chatId: chatId) else { throw StoreError(message: "没有可以重新生成的回复") }
+            old = t
+        }
         let settings = AppSettings.load()
-        let built = try ChatPrompt.build(chat: chat, char: char, settings: settings)
-        let turnId = Ids.make("turn")
+        let built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
+        let turnId = old?.id ?? Ids.make("turn")
 
         let result: AIService.Result
         do {
             result = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages)
         } catch {
+            if old != nil { throw error }
             var row = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "", turnId: turnId)
             row.row["status"] = .string("error")
             row.row["error"] = .string(error.localizedDescription)
@@ -37,15 +53,70 @@ enum ChatEngine {
             row["vision"] = .string("done")
             try Database.shared.put(Collections.messages, row)
         }
-        try await write(raw: result.text, chat: chat, char: char, turnId: turnId,
-                        served: ["id": .string(result.presetId), "name": .string(result.presetName)], onRow: onRow)
+        let served: JSONValue = .object(["id": .string(result.presetId), "name": .string(result.presetName)])
+        var versions = Versions(swipes: [result.text], index: 0, served: [served])
+        if let old {
+            versions.swipes = old.versions.swipes + [result.text]
+            versions.index = versions.swipes.count - 1
+            versions.served = old.versions.served + [served]
+        }
+        // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
+        guard !ReplyParser.split(result.text).parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
+        if let old { try removeRows(old.rows) }
+        try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
+    }
+
+    // MARK: - 轮与版本
+
+    struct Turn: Sendable {
+        var id: String
+        var rows: [Message]
+        var versions: Versions
+    }
+
+    /// 最后一轮：最后一条是角色说的、带 turnId 时，末尾连着的、同一个 turnId 的那几条。失败的那一条不算。
+    static func lastTurn(chatId: String) throws -> Turn? {
+        let all = try Repo.messages(chatId: chatId).filter { !$0.isError }
+        guard let last = all.last, last.role == .char, !last.turnId.isEmpty else { return nil }
+        let rows = Array(all.reversed().prefix { $0.turnId == last.turnId }.reversed())
+        guard let head = rows.first(where: { $0.row["swipes"] != nil || $0.row["raw"] != nil }) ?? rows.first else { return nil }
+        var swipes = head.row["swipes"]?.array?.compactMap(\.string) ?? []
+        if swipes.isEmpty, let raw = head.row["raw"]?.string { swipes = [raw] }
+        if swipes.isEmpty { swipes = [rows.map(\.content).joined(separator: "\n")] }
+        let index = min(max(0, Int(head.row.number("swipeIndex") ?? Double(swipes.count - 1))), swipes.count - 1)
+        let served = head.row["served"]?.array ?? []
+        return Turn(id: last.turnId, rows: rows, versions: Versions(swipes: swipes, index: index, served: served))
+    }
+
+    /// 在最后一轮的几个版本之间切换。存着的原文重新切一遍，**不调接口**。
+    static func switchVersion(chatId: String, step: Int, onRow: @escaping OnRow) async throws {
+        guard let t = try lastTurn(chatId: chatId), t.versions.swipes.count > 1,
+              let chat = try Repo.chat(chatId),
+              let char = try chat.characterIds.first.flatMap({ try Repo.character($0) }) else { return }
+        let n = t.versions.swipes.count
+        var v = t.versions
+        v.index = ((v.index + step) % n + n) % n
+        guard !ReplyParser.split(v.swipes[v.index]).parts.isEmpty else { throw StoreError(message: "这个版本没有内容") }
+        try removeRows(t.rows)
+        try await write(raw: v.swipes[v.index], chat: chat, char: char, turnId: t.id, versions: v, instant: true, onRow: onRow)
+    }
+
+    private static func removeRows(_ rows: [Message]) throws {
+        for m in rows { try Database.shared.delete(Collections.messages, id: m.id) }
     }
 
     /// 把一次回复落成消息。parts 之间按网页版的节奏停顿：非文字 700 毫秒，文字 320 + 每字 28 毫秒，最多 1.8 秒。
-    static func write(raw: String, chat: Chat, char: Character, turnId: String, served: [String: JSONValue],
+    static func write(raw: String, chat: Chat, char: Character, turnId: String, versions: Versions,
                       instant: Bool = false, onRow: @escaping OnRow) async throws {
         let parsed = ReplyParser.split(raw)
         guard !parsed.parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
+        func head(_ m: inout Message) {
+            m.row["raw"] = .string(raw)
+            m.row["think"] = .string(parsed.think)
+            m.row["swipes"] = .array(versions.swipes.map { .string($0) })
+            m.row["swipeIndex"] = .number(Double(versions.index))
+            m.row["served"] = .array(versions.served)
+        }
 
         let narrationOn = chat.row.bool("narration")
         let parts = parsed.parts.filter { $0.type != .narration || narrationOn }
@@ -57,11 +128,7 @@ enum ChatEngine {
             if part.type == .silence { sawSilence = true; continue }
             guard var m = row(for: part, chat: chat, char: char, turnId: turnId) else { continue }
             if created.isEmpty {
-                m.row["raw"] = .string(raw)
-                m.row["think"] = .string(parsed.think)
-                m.row["swipes"] = .array([.string(raw)])
-                m.row["swipeIndex"] = .number(0)
-                m.row["served"] = .array([.object(served)])
+                head(&m)
                 if let stamp = parsed.stamp { m.row["stamp"] = .string(stampBody(stamp)) }
             }
             // 同一毫秒的两条排序不稳，至少隔一毫秒
@@ -80,10 +147,7 @@ enum ChatEngine {
 
         if created.isEmpty && sawSilence {
             var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[不回复]", kind: "silence", turnId: turnId)
-            m.row["raw"] = .string(raw)
-            m.row["think"] = .string(parsed.think)
-            m.row["swipes"] = .array([.string(raw)])
-            m.row["swipeIndex"] = .number(0)
+            head(&m)
             try Repo.save(m)
             created.append(m)
             onRow(m)
@@ -222,9 +286,10 @@ enum ChatEngine {
         return m
     }
 
-    /// 用户发一条文字。
-    static func send(text: String, chatId: String) throws -> Message {
-        let m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)
+    /// 用户发一条文字。quote 是引用的那一条。
+    static func send(text: String, chatId: String, quote: Message? = nil) throws -> Message {
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)
+        if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
         try Repo.save(m)
         if var c = try Repo.chat(chatId) {
             c.row["lastMessageAt"] = .number(Date().millis)
