@@ -1,7 +1,32 @@
 import SwiftUI
 
-/// 骨架阶段的首页：导入网页版备份，看本地库里有什么。
+/// 首页：消息与设置两页。写入失败之类的问题在最上面横一条（网页版第 20 条：不许只记日志）。
 struct RootView: View {
+    @ObservedObject private var problems = Problems.shared
+
+    var body: some View {
+        TabView {
+            ChatListView()
+                .tabItem { Label("消息", systemImage: "bubble.left") }
+            SettingsView()
+                .tabItem { Label("设置", systemImage: "gearshape") }
+        }
+        .safeAreaInset(edge: .top) {
+            if let latest = problems.latest {
+                HStack {
+                    Text(latest).font(.footnote).foregroundStyle(Theme.danger)
+                    Spacer()
+                    Button("关闭") { problems.latest = nil }.font(.footnote)
+                }
+                .padding(Theme.pad)
+                .background(Theme.groupedBackground)
+            }
+        }
+    }
+}
+
+/// 设置列表只放全局的东西：接口、用量、存储（网页版第 5 条）。
+struct SettingsView: View {
     @State private var counts: [String: Int] = [:]
     @State private var loadError: String?
 
@@ -9,15 +34,17 @@ struct RootView: View {
         NavigationStack {
             List {
                 Section {
-                    NavigationLink("导入网页版备份") {
-                        ImportView(onDone: reload)
-                    }
+                    NavigationLink("接口") { ApiSettingsView() }
+                    NavigationLink("用量与上限") { UsageLimitsView() }
+                }
+                Section("存储") {
+                    NavigationLink("导入网页版备份") { ImportView(onDone: reload) }
                 }
                 Section("本地数据") {
                     if let loadError {
-                        Text(loadError).foregroundStyle(.red)
+                        Text(loadError).foregroundStyle(Theme.danger)
                     } else if counts.isEmpty {
-                        Text("暂无数据").foregroundStyle(.secondary)
+                        Text("暂无数据").foregroundStyle(Theme.secondaryText)
                     } else {
                         ForEach(Self.shown) { item in
                             LabeledContent(item.label, value: "\(counts[item.key] ?? 0)")
@@ -26,7 +53,7 @@ struct RootView: View {
                     }
                 }
             }
-            .navigationTitle("Eiraowo")
+            .navigationTitle("设置")
             .onAppear(perform: reload)
         }
     }

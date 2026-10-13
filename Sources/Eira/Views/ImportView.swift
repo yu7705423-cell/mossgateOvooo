@@ -108,8 +108,8 @@ struct ImportView: View {
                 }
             } catch {
                 let message = error.localizedDescription
-                var wantsPass = false
-                if case .needPass? = error as? Vault.Failure { wantsPass = true }
+                let wantsPass: Bool
+                if case .needPass? = error as? Vault.Failure { wantsPass = true } else { wantsPass = false }
                 await MainActor.run {
                     failure = message
                     if wantsPass { needPass = true }
