@@ -1,0 +1,6 @@
+*.xcodeproj/
+Sources/Eira/Info.plist
+build/
+DerivedData/
+*.ipa
+.DS_Store

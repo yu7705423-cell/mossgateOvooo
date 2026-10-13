@@ -1,0 +1,62 @@
+name: 编译
+
+# 只手动触发。仓库是私密的，macOS 机器按 10 倍扣免费额度，每次推送都编会很快用完。
+# 产物是未签名的 ipa，只用来确认代码能编过；签名与传 TestFlight 另写一份工作流。
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 选一个 Xcode
+        # 挑装着的里头最新的那个，不写死路径：runner 镜像换代时默认的那个软链未必指向最新
+        run: |
+          NEWEST="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          sudo xcode-select -s "${NEWEST:-/Applications/Xcode.app}"
+          xcodebuild -version
+
+      - name: 生成工程
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: 编译
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Eira.xcodeproj \
+            -scheme Eira \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E 'error:|warning:|BUILD (SUCCEEDED|FAILED)' || true
+          grep -q 'BUILD SUCCEEDED' build.log
+
+      - name: 打成未签名的 ipa
+        run: |
+          APP="$(find build/Build/Products/Release-iphoneos -maxdepth 1 -name '*.app' | head -1)"
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry Eiraowo-unsigned.ipa Payload
+          ls -l Eiraowo-unsigned.ipa
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Eiraowo-unsigned
+          path: Eiraowo-unsigned.ipa
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: build-log
+          path: build.log
+          retention-days: 7

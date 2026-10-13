@@ -1,0 +1,35 @@
+# XcodeGen 的工程描述。Xcode 工程文件（.xcodeproj）不进仓库，CI 上现生成：
+# 那份 pbxproj 几千行，改一个文件就动一片，看不出改了什么。
+name: Eira
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "5.10"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  Eira:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/Eira
+    info:
+      path: Sources/Eira/Info.plist
+      properties:
+        CFBundleDisplayName: Eiraowo
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UIApplicationSupportsIndirectInputEvents: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.eiraowo
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
