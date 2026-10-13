@@ -13,6 +13,7 @@ class StoreTestCase: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        Database.shared.close()
         try? FileManager.default.removeItem(at: root)
     }
 

@@ -71,6 +71,14 @@ final class Database: @unchecked Sendable {
 
     deinit { sqlite3_close_v2(handle) }
 
+    /// 关掉连接。测试删临时目录之前用；之后这个对象不能再用。
+    func close() {
+        queue.sync {
+            sqlite3_close_v2(handle)
+            handle = nil
+        }
+    }
+
     // MARK: - 记录
 
     func put(_ collection: String, _ row: Row) throws {
