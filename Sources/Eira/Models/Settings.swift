@@ -99,9 +99,9 @@ struct AppSettings: Sendable {
     // MARK: - 花钱的旋钮（网页版 cost.js，CLAUDE.md 第 15 条）
 
     /// 自动重试最多几次。钳在 0 到 3，默认 0。
-    var retryMax: Int { min(3, max(0, Int(raw["retryMax"]?.number ?? 0))) }
+    var retryMax: Int { min(3, max(0, Int(raw["retryMax"]?.number ?? 1))) }
     /// 失败后换一套接口再试。默认关。
-    var chatFallback: Bool { raw["chatFallback"]?.bool ?? false }
+    var chatFallback: Bool { raw["chatFallback"]?.bool ?? true }
     /// 换接口最多换几套。0 表示其余的全试；不合法的值按 1。
     var failoverMax: Int {
         guard let n = raw["failoverMax"]?.number, n >= 0, n == n.rounded() else { return 1 }
