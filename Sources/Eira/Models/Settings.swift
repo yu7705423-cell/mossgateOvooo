@@ -102,6 +102,37 @@ struct AppSettings: Sendable {
         services["vision"]?.object?["mode"]?.string == "chat" ? "chat" : "off"
     }
 
+    // MARK: - 预设（网页版 presets.js）
+
+    /// 预设里存的那几个键。会话选了别的预设时，这几个键换成那一套的值，其余设置不变。
+    static let presetKeys = ["promptLayout", "promptCustom", "promptTemplates", "injectOrder",
+                             "msgMin", "msgMax", "smsMin", "smsMax", "narrationMin", "synopsisMin", "synopsisMax",
+                             "historyMode", "historyLimit", "historyTurns", "scanWindow", "contextBudget", "promptLean"]
+
+    struct Preset: Identifiable, Equatable, Sendable {
+        let id: String
+        let name: String
+    }
+
+    /// settings.presets 里的几套。一套都没存时界面上当作只有「默认」（网页版第一次打开不往库里写）。
+    var presets: [Preset] {
+        (raw["presets"]?.array ?? []).compactMap { p in
+            guard let id = p["id"]?.string else { return nil }
+            return Preset(id: id, name: p["name"]?.string ?? "未命名预设")
+        }
+    }
+
+    /// 这段会话用的设置：会话选的预设不是当前全局那一套时，把那一套的值叠上去；缺的键用出厂值（网页版 settingsFor）。
+    func forChat(_ chat: Chat) -> AppSettings {
+        let id = chat.presetId
+        guard !id.isEmpty, id != raw["presetActive"]?.string,
+              let p = raw["presets"]?.array?.first(where: { $0["id"]?.string == id }) else { return self }
+        let data = p["data"]?.object ?? [:]
+        var out = self
+        for k in Self.presetKeys { out.raw[k] = data[k] }
+        return out
+    }
+
     // MARK: - 花钱的旋钮（网页版 cost.js，CLAUDE.md 第 15 条）
 
     /// 自动重试最多几次。钳在 0 到 3，默认 0。

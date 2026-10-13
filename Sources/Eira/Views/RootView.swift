@@ -3,6 +3,7 @@ import SwiftUI
 /// 首页：消息与设置两页。写入失败之类的问题在最上面横一条（网页版第 20 条：不许只记日志）。
 struct RootView: View {
     @ObservedObject private var problems = Problems.shared
+    @State private var onboarding = OnboardingView.needed()
 
     var body: some View {
         TabView {
@@ -12,6 +13,9 @@ struct RootView: View {
                 .tabItem { Label("联系", systemImage: "person.2") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
+        }
+        .fullScreenCover(isPresented: $onboarding) {
+            OnboardingView { onboarding = false }
         }
         .safeAreaInset(edge: .top) {
             if let latest = problems.latest {

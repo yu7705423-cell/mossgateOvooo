@@ -29,7 +29,7 @@ enum ChatEngine {
             guard let t = try lastTurn(chatId: chatId) else { throw StoreError(message: "没有可以重新生成的回复") }
             old = t
         }
-        let settings = AppSettings.load()
+        let settings = AppSettings.load().forChat(chat)
         let built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
         let turnId = old?.id ?? Ids.make("turn")
 

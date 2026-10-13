@@ -52,7 +52,7 @@ enum ChatPrompt {
         add(pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))))
         if !chat.summary.isEmpty { add("[更早之前发生过什么]\n\(chat.summary)") }
         add(Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s))
-        add(capabilities(char: char, msgs: all, settings: s))
+        add(capabilities(char: char, chat: chat, msgs: all, settings: s))
         if !char.core.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             add(Templates.render("skeleton.core", ["core": char.core.trimmingCharacters(in: .whitespacesAndNewlines)], settings: s))
         }
@@ -262,8 +262,16 @@ enum ChatPrompt {
         return Templates.render("skeleton.ban", ["list": list], settings: s)
     }
 
-    /// 能力一节。原生版第一版只开回复解析认得的那几项：引用、骰子、撤回（一行），时间戳与表情（细则）。
-    private static func capabilities(char: Character, msgs: [Message], settings s: AppSettings) -> String {
+    /// 旁白「每轮至少几行」那一句（网页版 narrationLeast，一字不差）。
+    static func narrationLeast(_ v: Double) -> String {
+        let n = max(0, Int(v.rounded()))
+        if n == 0 { return "" }
+        return n == 1 ? " Every reply contains at least one\nnarration line." : " Every reply contains at least \(n) narration lines."
+    }
+
+    /// 能力一节。原生版只开回复解析认得的那几项：引用、骰子、撤回（一行），表情、旁白、时间戳（细则）。
+    /// 顺序照网页版 CAPS 数组：表情、引用、骰子、撤回、旁白、时间戳。
+    private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
         let lean = s.raw["promptLean"]?.bool ?? true
         let recent = msgs.suffix(8)
@@ -278,14 +286,14 @@ enum ChatPrompt {
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
         }
 
-        cap("quote", on: msgs.count >= 2, hot: used(#"[\[【](引用|回复)"#),
-            line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
-            Templates.get("skeleton.quote", settings: s)
-        }
         let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
                                                                    used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))
         cap("sticker", on: !stickers.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.sticker", ["names": stickers], settings: s)
+        }
+        cap("quote", on: msgs.count >= 2, hot: used(#"[\[【](引用|回复)"#),
+            line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
+            Templates.get("skeleton.quote", settings: s)
         }
         cap("dice", on: char.row["canDice"]?.bool != false, hot: used(#"^dice$|[\[【]骰子"#),
             line: "Roll a die: write a line on its own, [骰子]; the system rolls it, and the result is not knowable this turn") {
@@ -294,6 +302,10 @@ enum ChatPrompt {
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
             line: "Withdraw a message: write [撤回] on its own line directly after that message.") {
             Templates.render("skeleton.recall", ["post": ""], settings: s)
+        }
+        // 旁白：这段会话打开了才有（网页版 capabilities.js 的 narration）
+        cap("narration", on: chat.row.bool("narration"), hot: true, line: nil) {
+            Templates.render("skeleton.narration", ["least": narrationLeast(s.raw["narrationMin"]?.number ?? 1)], settings: s)
         }
         let stampOn = (s.raw["injectTime"]?.bool ?? true) && (s.raw["timeStamp"]?.bool ?? true)
         cap("time", on: stampOn, hot: true, line: nil) { Templates.get("skeleton.time", settings: s) }

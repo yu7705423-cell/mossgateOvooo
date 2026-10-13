@@ -26,6 +26,8 @@ struct ConversationView: View {
     @State private var viewing: ViewingImage?
     @State private var editing: Message?
     @State private var deleting: Message?
+    @State private var showSettings = false
+    @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
 
@@ -92,6 +94,14 @@ struct ConversationView: View {
         }
         .navigationTitle(char?.displayName ?? chat?.title ?? "")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button { showSettings = true } label: { Image(systemName: "ellipsis") }.accessibilityLabel("会话设置")
+            }
+        }
+        .navigationDestination(isPresented: $showSettings) {
+            ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() })
+        }
         .onAppear(perform: reload)
         .onDisappear { markRead() }
         .fullScreenCover(item: $viewing) { v in ImageViewer(imageId: v.id) }
