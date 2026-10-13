@@ -37,6 +37,9 @@ struct SettingsView: View {
                     NavigationLink("接口") { ApiSettingsView() }
                     NavigationLink("用量与上限") { UsageLimitsView() }
                 }
+                Section {
+                    NavigationLink("问题反馈") { FeedbackView() }
+                }
                 Section("存储") {
                     NavigationLink("导入网页版备份") { ImportView(onDone: reload) }
                 }

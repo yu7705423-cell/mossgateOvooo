@@ -101,6 +101,8 @@ struct ImportView: View {
                 let r = try BackupImporter.run(file: file, password: pass) { p in
                     Task { @MainActor in progress = p }
                 }
+                Diagnostics.shared.record("import", ["rows": r.rows, "collections": r.collections, "media": r.media,
+                                                     "bad": r.bad.count, "dataVersion": r.dataVersion])
                 await MainActor.run {
                     report = r
                     running = false
@@ -108,6 +110,7 @@ struct ImportView: View {
                 }
             } catch {
                 let message = error.localizedDescription
+                Diagnostics.shared.record("import-failed", ["error": message])
                 let wantsPass: Bool
                 if case .needPass? = error as? Vault.Failure { wantsPass = true } else { wantsPass = false }
                 await MainActor.run {

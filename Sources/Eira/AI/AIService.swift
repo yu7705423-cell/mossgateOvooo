@@ -37,6 +37,7 @@ actor AIService {
         let settings = AppSettings.load()
         let chain = Self.chain(task: task, group: group, settings: settings)
         guard !chain.isEmpty else {
+            Diagnostics.shared.record("request-skipped", ["task": task, "reason": "没有可用的接口"])
             throw AIError(status: nil, message: "没有可用的接口。请在「设置 - 接口」中填写密钥与模型。")
         }
 
@@ -49,6 +50,14 @@ actor AIService {
             for attempt in 0...tries {
                 try Task.checkCancellation()
                 await Usage.shared.note(task: task)
+                let started = Date()
+                func log(_ status: Int?, _ error: String?) {
+                    var f: [String: Any] = ["task": task, "provider": preset.provider.rawValue, "model": preset.model,
+                                            "ms": Int(Date().timeIntervalSince(started) * 1000), "attempt": attempt]
+                    if let status { f["status"] = status }
+                    if let error { f["error"] = error }
+                    Diagnostics.shared.record(error == nil ? "request" : "request-failed", f)
+                }
                 do {
                     let text = try await Provider.send(
                         preset,
@@ -58,8 +67,10 @@ actor AIService {
                               cache: settings.promptCache && ["chat.reply", "chat.call", "chat.proactive", "scene.write"].contains(task)),
                         idleSeconds: settings.streamIdleSec,
                         onDelta: onDelta)
+                    log(200, nil)
                     return Result(text: text, presetId: preset.id, presetName: preset.name)
                 } catch let e as AIError {
+                    log(e.status, e.cancelled ? "已取消" : e.message + (e.partial.isEmpty ? "" : "（已收到部分回复）"))
                     lastError = e
                     if e.cancelled || !e.partial.isEmpty { throw e }
                     guard e.retryable, attempt < tries else { break }

@@ -44,6 +44,7 @@ final class Problems: ObservableObject {
     @Published var latest: String?
 
     nonisolated static func report(_ message: String) {
+        Diagnostics.shared.record("problem", ["message": message])
         Task { @MainActor in Problems.shared.latest = message }
     }
 }
