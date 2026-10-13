@@ -26,7 +26,8 @@ final class DiagnosticsTests: StoreTestCase {
         MockNet.reset { _, _ in .init(status: 200, body: MockNet.openaiStream("REPLY_CONTENT_A\nREPLY_CONTENT_B")) }
         try await ChatEngine.reply(chatId: "chat_a") { _ in }
         // 接口把密钥原样写进错误说明的情况
-        MockNet.reset { _, _ in .init(status: 401, body: #"{"error":{"message":"Incorrect API key provided: \#(secretKey)"}}"#) }
+        let key = secretKey
+        MockNet.reset { _, _ in .init(status: 401, body: #"{"error":{"message":"Incorrect API key provided: \#(key)"}}"#) }
         do { try await ChatEngine.reply(chatId: "chat_a") { _ in } } catch {}
         _ = try ChatEngine.send(text: "USER_TYPED_TEXT", chatId: "chat_a")
 
