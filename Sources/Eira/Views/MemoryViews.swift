@@ -252,7 +252,7 @@ struct MemoryEditView: View {
 
     private func save() {
         do {
-            let base = memory ?? Knowledge.newMemory(charId: charId, personaId: try People.ensureActivePersona().id)
+            let base = try memory ?? Knowledge.newMemory(charId: charId, personaId: People.ensureActivePersona().id)
             var f = Knowledge.kindPatch(base, to: kind)
             // 分类以用户选的为准；只有「待办」跟着种类走（进行中才是待办）
             if kind != .open { f["category"] = .string(category == "pending" ? (kind == .event ? "event" : "fact") : category) }
