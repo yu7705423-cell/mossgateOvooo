@@ -141,6 +141,10 @@ struct CharacterProfileView: View {
                     Button(action: openChat) { Label("发消息", systemImage: "bubble.left") }
                     NavigationLink(value: ContactsView.Route.edit(char.id)) { Label("编辑资料", systemImage: "pencil") }
                 }
+                Section {
+                    NavigationLink { MemoryListView(charId: char.id) } label: { Label("记忆", systemImage: "brain") }
+                    NavigationLink { CharacterLoreView(charId: char.id) } label: { Label("世界书", systemImage: "books.vertical") }
+                }
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }

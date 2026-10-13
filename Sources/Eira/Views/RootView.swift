@@ -42,6 +42,9 @@ struct SettingsView: View {
                 Section {
                     NavigationLink("问题反馈") { FeedbackView() }
                 }
+                Section("设定") {
+                    NavigationLink("世界书") { LorebookListView() }
+                }
                 Section("存储") {
                     NavigationLink("导入网页版备份") { ImportView(onDone: reload) }
                 }
