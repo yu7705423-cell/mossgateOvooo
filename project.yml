@@ -30,6 +30,7 @@ targets:
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
+        NSPhotoLibraryAddUsageDescription: 将图片存到「照片」。
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.example.eiraowo

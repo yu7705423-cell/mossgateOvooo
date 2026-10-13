@@ -178,6 +178,13 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 新存一张图或一个文件之后登记。内容已经由调用方写进 MediaStore 的目录。
+    func registerMedia(kind: String, id: String, ext: String, bytes: Int) throws {
+        try queue.sync {
+            try run("INSERT OR REPLACE INTO media (kind, id, ext, bytes) VALUES (?, ?, ?, ?)", [kind, id, ext, bytes])
+        }
+    }
+
     // MARK: - 整批替换
 
     /// 导入备份用：在一个事务里清空全部记录与媒体登记，再写入新的。

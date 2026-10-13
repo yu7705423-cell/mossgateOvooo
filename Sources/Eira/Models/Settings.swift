@@ -96,6 +96,12 @@ struct AppSettings: Sendable {
         return p?.usable == true ? p : nil
     }
 
+    /// 识图：'chat' 是把图原样交给聊天模型，'api' 是另一套识图接口，其余是关（网页版 services.js 的 visionMode）。
+    /// 原生版还没有单独的识图接口，'api' 按关处理。
+    var visionMode: String {
+        services["vision"]?.object?["mode"]?.string == "chat" ? "chat" : "off"
+    }
+
     // MARK: - 花钱的旋钮（网页版 cost.js，CLAUDE.md 第 15 条）
 
     /// 自动重试最多几次。钳在 0 到 3，默认 0。

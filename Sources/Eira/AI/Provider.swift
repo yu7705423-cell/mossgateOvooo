@@ -6,6 +6,13 @@ struct AIMessage: Equatable, Sendable {
     enum Role: String, Sendable { case system, user, assistant }
     var role: Role
     var content: String
+    /// 随这条一起发给模型的图（「识图交给聊天模型」时，当前这一轮用户发的图）。
+    var images: [AIImage] = []
+}
+
+struct AIImage: Equatable, Sendable {
+    var mediaType: String
+    var base64: String
 }
 
 struct AIError: LocalizedError {
@@ -47,7 +54,14 @@ enum Provider {
             headers["x-api-key"] = p.apiKey
             headers["anthropic-version"] = "2023-06-01"
             body["max_tokens"] = r.maxTokens > 0 ? r.maxTokens : 32000
-            body["messages"] = msgs.map { ["role": $0.role.rawValue, "content": $0.content] }
+            body["messages"] = msgs.map { m -> [String: Any] in
+                guard !m.images.isEmpty else { return ["role": m.role.rawValue, "content": m.content] }
+                var blocks: [[String: Any]] = m.images.map {
+                    ["type": "image", "source": ["type": "base64", "media_type": $0.mediaType, "data": $0.base64]] as [String: Any]
+                }
+                if !m.content.isEmpty { blocks.append(["type": "text", "text": m.content]) }
+                return ["role": m.role.rawValue, "content": blocks]
+            }
             if !r.system.isEmpty {
                 body["system"] = r.cache
                     ? [["type": "text", "text": r.system, "cache_control": ["type": "ephemeral"]]]
@@ -59,9 +73,15 @@ enum Provider {
             let hasVersion = base.range(of: #"/v\d+$"#, options: .regularExpression) != nil
             url = URL(string: base + (hasVersion ? "/chat/completions" : "/v1/chat/completions"))
             headers["authorization"] = "Bearer \(p.apiKey)"
-            var list: [[String: String]] = []
+            var list: [[String: Any]] = []
             if !r.system.isEmpty { list.append(["role": "system", "content": r.system]) }
-            list += msgs.map { ["role": $0.role.rawValue, "content": $0.content] }
+            list += msgs.map { m -> [String: Any] in
+                guard !m.images.isEmpty else { return ["role": m.role.rawValue, "content": m.content] }
+                var parts: [[String: Any]] = []
+                if !m.content.isEmpty { parts.append(["type": "text", "text": m.content]) }
+                parts += m.images.map { ["type": "image_url", "image_url": ["url": "data:\($0.mediaType);base64,\($0.base64)"]] as [String: Any] }
+                return ["role": m.role.rawValue, "content": parts]
+            }
             body["messages"] = list
             if r.maxTokens > 0 { body["max_tokens"] = r.maxTokens }
             if let t = p.temperature { body["temperature"] = t }
@@ -85,7 +105,8 @@ enum Provider {
         var out: [AIMessage] = []
         for m in messages {
             let m = m.role == .system ? AIMessage(role: .user, content: "<context>\n\(m.content)\n</context>") : m
-            if let last = out.last, last.role == m.role {
+            // 带图的不并：并进去图就挂到别的话上了（网页版同样）
+            if let last = out.last, last.role == m.role, last.images.isEmpty, m.images.isEmpty {
                 out[out.count - 1].content = last.content + "\n\n" + m.content
             } else {
                 out.append(m)

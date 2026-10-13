@@ -13,6 +13,8 @@ enum ChatPrompt {
         var messages: [AIMessage]
         /// 这一轮召回的记忆 id。发送成功之后要记一次「用过」。
         var recalled: [String]
+        /// 这一轮把原图交给了模型的那几条消息。发送成功之后标成看过，往后不再重传。
+        var seenImages: [String] = []
     }
 
     static func build(chat: Chat, char: Character, settings s: AppSettings, now: Date = Date()) throws -> Built {
@@ -63,15 +65,16 @@ enum ChatPrompt {
         let memoryDepth = Int(s.num("memoryDepth", 1))
         if memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
 
-        let messages = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
-                               tailDepth: max(1, memoryDepth), lore: lore.deep)
-        return Built(system: pieces.joined(separator: "\n\n"), messages: messages, recalled: recalled.map(\.id))
+        let (messages, seen) = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
+                                       tailDepth: max(1, memoryDepth), lore: lore.deep)
+        return Built(system: pieces.joined(separator: "\n\n"), messages: messages, recalled: recalled.map(\.id),
+                     seenImages: seen)
     }
 
     // MARK: - 历史
 
     private static func history(_ all: [Message], chat: Chat, char: Character, settings s: AppSettings,
-                                tail: String, tailDepth: Int, lore: [(Int, String)]) -> [AIMessage] {
+                                tail: String, tailDepth: Int, lore: [(Int, String)]) -> ([AIMessage], [String]) {
         let window: [Message]
         if s.raw["historyMode"]?.string == "turn" {
             window = takeTurns(all, Int(s.num("historyTurns", 10)))
@@ -81,6 +84,20 @@ enum ChatPrompt {
         }
         let stampOn = (s.raw["injectTime"]?.bool ?? true)
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+
+        // 识图交给聊天模型时：只带当前这一轮（用户连着发、角色还没回的那几条）里还没被看过的图。
+        // 一张图看过一次就不再重传：每轮都传，越聊越慢也越聊越贵（网页版 engine.js 的 imagesFor）
+        var turnStart = all.count
+        while turnStart > 0 && all[turnStart - 1].role == .user { turnStart -= 1 }
+        let currentTurn = Set(all[turnStart...].map(\.id))
+        var seen: [String] = []
+        func imagesOf(_ m: Message) -> [AIImage] {
+            guard s.visionMode == "chat", currentTurn.contains(m.id), m.kind == "image", !m.imageId.isEmpty,
+                  m.row.string("vision") != "done",
+                  let url = MediaStore.url(.images, id: m.imageId), let data = try? Data(contentsOf: url) else { return [] }
+            seen.append(m.id)
+            return [AIImage(mediaType: Images.mediaType(ext: url.pathExtension), base64: data.base64EncodedString())]
+        }
 
         var out: [AIMessage] = []
         var prev: Message?
@@ -94,7 +111,7 @@ enum ChatPrompt {
                 if m.isRecalled { text += "\n[撤回]" }
                 out.append(AIMessage(role: .assistant, content: text))
             } else {
-                out.append(AIMessage(role: .user, content: text))
+                out.append(AIMessage(role: .user, content: text, images: m.role == .user ? imagesOf(m) : []))
             }
             for r in m.row["reactions"]?.array ?? [] {
                 guard let e = r["e"]?.string else { continue }
@@ -105,10 +122,12 @@ enum ChatPrompt {
             prev = m
         }
 
-        // 相邻同角色的并成一条（用换行）
+        // 相邻同角色的并成一条（用换行）；带图的不并
         var merged: [AIMessage] = []
         for m in out {
-            if let last = merged.last, last.role == m.role { merged[merged.count - 1].content += "\n" + m.content }
+            if let last = merged.last, last.role == m.role, last.images.isEmpty, m.images.isEmpty {
+                merged[merged.count - 1].content += "\n" + m.content
+            }
             else { merged.append(m) }
         }
         if merged.last?.role == .assistant {
@@ -127,7 +146,7 @@ enum ChatPrompt {
             let at = max(0, merged.count - d)
             merged.insert(AIMessage(role: .system, content: body), at: at)
         }
-        return merged
+        return (merged, seen)
     }
 
     /// 从后往前数轮：一轮从「前一条不是用户」的那条用户消息开始。0 表示全部。

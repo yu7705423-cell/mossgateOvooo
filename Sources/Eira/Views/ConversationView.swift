@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// 一段一对一会话。
@@ -16,6 +17,10 @@ struct ConversationView: View {
     @State private var busy = false
     @State private var job: Task<Void, Never>?
     @State private var problem: String?
+    @State private var picked: [PhotosPickerItem] = []
+    @State private var viewing: ViewingImage?
+
+    struct ViewingImage: Identifiable { let id: String }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -32,7 +37,8 @@ struct ConversationView: View {
                                 .font(.footnote).padding(.top, Theme.gap)
                         }
                         ForEach(messages) { m in
-                            MessageRow(message: m, char: char, onRetry: m.isError ? { retry(m) } : nil)
+                            MessageRow(message: m, char: char, onRetry: m.isError ? { retry(m) } : nil,
+                                       onOpenImage: { viewing = ViewingImage(id: $0) })
                                 .id(m.id)
                         }
                         if busy {
@@ -65,10 +71,22 @@ struct ConversationView: View {
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: reload)
         .onDisappear { markRead() }
+        .fullScreenCover(item: $viewing) { v in ImageViewer(imageId: v.id) }
+        .onChange(of: picked) { _, items in
+            guard !items.isEmpty else { return }
+            picked = []
+            sendPhotos(items)
+        }
     }
 
     private var composer: some View {
         HStack(alignment: .bottom, spacing: Theme.gap) {
+            // 一次选几张不设上限（网页版第 13 条）
+            PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
+                Image(systemName: "photo").font(.title2)
+            }
+            .accessibilityLabel("发送图片")
+            .disabled(busy)
             TextField("输入消息", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .padding(.horizontal, Theme.pad).padding(.vertical, 8)
@@ -130,6 +148,30 @@ struct ConversationView: View {
         }
     }
 
+    /// 选好的图按顺序一张一张存好、发出去。存不进去的那一张说明原因，其余照发。
+    private func sendPhotos(_ items: [PhotosPickerItem]) {
+        let id = chatId
+        Task {
+            var failed = 0
+            var lastError = ""
+            for item in items {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else {
+                        throw StoreError(message: "无法读取所选图片")
+                    }
+                    let imageId = try Images.save(data)
+                    let m = try ChatEngine.sendImage(imageId: imageId, chatId: id)
+                    await MainActor.run { messages.append(m) }
+                } catch {
+                    failed += 1
+                    lastError = error.localizedDescription
+                }
+            }
+            let summary = failed > 0 ? "有 \(failed) 张图片未能发送：\(lastError)" : nil
+            await MainActor.run { problem = summary }
+        }
+    }
+
     /// 失败的那一条删掉，重新请求这一轮。
     private func retry(_ m: Message) {
         do {
@@ -165,6 +207,7 @@ struct MessageRow: View {
     let message: Message
     let char: Character?
     var onRetry: (() -> Void)?
+    var onOpenImage: ((String) -> Void)?
 
     private var mine: Bool { message.role == .user }
 
@@ -214,9 +257,12 @@ struct MessageRow: View {
         case "sticker":
             StickerView(id: message.row.string("stickerId"), name: message.row.string("stickerName"))
         case "image" where !message.imageId.isEmpty:
-            LocalImage(id: message.imageId)
-                .frame(maxWidth: 200, maxHeight: 260)
+            LocalImage(id: message.imageId, maxPixel: 800, fit: true)
+                .frame(maxWidth: 220, maxHeight: 280)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                .onTapGesture { onOpenImage?(message.imageId) }
+                .accessibilityLabel("图片")
+                .accessibilityAddTraits(.isButton)
         case "image", "clip":
             card(icon: message.kind == "image" ? "photo" : "video", text: message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt"))
         case "voice":
@@ -280,7 +326,7 @@ struct StickerView: View {
         let url = row.flatMap { URL(string: $0.string("url")) }
         Group {
             if !imageId.isEmpty {
-                LocalImage(id: imageId).scaledToFit()
+                LocalImage(id: imageId, maxPixel: 360, fit: true)
             } else if let url, url.scheme?.hasPrefix("http") == true {
                 AsyncImage(url: url) { img in img.resizable().scaledToFit() } placeholder: { Theme.placeholder }
             } else {

@@ -84,3 +84,21 @@ final class MockNet: URLProtocol {
         return "data: \(piece)\n\ndata: [DONE]\n\n"
     }
 }
+
+extension URLRequest {
+    /// URLProtocol 收到的请求里，body 已经换成了流：读出来看发了什么。
+    func httpBodyStreamData() -> Data? {
+        if let httpBody { return httpBody }
+        guard let stream = httpBodyStream else { return nil }
+        stream.open()
+        defer { stream.close() }
+        var data = Data()
+        var buf = [UInt8](repeating: 0, count: 64 * 1024)
+        while stream.hasBytesAvailable {
+            let n = stream.read(&buf, maxLength: buf.count)
+            if n <= 0 { break }
+            data.append(buf, count: n)
+        }
+        return data
+    }
+}

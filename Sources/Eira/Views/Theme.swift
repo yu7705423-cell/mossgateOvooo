@@ -22,15 +22,23 @@ enum Theme {
     static let pad: CGFloat = 12
 }
 
-/// 本地图片。按 id 从 MediaStore 读，读不到显示占位块。
+/// 本地图片。按 id 在后台读、按 maxPixel 缩小着解码；读出来之前和读不到时显示占位块。
 struct LocalImage: View {
     let id: String
+    var maxPixel: CGFloat = 600
+    var fit = false
+    @State private var image: UIImage?
+
     var body: some View {
-        if let url = MediaStore.url(.images, id: id), let img = UIImage(contentsOfFile: url.path) {
-            Image(uiImage: img).resizable().scaledToFill()
-        } else {
-            Theme.placeholder
+        Group {
+            if let image {
+                if fit { Image(uiImage: image).resizable().scaledToFit() }
+                else { Image(uiImage: image).resizable().scaledToFill() }
+            } else {
+                Theme.placeholder
+            }
         }
+        .task(id: id) { image = await Images.load(id, maxPixel: maxPixel) }
     }
 }
 
@@ -43,7 +51,7 @@ struct Avatar: View {
     var body: some View {
         Group {
             if !imageId.isEmpty, MediaStore.url(.images, id: imageId) != nil {
-                LocalImage(id: imageId)
+                LocalImage(id: imageId, maxPixel: size * 3)
             } else {
                 ZStack {
                     Theme.placeholder

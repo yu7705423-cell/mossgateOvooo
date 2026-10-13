@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import Eira
 
 /// 花钱的次数（网页版第 15 条）：网络一律接住，数真正打出去几次。
@@ -162,5 +163,24 @@ final class CostTests: StoreTestCase {
         XCTAssertEqual(reqs[0].value(forHTTPHeaderField: "anthropic-version"), "2023-06-01")
         XCTAssertEqual(reqs[1].url?.absoluteString, "https://spare.test/v1/chat/completions")
         XCTAssertEqual(reqs[1].value(forHTTPHeaderField: "authorization"), "Bearer k")
+    }
+}
+
+extension CostTests {
+    /// 发图再请回复：仍然只打一次；识图交给聊天模型时图随这一次带上，不另调接口。
+    func testImageWithVisionIsStillOneRequest() async throws {
+        try setSettings(["services": .object(["chat": .object([
+            "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
+                                         "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])]),
+            "activeId": .string("svc_main")]),
+            "vision": .object(["mode": .string("chat")])])])
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 10, height: 10)).pngData { _ in }
+        _ = try ChatEngine.sendImage(imageId: try Images.save(png), chatId: "chat_a")
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("看到了")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(data: MockNet.requests.first?.httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("\"type\":\"image\""))
+        XCTAssertEqual(try Repo.messages(chatId: "chat_a").first { $0.kind == "image" && $0.role == .user }?.row.string("vision"), "done")
     }
 }

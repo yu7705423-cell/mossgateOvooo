@@ -31,6 +31,12 @@ enum ChatEngine {
         }
 
         try markRecalled(built.recalled)
+        // 交给模型看过的图标成看过，往后不再重传
+        for id in built.seenImages {
+            guard var row = try Database.shared.get(Collections.messages, id: id) else { continue }
+            row["vision"] = .string("done")
+            try Database.shared.put(Collections.messages, row)
+        }
         try await write(raw: result.text, chat: chat, char: char, turnId: turnId,
                         served: ["id": .string(result.presetId), "name": .string(result.presetName)], onRow: onRow)
     }
@@ -199,6 +205,21 @@ enum ChatEngine {
             row["lastUsedAt"] = .number(Date().millis)
             try Database.shared.put(Collections.memories, row)
         }
+    }
+
+    /// 用户发一张图（已经由 Images.save 存好）。content 写 `[图片]`，和网页版存的一样；
+    /// 识图交给聊天模型时标成待看，下一次请求带上原图。
+    static func sendImage(imageId: String, chatId: String) throws -> Message {
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[图片]", kind: "image")
+        m.row["imageId"] = .string(imageId)
+        m.row["vision"] = .string(AppSettings.load().visionMode == "chat" ? "chat" : "off")
+        try Repo.save(m)
+        if var c = try Repo.chat(chatId) {
+            c.row["lastMessageAt"] = .number(Date().millis)
+            c.row.touch()
+            try Repo.save(c)
+        }
+        return m
     }
 
     /// 用户发一条文字。
