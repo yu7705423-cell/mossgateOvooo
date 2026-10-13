@@ -76,6 +76,43 @@ enum Vault {
         if !last { throw Failure.broken("加密备份不完整，可能没有下载完") }
     }
 
+    /// 加密：把 input 整个文件按段加密写到 out。格式与网页版 vault.js 的 seal 一致，网页版能解开。
+    static func seal(_ input: URL, pass: String, to out: URL, chunk: Int = 4 * 1024 * 1024) throws {
+        guard !pass.isEmpty else { throw Failure.needPass }
+        let iterations = 600_000   // 网页版 ITERATIONS
+        let salt = Data((0..<16).map { _ in UInt8.random(in: 0...255) })
+        let ivBase = (0..<12).map { _ in UInt8.random(in: 0...255) }
+        var head = Data(magic)
+        head.append(contentsOf: be(UInt32(iterations)))
+        head.append(salt)
+        head.append(contentsOf: ivBase)
+        head.append(contentsOf: be(UInt32(chunk)))
+        let key = try derive(pass: pass, salt: salt, iterations: iterations)
+
+        let size = (try FileManager.default.attributesOfItem(atPath: input.path)[.size] as? NSNumber)?.intValue ?? 0
+        let n = max(1, (size + chunk - 1) / chunk)
+        let reader = try FileHandle(forReadingFrom: input)
+        defer { try? reader.close() }
+        FileManager.default.createFile(atPath: out.path, contents: nil)
+        let writer = try FileHandle(forWritingTo: out)
+        defer { try? writer.close() }
+        try writer.write(contentsOf: head)
+        for i in 0..<n {
+            let plain = try reader.read(upToCount: chunk) ?? Data()
+            var aad = head
+            aad.append(contentsOf: be(UInt32(i)))
+            aad.append(i == n - 1 ? 1 : 0)
+            let box = try AES.GCM.seal(plain, using: key, nonce: AES.GCM.Nonce(data: iv(ivBase, UInt32(i))), authenticating: aad)
+            let ct = box.ciphertext + box.tag
+            try writer.write(contentsOf: Data(be(UInt32(ct.count))))
+            try writer.write(contentsOf: ct)
+        }
+    }
+
+    private static func be(_ v: UInt32) -> [UInt8] {
+        [UInt8(v >> 24 & 0xff), UInt8(v >> 16 & 0xff), UInt8(v >> 8 & 0xff), UInt8(v & 0xff)]
+    }
+
     private static func derive(pass: String, salt: Data, iterations: Int) throws -> SymmetricKey {
         let password = Array(pass.utf8)
         var bits = [UInt8](repeating: 0, count: 32)

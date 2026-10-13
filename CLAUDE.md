@@ -71,6 +71,8 @@
   先在这里加一项「接口一直失败时打出去几次」的断言（同网页版 `autocost` 的规矩）。
 - 改导入、回复解析、提示词拼装，先加一条会失败的测试再改。
 - 每个测试用临时目录里的一份新库（`StoreTestCase`），不碰 app 自己的数据。
+- **导出必须网页版读得回**：`ExportTests` 在 CI 里把导出的文件写到 `EXPORT_CHECK_DIR`，再由 `scripts/check-export.mjs`
+  用 `Tests/WebReference` 里网页版的 zip.js、vault.js、typed.js 读一遍，读不回就不出 ipa。网页版这三个文件改了，抄一份新的过来。
 
 ## 6. 分支
 

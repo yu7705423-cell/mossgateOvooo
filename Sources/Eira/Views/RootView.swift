@@ -47,6 +47,7 @@ struct SettingsView: View {
                 }
                 Section("存储") {
                     NavigationLink("导入网页版备份") { ImportView(onDone: reload) }
+                    NavigationLink("导出备份") { ExportView() }
                 }
                 Section("本地数据") {
                     if let loadError {

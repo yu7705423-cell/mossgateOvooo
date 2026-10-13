@@ -43,6 +43,8 @@ jobs:
           print(next(x["udid"] for k in runtimes for x in d[k] if x["name"].startswith("iPhone")))
           ')"
           echo "模拟器 $UDID"
+          # 导出测试把几份备份写到这里，下一步用网页版的代码读（xcodebuild 把 TEST_RUNNER_ 开头的变量交给测试）
+          export TEST_RUNNER_EXPORT_CHECK_DIR="$RUNNER_TEMP/export-check"
           xcodebuild test \
             -project Eira.xcodeproj \
             -scheme Eira \
@@ -51,6 +53,9 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             | tee test.log | grep -E 'error:|Test Case .* (passed|failed)|Executed|TEST (SUCCEEDED|FAILED)' || true
           grep -q 'TEST SUCCEEDED' test.log
+
+      - name: 网页版读得回导出的备份
+        run: node scripts/check-export.mjs "$RUNNER_TEMP/export-check"
 
       - name: 编译
         run: |

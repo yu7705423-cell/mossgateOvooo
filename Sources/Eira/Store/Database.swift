@@ -158,6 +158,29 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 库里有记录的全部数据域。导出时一个不落。
+    func collections() throws -> [String] {
+        try queue.sync {
+            try query("SELECT DISTINCT collection FROM records ORDER BY collection", []) { Self.text($0, 0) }
+        }
+    }
+
+    /// 一个数据域的全部记录的原文，不解析。导出时用。
+    func rawRows(_ collection: String) throws -> [Data] {
+        try queue.sync {
+            try query("SELECT json FROM records WHERE collection = ? ORDER BY created, id", [collection]) { Self.blob($0, 0) }
+        }
+    }
+
+    /// 登记过的全部图片与文件。
+    func allMedia() throws -> [(kind: String, id: String, ext: String)] {
+        try queue.sync {
+            try query("SELECT kind, id, ext FROM media ORDER BY kind, id", []) {
+                (Self.text($0, 0), Self.text($0, 1), Self.text($0, 2))
+            }
+        }
+    }
+
     // MARK: - kv
 
     func kv(_ key: String) throws -> JSONValue? {
