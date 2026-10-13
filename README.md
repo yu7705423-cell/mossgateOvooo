@@ -4,10 +4,9 @@
 
 ## 编译
 
-GitHub 上打开 Actions，左边选「编译」，点「Run workflow」。
-十几分钟后在那次运行的页面底部下载 `Eiraowo-unsigned`，里面是未签名的 ipa。
-
-只手动触发：仓库私密，macOS 机器按 10 倍扣免费额度。
+推到 `dev` 或 `main` 自动编译：先在模拟器上跑自动测试，全部通过才出 ipa。
+也可以在 GitHub 的 Actions 页面左边选「编译」，点「Run workflow」手动触发。
+几分钟后在那次运行的页面底部下载 `Eiraowo-unsigned`，里面是未签名的 ipa。
 
 ## 目录
 

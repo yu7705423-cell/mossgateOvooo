@@ -46,7 +46,8 @@
 
 - 工程用 XcodeGen 描述（`project.yml`），`.xcodeproj` 不进仓库。新加的 Swift 文件放进 `Sources/Eira/` 就会被收进去。
 - 最低 iOS 17（要用 Observation 与 SwiftData）。
-- 编译在 GitHub Actions 的 macOS 机器上跑，**只手动触发**：仓库私密，macOS 额度按 10 倍扣。
+- 编译在 GitHub Actions 的 macOS 机器上跑。仓库是公开的，标准机器不扣额度，推到 `dev` 或 `main` 就自动编译并跑测试，
+  也可以在 Actions 页面手动触发。**仓库公开**，所以任何密钥、证书、用户数据都不许进仓库，一律放仓库的 Secrets。
   本地容器是 Linux，编译不了 SwiftUI，推之前要格外仔细地读一遍自己的代码。
 - 包标识目前是占位的 `com.example.eiraowo`，开发者账号下来后在 `project.yml` 改成正式的。
 
