@@ -50,7 +50,17 @@
   本地容器是 Linux，编译不了 SwiftUI，推之前要格外仔细地读一遍自己的代码。
 - 包标识目前是占位的 `com.example.eiraowo`，开发者账号下来后在 `project.yml` 改成正式的。
 
-## 4. 分支
+## 4. 从网页版搬过来的东西
+
+- **提示词模板**：`Resources/templates.json` 由 `node scripts/sync-templates.mjs <网页版仓库目录>` 直接读网页版的
+  DEFAULT_TEMPLATES 生成，**不许手改**。网页版改了模板，重跑一次。
+- **字段**：`docs/web-fields.md` 是网页版各数据域的字段与默认值。读记录一律经 `Models/` 里的视图，缺的字段按那里写的默认值补。
+- **数据**：本地库（`Store/Database.swift`）一张表装下网页版全部数据域，一行一条记录，原样存 JSON。
+  导入时网页版的每一个数据域都存下来，原生版暂时不认的也存。不认得的字段写回去时不许丢。
+- **协议**：回复解析（`Prompt/ReplyParser.swift`）里的正则照抄网页版 `reply.js`，提示词区块抬头照抄 `engine.js` 与 `context/*.js`。
+  改之前先对照网页版。
+
+## 5. 分支
 
 - `main` 是默认分支。工作流文件必须在 `main` 上，Actions 页面才会出现「Run workflow」按钮。
 - 日常改动在开发分支上做，用户说合再合进 `main`。
