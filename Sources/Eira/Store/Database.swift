@@ -151,6 +151,13 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 删掉一个数据域里查询字段等于 value 的全部记录（比如某段会话的全部消息）。
+    func deleteAll(_ collection: String, where value: String) throws {
+        try queue.sync {
+            try run("DELETE FROM records WHERE collection = ? AND idx = ?", [collection, value])
+        }
+    }
+
     // MARK: - kv
 
     func kv(_ key: String) throws -> JSONValue? {

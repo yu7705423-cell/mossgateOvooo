@@ -8,6 +8,8 @@ struct RootView: View {
         TabView {
             ChatListView()
                 .tabItem { Label("消息", systemImage: "bubble.left") }
+            ContactsView()
+                .tabItem { Label("联系", systemImage: "person.2") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }

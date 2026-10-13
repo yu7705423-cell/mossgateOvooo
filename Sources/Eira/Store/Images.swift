@@ -10,9 +10,11 @@ import UniformTypeIdentifiers
 /// 读：按要显示的大小缩小着解码，解出来的放进内存缓存。长列表里每个气泡都整张解码，几十张就把内存吃满。
 enum Images {
     static let photoMax: CGFloat = 1280
+    /// 头像（网页版 ICON_MAX）
+    static let iconMax: CGFloat = 256
 
-    /// 存一张图，返回新的图片 id（和网页版同样的 img 前缀）。
-    static func save(_ data: Data) throws -> String {
+    /// 存一张图，返回新的图片 id（和网页版同样的 img 前缀）。maxPixel 是最长边。
+    static func save(_ data: Data, maxPixel: CGFloat = photoMax) throws -> String {
         guard let src = CGImageSourceCreateWithData(data as CFData, nil), CGImageSourceGetCount(src) > 0 else {
             throw StoreError(message: "无法读取这张图片")
         }
@@ -26,7 +28,7 @@ enum Images {
             let opts: [CFString: Any] = [
                 kCGImageSourceCreateThumbnailFromImageAlways: true,
                 kCGImageSourceCreateThumbnailWithTransform: true,
-                kCGImageSourceThumbnailMaxPixelSize: photoMax,
+                kCGImageSourceThumbnailMaxPixelSize: maxPixel,
             ]
             guard let cg = CGImageSourceCreateThumbnailAtIndex(src, 0, opts as CFDictionary) else {
                 throw StoreError(message: "无法读取这张图片")

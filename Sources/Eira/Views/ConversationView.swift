@@ -43,6 +43,18 @@ struct ConversationView: View {
                             Button("加载更早的消息") { pageSize += 100; reload() }
                                 .font(.footnote).padding(.top, Theme.gap)
                         }
+                        // 开场白：会话里还没有消息时显示，不存进库、不发给模型（网页版同样）
+                        if messages.isEmpty, let greet = char?.firstMessage, !greet.isEmpty, chat?.isGroup != true {
+                            HStack(alignment: .top, spacing: Theme.gap) {
+                                Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "")
+                                Text(greet)
+                                    .padding(.horizontal, Theme.pad).padding(.vertical, 8)
+                                    .foregroundStyle(Theme.bubbleTheirsText)
+                                    .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                                Spacer(minLength: 48)
+                            }
+                            .padding(.horizontal, Theme.pad)
+                        }
                         ForEach(messages) { m in
                             MessageRow(message: m, char: char,
                                        onRetry: m.isError ? { retry(m) } : nil,
