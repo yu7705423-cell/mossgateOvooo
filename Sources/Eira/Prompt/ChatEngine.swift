@@ -41,7 +41,7 @@ enum ChatEngine {
             var row = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "", turnId: turnId)
             row.row["status"] = .string("error")
             row.row["error"] = .string(error.localizedDescription)
-            try? Repo.save(row)
+            row = (try? Repo.append(row)) ?? row
             onRow(row)
             throw error
         }
@@ -121,7 +121,6 @@ enum ChatEngine {
         let narrationOn = chat.row.bool("narration")
         let parts = parsed.parts.filter { $0.type != .narration || narrationOn }
         var created: [Message] = []
-        var lastAt = 0.0
         var sawSilence = false
 
         for (i, part) in parts.enumerated() {
@@ -131,12 +130,7 @@ enum ChatEngine {
                 head(&m)
                 if let stamp = parsed.stamp { m.row["stamp"] = .string(stampBody(stamp)) }
             }
-            // 同一毫秒的两条排序不稳，至少隔一毫秒
-            let at = max(Date().millis, lastAt + 1)
-            m.row["createdAt"] = .number(at)
-            m.row["updatedAt"] = .number(at)
-            lastAt = at
-            try Repo.save(m)
+            m = try Repo.append(m)
             created.append(m)
             onRow(m)
             if !instant && i < parts.count - 1 {
@@ -148,7 +142,7 @@ enum ChatEngine {
         if created.isEmpty && sawSilence {
             var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[不回复]", kind: "silence", turnId: turnId)
             head(&m)
-            try Repo.save(m)
+            m = try Repo.append(m)
             created.append(m)
             onRow(m)
         }
@@ -277,7 +271,7 @@ enum ChatEngine {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[图片]", kind: "image")
         m.row["imageId"] = .string(imageId)
         m.row["vision"] = .string(AppSettings.load().visionMode == "chat" ? "chat" : "off")
-        try Repo.save(m)
+        m = try Repo.append(m)
         if var c = try Repo.chat(chatId) {
             c.row["lastMessageAt"] = .number(Date().millis)
             c.row.touch()
@@ -290,7 +284,7 @@ enum ChatEngine {
     static func send(text: String, chatId: String, quote: Message? = nil) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)
         if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
-        try Repo.save(m)
+        m = try Repo.append(m)
         if var c = try Repo.chat(chatId) {
             c.row["lastMessageAt"] = .number(Date().millis)
             c.row.touch()

@@ -127,3 +127,14 @@ final class TurnTests: StoreTestCase {
         XCTAssertTrue(b.messages.contains { $0.content.contains("[引用：在呢]\n这句什么意思") })
     }
 }
+
+extension TurnTests {
+    /// 同一毫秒里接连加的几条，顺序和加的顺序一致（一次发几张图时）。
+    func testAppendKeepsOrderWithinSameMillisecond() throws {
+        var ids: [String] = []
+        for i in 0..<30 {
+            ids.append(try Repo.append(Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "第\(i)条")).id)
+        }
+        XCTAssertEqual(try Repo.messages(chatId: "chat_a").suffix(30).map(\.id), ids)
+    }
+}

@@ -92,7 +92,7 @@ final class ImageTests: StoreTestCase {
     /// 上一轮的图（角色已经回过）不带。
     func testOlderTurnImageNotSent() throws {
         _ = try prepareChatWithImage(vision: "chat")
-        try Repo.save(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "好看"))
+        try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "好看"))
         _ = try ChatEngine.send(text: "还有呢", chatId: "chat_a")
         XCTAssertTrue(try built().messages.allSatisfy { $0.images.isEmpty })
     }

@@ -32,6 +32,19 @@ enum Repo {
     }
 
     static func save(_ m: Message) throws { try db.put(Collections.messages, m.row) }
+
+    /// 新加一条消息。createdAt 至少比这段会话里最后一条晚一毫秒：消息按 createdAt 排，
+    /// 同一毫秒的两条会按随机的 id 排，一次发几张图、发图后紧跟着打字时顺序就乱了。
+    @discardableResult
+    static func append(_ m: Message) throws -> Message {
+        var out = m
+        let last = try db.last(Collections.messages, where: m.chatId, limit: 1).first?.created ?? 0
+        let at = max(Date().millis, last + 1)
+        out.row["createdAt"] = .number(at)
+        out.row["updatedAt"] = .number(at)
+        try db.put(Collections.messages, out.row)
+        return out
+    }
     static func save(_ c: Chat) throws { try db.put(Collections.chats, c.row) }
 
     static func personas() throws -> [Persona] {
