@@ -57,9 +57,18 @@ struct AppHost: View {
     var close: () -> Void
 
     var body: some View {
-        content
-            .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
-            .safeAreaInset(edge: .bottom, spacing: 0) { HomeBar(close: close) }
+        // 横条画在屏幕最底下系统横条那一块（安全区以下），不占页面的地方：从前用 safeAreaInset 垫了一块白底，
+        // 页面底下多出一截，iOS 26 放在底部的搜索框被它压住
+        GeometryReader { g in
+            let inset = g.safeAreaInsets.bottom
+            content
+                .frame(width: g.size.width, height: g.size.height)
+                .overlay(alignment: .bottom) {
+                    HomeBar(height: max(inset, 20), close: close).offset(y: inset)
+                }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
+        .persistentSystemOverlays(.hidden)
     }
 
     @ViewBuilder private var content: some View {
@@ -76,19 +85,22 @@ struct AppHost: View {
     }
 }
 
-/// 底部那一条（网页版 .home-indicator）：点一下或往上一推，回到主屏。
+/// 底部那一条（网页版 .home-indicator）：点一下回到主屏。
+/// 只占屏幕最底下系统横条那一块（安全区以下），透明、不垫底色，页面内容照旧铺到它上面为止。
+/// 系统自己的横条在 app 打开时藏起来，同一个位置不放两条。往上推仍归系统（回到手机桌面）。
 struct HomeBar: View {
+    var height: CGFloat
     var close: () -> Void
 
     var body: some View {
         Capsule()
-            .fill(Color(uiColor: .tertiaryLabel))
+            .fill(Color.primary.opacity(0.35))
             .frame(width: 108, height: 4)
-            .frame(maxWidth: .infinity, minHeight: 22)
+            .padding(.bottom, 8)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottom)
+            .frame(height: height)
             .contentShape(Rectangle())
-            .background(Theme.background)
             .onTapGesture(perform: close)
-            .gesture(DragGesture(minimumDistance: 10).onEnded { v in if v.translation.height < -20 { close() } })
             .accessibilityElement()
             .accessibilityLabel("返回主屏")
             .accessibilityAddTraits(.isButton)
