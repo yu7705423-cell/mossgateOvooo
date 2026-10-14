@@ -14,6 +14,7 @@ struct ChatListView: View {
         let title: String
         let avatar: String
         let preview: String
+        var tag = ""
         var id: String { chat.id }
     }
 
@@ -37,6 +38,12 @@ struct ChatListView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack(alignment: .firstTextBaseline, spacing: Theme.sp2) {
                                         Text(item.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                                        // 自动回复开着时名字旁一个小字：忙碌、休息、自动回复
+                                        if !item.tag.isEmpty {
+                                            Text(item.tag).font(.system(size: 10)).foregroundStyle(Theme.text3)
+                                                .padding(.horizontal, 4).padding(.vertical, 1)
+                                                .overlay(Capsule().strokeBorder(Theme.border, lineWidth: 1))
+                                        }
                                         Spacer(minLength: 0)
                                         Text(shortTime(item.chat.lastMessageAt))
                                             .font(.system(size: 11)).foregroundStyle(Theme.text3)
@@ -110,7 +117,8 @@ struct ChatListView: View {
                 let last = try Repo.messages(chatId: chat.id, limit: 1).last
                 return Item(chat: chat, title: title,
                             avatar: chat.isGroup ? chat.avatar : first.map { ChatFaces.of(chat, key: $0.id, fallback: $0.avatar) } ?? "",
-                            preview: last.map(previewText) ?? "")
+                            preview: last.map(previewText) ?? "",
+                            tag: AutoReply.listTag(chat))
             }
             loadError = nil
         } catch {

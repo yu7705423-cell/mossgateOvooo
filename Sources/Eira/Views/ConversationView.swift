@@ -1034,9 +1034,12 @@ struct ConversationView: View {
     /// 发出去之后：按这段会话的节奏，发完就回、排一个延迟回复，或者什么都不做（网页版 afterSend）
     private func afterSend(_ text: String) {
         guard let c = try? Repo.chat(chatId) else { return }
+        // 角色在忙或在休息、开着自动回复：先收到一句（随日程写好，不调接口）。延迟回复档照常排，其余档不再立即回
+        let autos = (try? AutoReply.fire(chatId, AutoReply.hers)) ?? []
+        if !autos.isEmpty { messages += autos; turn = nil }
         switch Pace.mode(c) {
         case Pace.now:
-            generate()
+            if autos.isEmpty { generate() }
         case Pace.paced:
             do { try Pace.schedule(chatId, text: text); chat = try Repo.chat(chatId) }
             catch { problem = "延迟回复未能排上：\(error.localizedDescription)" }

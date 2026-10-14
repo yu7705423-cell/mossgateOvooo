@@ -485,6 +485,50 @@ struct PaceSection: View {
                  + "时刻由本地计算，不由模型决定。到点时应用不在前台的，在下次打开时补回。")
         }
         .onAppear(perform: load)
+        if let c = chat { autoSections(c) }
+    }
+
+    /// 自动回复（网页版 PacePage 的 CharAuto 与 AutoSide）：都是固定的话，不调接口
+    @ViewBuilder
+    private func autoSections(_ c: Chat) -> some View {
+        if !c.isGroup {
+            let charDayOn = (c.characterIds.first.flatMap { try? Repo.character($0) }).map { DayPlan.isOn($0) } ?? false
+            Section {
+                Toggle("忙碌或休息时自动回复", isOn: Binding(get: { AutoReply.config(c, AutoReply.hers).on },
+                                                    set: { setAuto(AutoReply.hers, ["on": .bool($0)]) }))
+            } footer: {
+                Text("开启后，角色在「日常」当前时段有事项、或处于免打扰时段时，发来消息会先收到一条自动回复。内容随每天的日程一并生成，不另外调用接口。每段忙碌或休息期间只回一次。正式回复在「延迟回复」下于忙完之后照常发出；其余节奏不再立即回复。"
+                     + (charDayOn ? "" : "该角色尚未开启「日常」，开启后才有当前事项与自动回复的内容。"))
+            }
+        }
+        let mine = AutoReply.config(c, AutoReply.mine)
+        Section {
+            Toggle("开启", isOn: Binding(get: { mine.on }, set: { v in
+                if v && mine.text.isEmpty { problem = "请先填写自动回复的内容"; return }
+                setAuto(AutoReply.mine, ["on": .bool(v)])
+            }))
+            TextField("回什么（例如：在忙，晚点回你）", text: Binding(get: { mine.text }, set: { setAuto(AutoReply.mine, ["text": .string($0)]) }), axis: .vertical)
+                .lineLimit(1...3)
+            Stepper(mine.max == 0 ? "最多回几条：不限" : "最多回几条：\(mine.max)", value: Binding(
+                get: { mine.max }, set: { setAuto(AutoReply.mine, ["max": .number(Double(max(0, $0)))]) }), in: 0...999)
+            Toggle("设结束时间", isOn: Binding(get: { mine.until > 0 }, set: { v in
+                setAuto(AutoReply.mine, ["until": .number(v ? Date().addingTimeInterval(3600).millis : 0)])
+            }))
+            if mine.until > 0 {
+                DatePicker("结束时间", selection: Binding(get: { Date(millis: mine.until) },
+                                                       set: { setAuto(AutoReply.mine, ["until": .number($0.millis)]) }))
+            }
+        } header: {
+            Text("我的自动回复")
+        } footer: {
+            Text((mine.on ? (mine.max > 0 ? "已开启，还可回 \(max(0, mine.max - mine.used)) 条。" : "已开启，不限条数。") : "")
+                 + "开启后角色发来消息时，替你回一句固定的话，不经过模型，不消耗接口调用。条数或结束时间任一达到时自动关闭，并在对话中留下一行提示。双方的自动回复不会互相触发。")
+        }
+    }
+
+    private func setAuto(_ side: String, _ patch: [String: JSONValue]) {
+        do { try AutoReply.set(chatId, side, patch); load(); problem = nil }
+        catch { problem = "未能保存：\(error.localizedDescription)" }
     }
 
     private func load() { chat = try? Repo.chat(chatId) }

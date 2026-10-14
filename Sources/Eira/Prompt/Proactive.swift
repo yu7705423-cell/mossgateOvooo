@@ -192,6 +192,8 @@ enum Proactive {
                                               versions: .init(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         try bumpUnread(chatId, made.count)
         Notifier.post(chatId: chatId, title: char.displayName, text: raw)
+        // 我的自动回复：角色主动来的这几条，同样替我回一句固定的
+        _ = try? AutoReply.fire(chatId, AutoReply.mine)
         return made
     }
 
