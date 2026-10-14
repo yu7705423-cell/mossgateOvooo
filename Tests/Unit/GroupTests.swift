@@ -120,3 +120,17 @@ final class GroupTests: StoreTestCase {
         XCTAssertFalse(try Repo.messages(chatId: group.id).contains { $0.content.contains("再说一次") })
     }
 }
+
+extension GroupTests {
+    func testMentionCompletion() throws {
+        XCTAssertNil(GroupChat.pendingAt("你好"))
+        XCTAssertEqual(GroupChat.pendingAt("你好 @"), "")
+        XCTAssertNil(GroupChat.pendingAt("@某人 你好"))
+        let chat: Chat = group
+        let members = GroupChat.members(chat)
+        let first = try XCTUnwrap(members.first)
+        let key = String(first.name.prefix(1))
+        XCTAssertTrue(GroupChat.mentionCandidates("问一下 @\(key)", chat: chat, members: members).contains { $0.id == first.id })
+        XCTAssertEqual(GroupChat.completeMention("问一下 @\(key)", chat: chat, first), "问一下 @\(GroupChat.nameIn(chat, first)) ")
+    }
+}

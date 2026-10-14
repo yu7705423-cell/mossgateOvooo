@@ -73,6 +73,28 @@ enum GroupChat {
         return ids
     }
 
+    /// 正在输入的「@」：草稿末尾一个 @ 后面还没打空格的那一截。没有就是 nil
+    static func pendingAt(_ draft: String) -> String? {
+        guard let at = draft.lastIndex(of: "@") else { return nil }
+        let tail = draft[draft.index(after: at)...]
+        guard !tail.contains(where: { $0.isWhitespace }) else { return nil }
+        return String(tail)
+    }
+
+    /// @ 补全的候选：名字或群昵称以已打的那一截开头的成员
+    static func mentionCandidates(_ draft: String, chat: Chat, members: [Character]) -> [Character] {
+        guard let key = pendingAt(draft) else { return [] }
+        return members.filter { c in
+            key.isEmpty || c.name.lowercased().hasPrefix(key.lowercased()) || nameIn(chat, c).lowercased().hasPrefix(key.lowercased())
+        }
+    }
+
+    /// 选中一位：把末尾那一截换成「@名字 」
+    static func completeMention(_ draft: String, chat: Chat, _ c: Character) -> String {
+        guard let at = draft.lastIndex(of: "@") else { return draft + "@\(nameIn(chat, c)) " }
+        return String(draft[..<at]) + "@\(nameIn(chat, c)) "
+    }
+
     // MARK: - 建群与成员
 
     static func create(memberIds: [String], title: String, personaId: String) throws -> Chat {

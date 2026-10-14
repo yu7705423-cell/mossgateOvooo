@@ -263,6 +263,7 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
+            mentionBar
             // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
             HStack(alignment: .bottom, spacing: Theme.sp2) {
                 sideButton("plus", label: showPanel ? "收起" : "添加内容") {
@@ -298,6 +299,32 @@ struct ConversationView: View {
             }
         }
         .background(Theme.bg)
+    }
+
+    /// 群里输入「@」时，输入框上方一排可以提到的成员
+    @ViewBuilder private var mentionBar: some View {
+        if let chat, chat.isGroup {
+            let list = GroupChat.mentionCandidates(draft, chat: chat, members: GroupChat.members(chat))
+            if !list.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.sp2) {
+                        ForEach(list) { c in
+                            Button { draft = GroupChat.completeMention(draft, chat: chat, c) } label: {
+                                HStack(spacing: 6) {
+                                    Avatar(imageId: c.avatar, name: c.name, size: 22)
+                                    Text(GroupChat.nameIn(chat, c)).font(.system(size: 13)).foregroundStyle(Theme.text)
+                                }
+                                .padding(.horizontal, Theme.sp2).padding(.vertical, 5)
+                                .background(Theme.surface2, in: Capsule())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .padding(.horizontal, Theme.sp3)
+                }
+                .padding(.top, Theme.sp2)
+            }
+        }
     }
 
     /// 输入栏两侧的圆按钮（.composer-side）
