@@ -24,7 +24,7 @@ struct ChatListView: View {
                     Text(loadError).foregroundStyle(Theme.danger)
                 }
                 if rows.isEmpty && loadError == nil {
-                    Text("暂无会话。可在「设置 - 导入网页版备份」中导入网页版的数据。")
+                    Text("暂无会话。可在「设置 - 存储与备份 - 导入网页版备份」中导入网页版的数据。")
                         .foregroundStyle(Theme.secondaryText)
                 }
                 ForEach(rows) { item in

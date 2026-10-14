@@ -35,7 +35,7 @@ struct ContactsView: View {
                     }
                 }
                 if chars.isEmpty {
-                    Text("暂无角色。点右上角新建，或在「设置 - 导入网页版备份」中导入。").foregroundStyle(Theme.secondaryText)
+                    Text("暂无角色。点右上角新建，或在「设置 - 存储与备份 - 导入网页版备份」中导入。").foregroundStyle(Theme.secondaryText)
                 }
             }
             .searchable(text: $query, prompt: "搜索名字或备注")
