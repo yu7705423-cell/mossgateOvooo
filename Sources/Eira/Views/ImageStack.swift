@@ -48,8 +48,8 @@ struct ImageStackRow: View {
             if !mine { Avatar(imageId: avatar, name: name) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 6) {
                 ZStack(alignment: .bottomTrailing) {
-                    ForEach(Array(order.enumerated().reversed()), id: \.element) { depth, i in
-                        LocalImage(id: msgs[i].imageId, maxPixel: 600)
+                    ForEach(Array(order.indices.reversed()), id: \.self) { depth in
+                        LocalImage(id: msgs[order[depth]].imageId, maxPixel: 600)
                             .frame(width: 168, height: 210)
                             .clipShape(RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous).strokeBorder(Theme.bg, lineWidth: 2))

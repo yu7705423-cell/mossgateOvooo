@@ -680,12 +680,12 @@ struct ConversationView: View {
 
     /// 连着发的几张图摞成一叠。多选时不摞：摞着就没法单独挑其中一张
     private var displayRows: [DisplayRow] {
-        guard picking == nil else { return messages.map { .single($0) } }
+        guard picking == nil else { return messages.map { DisplayRow.single($0) } }
         var out: [DisplayRow] = []
         for g in ImageStacks.group(messages) {
-            guard g.count > 1, let head = g.first else { out += g.map { .single($0) }; continue }
+            guard g.count > 1, let head = g.first else { out += g.map { DisplayRow.single($0) }; continue }
             if openStacks.contains(head.id) {
-                out += g.map { .single($0) }
+                out += g.map { DisplayRow.single($0) }
                 out.append(.fold(head.id, g.count))
             } else {
                 out.append(.stack(g))

@@ -9,7 +9,7 @@ enum StickerMatch {
 
     static func normalize(_ text: String) -> String {
         var t = text.precomposedStringWithCompatibilityMapping
-        t = t.replacingOccurrences(of: "[\\u{200B}-\\u{200D}\\u{FEFF}]", with: "", options: .regularExpression)
+        t = t.replacingOccurrences(of: "[\\x{200B}-\\x{200D}\\x{FEFF}]", with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\.(png|jpe?g|gif|webp|bmp|apng)$"#, with: "", options: [.regularExpression, .caseInsensitive])
         t = t.replacingOccurrences(of: #"^[\s"'`「『【\[(（]+|[\s"'`」』】\])）]+$"#, with: "", options: .regularExpression)
         t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
