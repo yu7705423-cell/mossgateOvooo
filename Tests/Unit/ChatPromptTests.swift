@@ -81,4 +81,22 @@ final class ChatPromptTests: StoreTestCase {
         XCTAssertTrue(shaped.last?.content.hasPrefix("<context>\n") == true)
         for (a, b) in zip(shaped, shaped.dropFirst()) { XCTAssertNotEqual(a.role, b.role) }
     }
+
+    /// 「你们之间」：网页版存在 states[根账号].blocks.us；没写过时退回关系底色 bonds[根账号].text。
+    func testBondReadsWebShape() throws {
+        try importFixture("data.json")
+        var char = try XCTUnwrap(Repo.character("char_a"))
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let personas = try Repo.personas()
+        let me = try personas.first { $0.id == chat.personaId } ?? Repo.activePersona(.load())
+        let root = Repo.rootId(of: me?.id ?? "", in: personas)
+        let key = root.isEmpty ? "root" : root
+        char.row["bonds"] = .object([key: .object(["text": .string("BOND_TEXT")])])
+        var b = try ChatPrompt.build(chat: chat, char: char, settings: .load())
+        XCTAssertTrue(b.system.contains("[你们之间的关系]\nBOND_TEXT"))
+        char.row["states"] = .object([key: .object(["blocks": .object(["us": .string("US_TEXT")])])])
+        b = try ChatPrompt.build(chat: chat, char: char, settings: .load())
+        XCTAssertTrue(b.system.contains("[你们之间的关系]\nUS_TEXT"))
+        XCTAssertFalse(b.system.contains("BOND_TEXT"))
+    }
 }

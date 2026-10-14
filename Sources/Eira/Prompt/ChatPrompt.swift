@@ -253,9 +253,10 @@ enum ChatPrompt {
 
     private static func bondBlock(char: Character, rootId: String) -> String {
         let key = rootId.isEmpty ? "root" : rootId
-        let us = char.row["states"]?[key]?["us"]?.string
-        let bond = char.row["bonds"]?[key]?["text"]?.string ?? char.row["bonds"]?["root"]?["text"]?.string
-        let text = (us?.isEmpty == false ? us : bond) ?? ""
+        // 「你们之间」那一块存在 states[根账号].blocks.us；没写过时退回关系底色（网页版 mind.blocksOf、bond.textOf）
+        let us = (char.row["states"]?[key]?["blocks"]?["us"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let bond = (char.row["bonds"]?[key]?["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        let text = us.isEmpty ? bond : us
         return text.isEmpty ? "" : "\n\n[你们之间的关系]\n\(text)"
     }
 
