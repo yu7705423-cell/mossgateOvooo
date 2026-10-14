@@ -129,6 +129,7 @@ struct ChatListView: View {
     private func previewText(_ m: Message) -> String {
         if m.isRecalled { return "撤回了一条消息" }
         if m.isError { return "回复失败" }
+        if m.kind == Forward.kind { return "[聊天记录]" }
         return m.content
     }
 }

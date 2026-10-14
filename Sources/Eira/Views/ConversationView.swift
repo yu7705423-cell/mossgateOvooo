@@ -39,6 +39,8 @@ struct ConversationView: View {
     /// 要滚过去的那一条；滚到之后闪一下
     @State private var jumpTo: String?
     @State private var flashId: String?
+    @State private var forwarding = false
+    @State private var openedForward: Message?
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -206,6 +208,18 @@ struct ConversationView: View {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
                              onSelect: { showSettings = false; picking = [] })
+        }
+        .sheet(isPresented: $forwarding) {
+            NavigationStack {
+                ForwardPickView(fromChatId: chatId, count: picking?.count ?? 0) { forwardPicked(to: $0) }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { forwarding = false } } }
+            }
+        }
+        .sheet(item: $openedForward) { m in
+            NavigationStack {
+                ForwardDetailView(message: m)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { openedForward = nil } } }
+            }
         }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
@@ -424,6 +438,23 @@ struct ConversationView: View {
         picking = p
     }
 
+    /// 转发选中的几条：落在对方会话里，不调接口
+    private func forwardPicked(to target: Chat) {
+        guard let p = picking else { return }
+        do {
+            let all = try Repo.messages(chatId: chatId).filter { p.contains($0.id) }
+            try Forward.send(from: chatId, to: target.id, list: all)
+            forwarding = false
+            picking = nil
+            if target.id == chatId { reload() }
+            notice = "已转发 \(all.count) 条消息。"
+            NotificationCenter.default.post(name: .eiraChatChanged, object: target.id)
+        } catch {
+            forwarding = false
+            problem = "转发失败：\(error.localizedDescription)"
+        }
+    }
+
     private func removePicked() {
         guard let p = picking else { return }
         do {
@@ -438,6 +469,9 @@ struct ConversationView: View {
         HStack {
             Button("取消") { picking = nil }.buttonStyle(EiraButtonStyle(kind: .ghost))
             Spacer()
+            Button("转发") { forwarding = true }
+                .buttonStyle(EiraButtonStyle(kind: .ghost))
+                .disabled(picking?.isEmpty != false)
             Button("删除（\(picking?.count ?? 0)）") { confirmBatchDelete = true }
                 .buttonStyle(EiraButtonStyle(kind: .danger))
                 .disabled(picking?.isEmpty != false)
@@ -557,6 +591,8 @@ struct ConversationView: View {
 
     private func act(_ action: MessageRow.Action, _ m: Message) {
         switch action {
+        case .openForward:
+            openedForward = m
         case .copy:
             UIPasteboard.general.string = m.content
         case .quote:
@@ -890,7 +926,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward }
 
     let message: Message
     let char: Character?
@@ -943,7 +979,7 @@ struct MessageRow: View {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
@@ -1160,6 +1196,9 @@ struct MessageRow: View {
             giftCard
         case "takeout":
             takeoutCard
+        case "forward":
+            ForwardCard(message: message)
+                .onTapGesture { onAction?(.openForward) }
         default:
             // 正则替换里「屏幕上显示」的那一份；只显示译文时正文位置换成译文。按空行拆成几个气泡（网页版 splitBubbles）
             let shown = swapTrans ? translation : RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s)
