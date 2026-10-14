@@ -368,11 +368,9 @@ enum ChatEngine {
             m = make("narration", "[旁白：\(p.text)]")
             m.row["narration"] = .string(p.text)
         case .dice:
-            let raw = Int((chat.row.number("diceFaces") ?? 6).rounded())
-            let faces = raw >= 2 ? raw : 6
+            let faces = diceFaces(chat)
             let value = Int.random(in: 1...faces)
-            // 正文是协议，和网页版 extras.roll 一字不差：六面只写点数，别的面数带上「N 面」
-            m = make("dice", faces == 6 ? "[骰子：\(value)]" : "[骰子：\(value)（\(faces) 面）]")
+            m = make("dice", diceContent(value: value, faces: faces))
             m.row["faces"] = .number(Double(faces))
             m.row["value"] = .number(Double(value))
         case .transfer:
@@ -512,6 +510,32 @@ enum ChatEngine {
             try Repo.save(c)
         }
         return out
+    }
+
+    // MARK: - 骰子（网页版 extras.roll）
+
+    /// 掷骰子可选的面数
+    static let diceChoices = [6, 20, 100]
+
+    /// 这段会话默认几面：存的不是 2 以上的整数就按 6
+    static func diceFaces(_ chat: Chat) -> Int {
+        let v = Int((chat.row.number("diceFaces") ?? 6).rounded())
+        return v >= 2 ? v : 6
+    }
+
+    /// 正文是协议，和网页版一字不差：六面只写点数，别的面数带上「N 面」
+    static func diceContent(value: Int, faces: Int) -> String {
+        faces == 6 ? "[骰子：\(value)]" : "[骰子：\(value)（\(faces) 面）]"
+    }
+
+    /// 我掷一次。点数由本地随机数掷出，不经过模型；角色到下一轮才看得到
+    static func rollDice(chatId: String, faces: Int) throws -> Message {
+        let n = faces >= 2 ? faces : 6
+        let value = Int.random(in: 1...n)
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: diceContent(value: value, faces: n), kind: "dice")
+        m.row["faces"] = .number(Double(n))
+        m.row["value"] = .number(Double(value))
+        return try post(m)
     }
 
     /// 用户发一条文字。quote 是引用的那一条。

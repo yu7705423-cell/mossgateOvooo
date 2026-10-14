@@ -42,6 +42,7 @@ struct ConversationView: View {
     @State private var forwarding = false
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
+    @State private var dicing = false
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -116,6 +117,15 @@ struct ConversationView: View {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
                              onSelect: { showSettings = false; picking = [] })
+        }
+        .confirmationDialog("掷骰子", isPresented: $dicing, titleVisibility: .visible) {
+            ForEach(ChatEngine.diceChoices, id: \.self) { n in
+                Button(chat.map { ChatEngine.diceFaces($0) == n } == true ? "\(n) 面（这段对话的默认值）" : "\(n) 面") {
+                    post { try ChatEngine.rollDice(chatId: chatId, faces: n) }
+                }
+            }
+        } message: {
+            Text("点数由本地随机数掷出，不经过模型。角色要到下一轮才看得到结果。")
         }
         .sheet(isPresented: $forwarding) {
             NavigationStack {
@@ -233,7 +243,10 @@ struct ConversationView: View {
             if music.listenChat == chatId { ListenBar(chatId: chatId) }
             if let q = quoting {
                 HStack {
-                    Text("引用：\(q.content)").font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                    Text("\(q.role == .user ? (me?.name ?? "我") : (speaker(of: q)?.displayName ?? "对方"))：\(q.content)")
+                        .font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                        .onTapGesture { jump(q.id) }
+                        .accessibilityAddTraits(.isButton)
                     Spacer()
                     Button { quoting = nil } label: { Image(systemName: "xmark.circle") }
                         .accessibilityLabel("取消引用")
@@ -309,16 +322,18 @@ struct ConversationView: View {
             }
             .disabled(busy)
             panelButton("mic", "语音") { recordingVoice = true }
+            panelButton("grid", "骰子") { dicing = true }
+            // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
             if chat?.isGroup == false {
                 panelButton("headphone", "一起听") {
                     do { try music.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
                 }
+                panelButton("wallet", "转账") { composing = .transfer }
+                panelButton("gift", "礼物") { composing = .gift }
+                panelButton("bag", "外卖") { composing = .takeout }
+                panelButton("map", "位置") { composing = .location }
+                panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
             }
-            panelButton("wallet", "转账") { composing = .transfer }
-            panelButton("gift", "礼物") { composing = .gift }
-            panelButton("bag", "外卖") { composing = .takeout }
-            panelButton("map", "位置") { composing = .location }
-            panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
             if let chat, chat.isGroup {
                 Menu {
                     ForEach(GroupChat.members(chat)) { c in

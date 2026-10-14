@@ -95,3 +95,23 @@ final class MessageEditTests: StoreTestCase {
         XCTAssertTrue(TranslateOne.can(theirs, lang: "中文"))
     }
 }
+
+/// 我掷骰子：本地随机，正文与网页版一字不差
+final class DiceTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testRollDice() throws {
+        let six = try ChatEngine.rollDice(chatId: "chat_a", faces: 6)
+        let v = Int(six.row.number("value") ?? 0)
+        XCTAssertTrue((1...6).contains(v))
+        XCTAssertEqual(six.content, "[骰子：\(v)]")
+        XCTAssertEqual(six.role, .user)
+        let d20 = try ChatEngine.rollDice(chatId: "chat_a", faces: 20)
+        XCTAssertEqual(d20.content, "[骰子：\(Int(d20.row.number("value") ?? 0))（20 面）]")
+        XCTAssertEqual(Int(try ChatEngine.rollDice(chatId: "chat_a", faces: 1).row.number("faces") ?? 0), 6)
+        XCTAssertEqual(ChatEngine.diceFaces(try XCTUnwrap(Repo.chat("chat_a"))), 6)
+    }
+}
