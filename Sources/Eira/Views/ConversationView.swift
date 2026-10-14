@@ -30,6 +30,7 @@ struct ConversationView: View {
     @State private var showSettings = false
     @State private var showStickers = false
     @State private var showPanel = false
+    @State private var me: Persona?
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
@@ -43,7 +44,7 @@ struct ConversationView: View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: Theme.gap) {
+                    LazyVStack(spacing: 0) {
                         if hasMore {
                             Button("加载更早的消息") { pageSize += 100; reload() }
                                 .font(.footnote).padding(.top, Theme.gap)
@@ -63,13 +64,35 @@ struct ConversationView: View {
                             }
                             .padding(.horizontal, Theme.pad)
                         }
+                        // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
+                        let st = SettingsModel.shared.s
+                        let stampMode = Receipt.stampMode(st)
+                        let readOn = Receipt.on(st)
+                        let upTo = Receipt.readUpTo(messages)
+                        let latestTurn = messages.last { $0.role == .char }?.turnId ?? ""
+                        let prevOf = Dictionary(zip(messages.dropFirst().map(\.id), messages.dropLast()), uniquingKeysWith: { a, _ in a })
                         ForEach(messages) { m in
-                            MessageRow(message: m, char: speaker(of: m),
-                                       showName: isGroup,
-                                       onRetry: m.isError ? { retry(m) } : nil,
-                                       onOpenImage: { viewing = ViewingImage(id: $0) },
-                                       onAction: { act($0, m) })
-                                .id(m.id)
+                            let prev = prevOf[m.id]
+                            let sep = stampMode == "gap" && Receipt.needSep(prev: prev, cur: m)
+                            VStack(spacing: 0) {
+                                if sep {
+                                    Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                                        .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
+                                }
+                                MessageRow(message: m, char: speaker(of: m),
+                                           showName: isGroup,
+                                           stamp: stampMode == "side" || stampMode == "below" ? Receipt.stampOf(m.createdAt) : "",
+                                           stampBelow: stampMode == "below",
+                                           read: Receipt.textOf(m, upTo: upTo, on: readOn),
+                                           meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
+                                           latestTurn: latestTurn,
+                                           onRetry: m.isError ? { retry(m) } : nil,
+                                           onOpenImage: { viewing = ViewingImage(id: $0) },
+                                           onAction: { act($0, m) })
+                            }
+                            // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
+                            .padding(.top, prev == nil ? 0 : (!sep && Receipt.cont(prev: prev, cur: m) ? 5 : Theme.sp4))
+                            .id(m.id)
                         }
                         if busy {
                             Text("正在回复")
@@ -532,6 +555,7 @@ struct ConversationView: View {
         do {
             chat = try Repo.chat(chatId)
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
+            me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()
             if let chat, chat.isGroup {
                 members = Dictionary(GroupChat.members(chat).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             }
@@ -681,6 +705,15 @@ struct MessageRow: View {
     let char: Character?
     /// 群聊里在气泡上方写是谁说的
     var showName = false
+    /// 气泡旁或气泡下的时刻、已读回执（空串为不显示）
+    var stamp = ""
+    var stampBelow = false
+    var read = ""
+    /// 我这边的头像
+    var meAvatar = ""
+    var meName = "我"
+    /// 最新那一轮的 id：「下一轮收起」时，换了一轮就把点开的译文收回去
+    var latestTurn = ""
     var onRetry: (() -> Void)?
     var onOpenImage: ((String) -> Void)?
     var onAction: ((Action) -> Void)?
@@ -691,6 +724,10 @@ struct MessageRow: View {
     @State private var reveal = false
     /// 这一张图此刻正在画（应用这次打开以来发出去的）
     @State private var drawing = true
+    /// 心声默认藏着，点角色头像才展开（同一轮任意一条的头像都行）
+    @State private var innerOpen = false
+    /// 译文点一下展开或收起；「一直展开」时默认开着
+    @State private var transOpen: Bool?
 
     private var mine: Bool { message.role == .user }
 
@@ -734,6 +771,15 @@ struct MessageRow: View {
         }
     }
 
+    /// 按空行拆开（网页版 helpers.js 的 splitBubbles）
+    static func paragraphs(_ s: String) -> [String] {
+        let parts = s.components(separatedBy: "\n").reduce(into: [[String]]([[]])) { acc, line in
+            if line.trimmingCharacters(in: .whitespaces).isEmpty { acc.append([]) } else { acc[acc.count - 1].append(line) }
+        }
+        let out = parts.map { $0.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return out.isEmpty ? [s] : out
+    }
+
     /// 提示行存的是 `[…]`，显示时去掉外面那层括号。
     static func unbracket(_ s: String) -> String {
         let t = s.trimmingCharacters(in: .whitespaces)
@@ -760,11 +806,43 @@ struct MessageRow: View {
         Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
     }
 
+    private var translation: String { (message.row["translation"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var transShow: String {
+        let v = SettingsModel.shared.s.raw["translateShow"]?.string ?? "both"
+        return ["both", "trans", "orig"].contains(v) ? v : "both"
+    }
+    /// 只显示译文时，正文位置换成译文，点一下看到原文
+    private var swapTrans: Bool { transShow == "trans" && !translation.isEmpty && message.kind == "text" }
+    private var transIsOpen: Bool {
+        transOpen ?? (SettingsModel.shared.s.raw["translateOpen"]?.string == "always" && transShow == "both")
+    }
+
+    private func avatarView(_ mine: Bool) -> some View {
+        Avatar(imageId: mine ? meAvatar : (char?.avatar ?? ""), name: mine ? meName : (char?.displayName ?? ""))
+            .onTapGesture {
+                guard !mine else { return }
+                NotificationCenter.default.post(name: .eiraInnerToggle, object: message.turnId.isEmpty ? message.id : message.turnId)
+            }
+            .accessibilityAddTraits(mine ? [] : .isButton)
+            .accessibilityHint(mine ? "" : "展开或收起这一轮的心声")
+    }
+
+    @ViewBuilder private var meta: some View {
+        if !stamp.isEmpty || !read.isEmpty {
+            VStack(alignment: mine ? .trailing : .leading, spacing: 1) {
+                if !stamp.isEmpty { Text(stamp) }
+                if !read.isEmpty { Text(read) }
+            }
+            .font(.system(size: 11)).foregroundStyle(Theme.text3)
+            .padding(.bottom, stampBelow ? 0 : 3)
+        }
+    }
+
     private var bubbleRow: some View {
         HStack(alignment: .top, spacing: Theme.gap) {
             if mine { Spacer(minLength: 48) }
-            if !mine { Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "") }
-            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+            if !mine { avatarView(false) }
+            VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
                 if showName && !mine {
                     Text(char?.displayName ?? "某人").font(.caption).foregroundStyle(Theme.secondaryText)
                 }
@@ -772,11 +850,19 @@ struct MessageRow: View {
                 if !quote.isEmpty {
                     Text("引用：\(quote)").font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2)
                 }
-                content
-                if let t = message.row["translation"]?.string, !t.isEmpty {
-                    Text(t).font(.footnote).foregroundStyle(Theme.secondaryText)
+                HStack(alignment: .bottom, spacing: 6) {
+                    if mine && !stampBelow { meta }
+                    content
+                        .contentShape(Rectangle())
+                        .onTapGesture { if !translation.isEmpty && transShow != "orig" { transOpen = !transIsOpen } }
+                    if !mine && !stampBelow { meta }
                 }
-                if let inner = message.row["inner"]?.string, !inner.isEmpty {
+                if stampBelow { meta }
+                if transShow != "orig" && !translation.isEmpty && transIsOpen {
+                    let extra = swapTrans ? message.content : translation
+                    Text(extra).font(.system(size: 12)).foregroundStyle(Theme.text3).lineSpacing(3)
+                }
+                if let inner = message.row["inner"]?.string, !inner.isEmpty, innerOpen {
                     Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
                 }
                 reactions
@@ -784,9 +870,17 @@ struct MessageRow: View {
                     Text("命中禁写：\(ban.compactMap(\.string).joined(separator: "、"))").font(.caption).foregroundStyle(Theme.danger)
                 }
             }
+            if mine { avatarView(true) }
             if !mine { Spacer(minLength: 48) }
         }
         .padding(.horizontal, Theme.pad)
+        .onChange(of: latestTurn) { _, _ in
+            if SettingsModel.shared.s.raw["translateOpen"]?.string == "turn" { transOpen = nil }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .eiraInnerToggle)) { n in
+            guard let key = n.object as? String, message.row["inner"]?.string?.isEmpty == false else { return }
+            if key == message.id || (!message.turnId.isEmpty && key == message.turnId) { innerOpen.toggle() }
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -821,8 +915,12 @@ struct MessageRow: View {
         case "takeout":
             takeoutCard
         default:
-            // 正则替换里「屏幕上显示」的那一份
-            bubble(RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s))
+            // 正则替换里「屏幕上显示」的那一份；只显示译文时正文位置换成译文。按空行拆成几个气泡（网页版 splitBubbles）
+            let shown = swapTrans ? translation : RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s)
+            let paras = Self.paragraphs(shown)
+            VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
+                ForEach(paras.indices, id: \.self) { i in bubble(paras[i]) }
+            }
         }
     }
 
@@ -1021,4 +1119,9 @@ struct StickerView: View {
         }
         .frame(maxWidth: 120, maxHeight: 120)
     }
+}
+
+extension Notification.Name {
+    /// 点了角色头像：展开或收起那一轮的心声（object 是 turnId，没有 turnId 时是消息 id）
+    static let eiraInnerToggle = Notification.Name("eira.innerToggle")
 }

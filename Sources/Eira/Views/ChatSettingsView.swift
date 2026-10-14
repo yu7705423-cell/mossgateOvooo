@@ -36,6 +36,7 @@ struct ChatSettingsView: View {
                 MusicCharSection(charId: charId)
                 DiaryAutoSection(charId: charId)
             }
+            ShowSection()
             Section {
                 Toggle("旁白", isOn: $narration)
             } footer: {
@@ -244,6 +245,38 @@ struct ProactiveSection: View {
             problem = nil
         } catch {
             problem = "保存失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 会话里怎么显示：消息时刻、已读回执、译文（网页版「美化」页与「翻译」页里的全局几项）。对所有会话生效
+struct ShowSection: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    private func pick(_ key: String, _ def: String) -> Binding<String> {
+        Binding(get: { model.s.raw[key]?.string ?? def }, set: { model.set(key, .string($0)) })
+    }
+
+    var body: some View {
+        Section {
+            Picker("消息时刻", selection: pick("msgStamp", "gap")) {
+                ForEach(Receipt.stamps.indices, id: \.self) { i in Text(Receipt.stamps[i].label).tag(Receipt.stamps[i].id) }
+            }
+            Toggle("显示已读回执", isOn: model.bool("msgRead", false))
+            Picker("译文显示", selection: pick("translateShow", "both")) {
+                Text("原文与译文").tag("both")
+                Text("只显示译文").tag("trans")
+                Text("只显示原文").tag("orig")
+            }
+            Picker("译文展开", selection: pick("translateOpen", "tap")) {
+                Text("点击展开").tag("tap")
+                Text("下一轮收起").tag("turn")
+                Text("默认展开").tag("always")
+            }
+        } header: {
+            GroupTitle("显示")
+        } footer: {
+            Text("对所有会话生效。按间隔：相隔五分钟以上时在两条消息之间显示一行时间。已读回执：角色开始回复时，之前发出的消息标为已读。心声默认收起，点角色的头像展开。")
         }
     }
 }

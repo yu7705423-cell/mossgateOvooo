@@ -30,6 +30,8 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
+        // 已读：角色动笔这一瞬，把悬着的那几条标成已读（网页版 receipt.markRead）
+        try? Receipt.markRead(chatId: chatId)
         // 角色在听什么：登录了网易云、到了间隔才读一次（只调网易云，不调模型）
         if !chat.isGroup { await Netease.pullIfDue(char.id) }
         // 当日日程：这个角色开了、今天还没排、今天还没自动试过，先排一次再拼上下文（默认关，一天一次）
