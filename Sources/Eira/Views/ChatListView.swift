@@ -7,6 +7,7 @@ struct ChatListView: View {
     @State private var deleting: Chat?
     @State private var newGroup = false
     @State private var path: [String] = []
+    @ObservedObject private var notifier = Notifier.shared
 
     struct Item: Identifiable {
         let chat: Chat
@@ -37,7 +38,17 @@ struct ChatListView: View {
                                     Text(shortTime(item.chat.lastMessageAt))
                                         .font(.caption).foregroundStyle(Theme.tertiaryText)
                                 }
-                                Text(item.preview).font(.subheadline).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                                HStack {
+                                    Text(item.preview).font(.subheadline).foregroundStyle(Theme.secondaryText).lineLimit(1)
+                                    Spacer()
+                                    if item.chat.unread > 0 {
+                                        Text("\(item.chat.unread)").font(.caption2.monospacedDigit())
+                                            .padding(.horizontal, 6).padding(.vertical, 1)
+                                            .foregroundStyle(Theme.background)
+                                            .background(item.chat.muted ? Theme.tertiaryText : Theme.danger, in: Capsule())
+                                            .accessibilityLabel("\(item.chat.unread) 条未读")
+                                    }
+                                }
                             }
                         }
                         .padding(.vertical, 4)
@@ -65,6 +76,12 @@ struct ChatListView: View {
             }
             .onAppear(perform: reload)
             .refreshable { reload() }
+            .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
+            .onChange(of: notifier.openChat) { _, id in
+                guard let id else { return }
+                notifier.openChat = nil
+                path = [id]
+            }
             .confirmationDialog("删除这段会话及其全部消息，无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { chat in
                 Button("删除", role: .destructive) {

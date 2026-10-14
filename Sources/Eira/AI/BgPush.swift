@@ -235,6 +235,7 @@ final class BgPush: ObservableObject {
         _ = try? await Self.api("/ack", method: "POST", body: .object(["ids": .array(ids)]))
         // 刚替它发过（或者试过）的重新掷落点；离开期间到点、结果里却没有的同样归服务器，本机不补
         for id in touched { Proactive.reschedule(id) }
+        for r in results { if let c = r["chatId"]?.string { NotificationCenter.default.post(name: .eiraChatChanged, object: c) } }
         Proactive.rescheduleOverdue()
         problem = failed.isEmpty ? "" : "服务器替角色发送失败 \(failed.count) 次（\(failed[0])）。失败的那一次不补发。"
         return n

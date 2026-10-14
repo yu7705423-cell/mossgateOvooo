@@ -17,8 +17,11 @@ struct SettingsView: View {
                     }
                 }
                 Section("通知") {
+                    NavigationLink { NotifyView() } label: {
+                        row("消息通知", "app.badge", Notifier.isOn(model.s) ? "开启" : "关闭")
+                    }
                     NavigationLink { BgPushView() } label: {
-                        row("后台消息", "bell", BgPush.isOn(model.s) ? "开启" : "关闭")
+                        row("后台消息", "icloud.and.arrow.down", BgPush.isOn(model.s) ? "开启" : "关闭")
                     }
                 }
                 Section("外观") {

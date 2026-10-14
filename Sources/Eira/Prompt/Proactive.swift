@@ -177,6 +177,7 @@ enum Proactive {
         let made = try await ChatEngine.write(raw: raw, chat: chat, char: char, turnId: "p-\(Int(Date().millis))",
                                               versions: .init(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         try bumpUnread(chatId, made.count)
+        Notifier.post(chatId: chatId, title: char.displayName, text: raw)
         return made
     }
 

@@ -31,6 +31,10 @@ targets:
           - UIInterfaceOrientationPortrait
         ITSAppUsesNonExemptEncryption: false
         NSPhotoLibraryAddUsageDescription: 将图片存到「照片」。
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - eira.bgpush.refresh
         NSMicrophoneUsageDescription: 录制发送给角色的语音消息。
         NSSpeechRecognitionUsageDescription: 未配置语音识别接口时，用系统识别把语音消息转成文字。
     settings:

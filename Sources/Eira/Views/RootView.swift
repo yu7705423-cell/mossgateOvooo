@@ -5,18 +5,22 @@ struct RootView: View {
     @ObservedObject private var problems = Problems.shared
     @ObservedObject private var settings = SettingsModel.shared
     @State private var onboarding = OnboardingView.needed()
+    @State private var tab = 0
+    @ObservedObject private var notifier = Notifier.shared
 
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             ChatListView()
-                .tabItem { Label("消息", systemImage: "bubble.left") }
+                .tabItem { Label("消息", systemImage: "bubble.left") }.tag(0)
             ContactsView()
-                .tabItem { Label("联系", systemImage: "person.2") }
+                .tabItem { Label("联系", systemImage: "person.2") }.tag(1)
             CanonView()
-                .tabItem { Label("设定集", systemImage: "books.vertical") }
+                .tabItem { Label("设定集", systemImage: "books.vertical") }.tag(2)
             SettingsView()
-                .tabItem { Label("设置", systemImage: "gearshape") }
+                .tabItem { Label("设置", systemImage: "gearshape") }.tag(3)
         }
+        // 点了通知：回到「消息」，由会话列表打开那一段
+        .onChange(of: notifier.openChat) { _, id in if id != nil { tab = 0 } }
         .fullScreenCover(isPresented: $onboarding) {
             OnboardingView { onboarding = false; settings.reload() }
         }

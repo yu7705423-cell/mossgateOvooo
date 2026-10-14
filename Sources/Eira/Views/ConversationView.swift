@@ -111,8 +111,20 @@ struct ConversationView: View {
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() })
         }
-        .onAppear(perform: reload)
-        .onDisappear { markRead() }
+        .onAppear {
+            Notifier.shared.visibleChat = chatId
+            reload()
+        }
+        .onDisappear {
+            if Notifier.shared.visibleChat == chatId { Notifier.shared.visibleChat = nil }
+            markRead()
+        }
+        // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
+        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
+            guard (note.object as? String) == chatId, !busy else { return }
+            reload()
+            markRead()
+        }
         .fullScreenCover(item: $viewing) { v in ImageViewer(imageId: v.id) }
         .sheet(item: $editing) { m in
             NavigationStack {
@@ -481,6 +493,7 @@ struct ConversationView: View {
         guard var c = try? Repo.chat(chatId), c.unread > 0 else { return }
         c.row["unread"] = .number(0)
         do { try Repo.save(c) } catch { Problems.report("未读数写入失败：\(error.localizedDescription)") }
+        Task { await Notifier.updateBadge() }
     }
 }
 
