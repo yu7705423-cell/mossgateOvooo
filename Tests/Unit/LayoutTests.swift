@@ -115,6 +115,17 @@ final class LayoutTests: StoreTestCase {
         XCTAssertThrowsError(try Presets.remove(&s, copy))
     }
 
+    /// 导出再导入：同一套值；不是本应用的格式不收。
+    func testPresetExportImport() throws {
+        var s = AppSettings(raw: ["msgMin": .number(4), "msgMax": .number(5), "theme": .string("dark")])
+        let url = try Presets.exportFile(s, Presets.activeId(s))
+        let id = try Presets.importData(&s, Data(contentsOf: url))
+        XCTAssertEqual(Presets.values(s, id).raw["msgMin"]?.number, 4)
+        XCTAssertEqual(Presets.list(s).count, 2)
+        XCTAssertThrowsError(try Presets.importData(&s, Data(#"{"format":"other","data":{}}"#.utf8)))
+        XCTAssertThrowsError(try Presets.importData(&s, Data("not json".utf8)))
+    }
+
     /// 会话选了别的一套：只在拼这段会话时叠上去。
     func testChatUsesItsPreset() throws {
         try importFixture("data.json")

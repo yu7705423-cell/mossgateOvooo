@@ -131,6 +131,33 @@ enum Presets {
         })
     }
 
+    // MARK: - 导出导入：本应用自己的格式（网页版 FORMAT 'eira-preset'），两边互通
+
+    static let format = "eira-preset"
+
+    static func exportFile(_ s: AppSettings, _ id: String) throws -> URL {
+        guard let row = rows(s).first(where: { $0["id"]?.string == id }) else { throw StoreError(message: "预设不存在") }
+        let name = row["name"]?.string ?? "预设"
+        let data: JSONValue = id == activeId(s) ? .object(snapshot(s)) : (row["data"]?.isNull == false ? row["data"]! : .object([:]))
+        let obj: JSONValue = .object(["format": .string(format), "version": .number(1), "name": .string(name), "data": data])
+        let safe = name.replacingOccurrences(of: #"[\\/:*?"<>|]"#, with: "_", options: .regularExpression)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Eira预设-\(safe).json")
+        try JSONSerialization.data(withJSONObject: obj.any, options: [.prettyPrinted]).write(to: url)
+        return url
+    }
+
+    /// 读文件，存成新的一套，回它的 id。只收预设里的那几个键。
+    static func importData(_ s: inout AppSettings, _ data: Data) throws -> String {
+        guard case .object(let obj)? = try? JSONValue.parse(data) else { throw StoreError(message: "文件不是有效的预设") }
+        guard obj["format"]?.string == format, case .object(let raw)? = obj["data"] else { throw StoreError(message: "文件不是本应用导出的预设") }
+        var picked: [String: JSONValue] = [:]
+        for k in AppSettings.presetKeys { if let v = raw[k] { picked[k] = v } }
+        let id = Ids.make("ps")
+        let name = String((obj["name"]?.string ?? "导入的预设").prefix(40))
+        save(&s, rows(s) + [.object(["id": .string(id), "name": .string(name), "data": .object(picked)])])
+        return id
+    }
+
     /// 有几段会话选了这一套。
     static func chatsUsing(_ id: String) -> [Chat] {
         ((try? Repo.chats()) ?? []).filter { $0.presetId == id }

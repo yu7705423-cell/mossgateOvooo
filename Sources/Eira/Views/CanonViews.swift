@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 「设定集」（网页版 apps/preset，ARCHITECTURE 4.386）：角色读到什么、角色怎么写、角色能做什么。
 struct CanonView: View {
@@ -81,6 +82,7 @@ struct MemoryCharsView: View {
 struct PresetListView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var opening: Target?
+    @State private var importing = false
 
     struct Target: Identifiable, Hashable { let id: String }
 
@@ -104,6 +106,7 @@ struct PresetListView: View {
                     model.update { made = Presets.duplicate(&$0) }
                     if !made.isEmpty, model.problem == nil { opening = Target(id: made) }
                 }
+                Button("导入预设") { importing = true }
             } footer: {
                 Text("一套预设是发给模型的条目顺序：线上聊天、线下、群聊、通话各一份，可以调整先后、开关、添加自己的条目，另有每轮条数等参数。全局使用一套；每段对话可以在会话设置中另选一套。新建时复制全局使用中的那一套。")
             }
@@ -111,6 +114,21 @@ struct PresetListView: View {
         }
         .navigationTitle("预设")
         .navigationDestination(item: $opening) { t in PresetEditView(presetId: t.id) }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
+            switch result {
+            case .success(let url):
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                do {
+                    let data = try Data(contentsOf: url)
+                    var failure: Error?
+                    model.update { do { _ = try Presets.importData(&$0, data) } catch { failure = error } }
+                    if let failure { model.problem = failure.localizedDescription }
+                } catch { model.problem = "无法读取文件：\(error.localizedDescription)" }
+            case .failure(let e):
+                model.problem = e.localizedDescription
+            }
+        }
         .onAppear { model.reload() }
     }
 
@@ -132,6 +150,7 @@ struct PresetEditView: View {
     @State private var newName = ""
     @State private var confirmDelete = false
     @State private var editMode: EditMode = .inactive
+    @State private var exported: URL?
 
     enum SheetKind: Identifiable {
         case custom(String), group(String), template(String), info(String, String), legacy(String)
@@ -159,6 +178,9 @@ struct PresetEditView: View {
                     if !isActive {
                         Text("这一套未在全局使用。修改直接保存在这一套里，设为全局使用或在会话设置中选用后生效。")
                             .font(.footnote).foregroundStyle(Theme.secondaryText)
+                    }
+                    if let exported {
+                        ShareLink(item: exported) { Label("存储或发送导出的预设", systemImage: "square.and.arrow.up") }
                     }
                     Picker("情形", selection: $mode) {
                         ForEach(Layout.modes) { m in Text(m.label).tag(m.id) }
@@ -200,6 +222,10 @@ struct PresetEditView: View {
                         if !isActive { Button("设为全局使用") { model.update { Presets.activate(&$0, presetId) } } }
                         Button("重命名") { newName = Presets.name(model.s, presetId); renaming = true }
                         Button("复制一份") { model.update { Presets.duplicate(&$0, from: presetId) } }
+                        Button("导出") {
+                            do { exported = try Presets.exportFile(model.s, presetId) }
+                            catch { model.problem = "导出失败：\(error.localizedDescription)" }
+                        }
                         if !isActive { Button("删除", role: .destructive) { confirmDelete = true } }
                     }
                 }
