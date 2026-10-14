@@ -50,6 +50,9 @@ jobs:
             -scheme Eira \
             -destination "id=$UDID" \
             -derivedDataPath build-test \
+            -test-timeouts-enabled YES \
+            -default-test-execution-time-allowance 60 \
+            -maximum-test-execution-time-allowance 120 \
             CODE_SIGNING_ALLOWED=NO \
             | tee test.log | grep -E 'error:|Test Case .* (passed|failed)|Executed|TEST (SUCCEEDED|FAILED)' || true
           grep -q 'TEST SUCCEEDED' test.log
