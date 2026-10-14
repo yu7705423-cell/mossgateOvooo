@@ -471,6 +471,11 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, Theme.pad)
             }
+            if messages.isEmpty && (isGroup || (char?.firstMessage ?? "").isEmpty) {
+                Text(isGroup ? "发送第一条消息开始群聊。输入 @ 可指定成员回复" : "发送第一条消息开始对话")
+                    .font(.system(size: 13)).foregroundStyle(Theme.text3)
+                    .frame(maxWidth: .infinity).padding(.vertical, Theme.sp6)
+            }
             // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
             let ctx = rowContext()
             ForEach(messages) { m in
