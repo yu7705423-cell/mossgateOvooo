@@ -301,7 +301,7 @@ enum MemorySummary {
                       existing: [Memory]) throws -> Counts {
         var n = Counts()
         let byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        func keywords(_ r: JSONValue) -> JSONValue { .array((r["keywords"]?.array ?? []).compactMap(\.string).filter { !$0.isEmpty }.map { .string($0) }) }
+        func keywords(_ r: JSONValue) -> JSONValue { .array((r["keywords"]?.array ?? []).compactMap(\.string).filter { !$0.isEmpty }.map { JSONValue.string($0) }) }
         func rank(_ r: JSONValue, _ def: String) -> String { ["S", "A", "B", "C"].contains(r["rank"]?.string ?? "") ? r["rank"]!.string! : def }
         func about(_ r: JSONValue) -> String { ["user", "char", "both"].contains(r["about"]?.string ?? "") ? r["about"]!.string! : "" }
         func weight(_ r: JSONValue) -> Double { min(2, max(0, r["weight"]?.number ?? 0)) }
