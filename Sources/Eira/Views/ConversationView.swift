@@ -321,6 +321,8 @@ struct ConversationView: View {
                         if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } else { messages.append(m) }
                     }
                 }
+                // 自动总结记忆：门槛到了才调（默认三个门槛都关着），在后台跑，不挡着聊天
+                Task.detached { _ = await MemorySummary.autoRun(chatId: id) }
             } catch let e as AIError where e.cancelled {
                 // 用户点了停止：已经落下的几条留着
             } catch is CancellationError {

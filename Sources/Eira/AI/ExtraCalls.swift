@@ -15,6 +15,16 @@ enum ExtraCalls {
         ExtraCall(id: "chatFallback", label: "接口失败时自动换下一套",
                   isOn: { $0.chatFallback && usableCount($0) > 1 },
                   when: { s in "当前这一套报错时改用下一套，最多再换 \(swapCount(s)) 套" }),
+        ExtraCall(id: "autoSummarize", label: "自动总结记忆",
+                  isOn: { s in (s.raw["memoryEnabled"]?.bool ?? true)
+                      && ["autoSummarizeInterval", "autoSummarizeMessages", "autoSummarizeChars"].contains { (s.raw[$0]?.number ?? 0) > 0 } },
+                  when: { s in
+                      var parts: [String] = []
+                      if let n = s.raw["autoSummarizeInterval"]?.number, n > 0 { parts.append("每累计 \(Int(n)) 轮角色回复") }
+                      if let n = s.raw["autoSummarizeMessages"]?.number, n > 0 { parts.append("未总结消息达到 \(Int(n)) 条") }
+                      if let n = s.raw["autoSummarizeChars"]?.number, n > 0 { parts.append("未总结文字达到 \(Int(n)) 字") }
+                      return parts.joined(separator: "，或") + "时一次（走记忆接口，没单独配时走副用）"
+                  }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

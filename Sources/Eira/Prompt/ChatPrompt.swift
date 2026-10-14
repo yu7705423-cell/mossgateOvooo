@@ -458,7 +458,7 @@ enum ChatPrompt {
 
     private static let about = ["user": "(about the user) ", "char": "(about yourself) ", "both": "(about both of you) "]
 
-    private static func visibleMemories(char: Character, chat: Chat, rootId: String, personas: [Persona]) throws -> [Memory] {
+    static func visibleMemories(char: Character, chat: Chat, rootId: String, personas: [Persona]) throws -> [Memory] {
         // 角色本人与小号共用记忆，除非大号关了 altShare
         let root = char.parentId.flatMap { $0.isEmpty ? nil : $0 } ?? char.id
         var family = [root]

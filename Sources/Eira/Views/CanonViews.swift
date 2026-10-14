@@ -53,11 +53,33 @@ struct CanonView: View {
 
 /// 记忆按角色分开，先选角色。
 struct MemoryCharsView: View {
+    @ObservedObject private var model = SettingsModel.shared
     @State private var chars: [Character] = []
     @State private var problem: String?
 
     var body: some View {
         List {
+            Section {
+                Toggle("角色读得到记忆", isOn: model.bool("memoryEnabled", true))
+            } footer: {
+                Text("关闭后记忆不写进提示词，也不自动总结。手动「立即总结」不受影响。")
+            }
+            Section {
+                NumberRow(title: "每累计几轮角色回复", value: model.number("autoSummarizeInterval", 0), unit: "轮", placeholder: "不看")
+                NumberRow(title: "未总结消息达到", value: model.number("autoSummarizeMessages", 0), unit: "条", placeholder: "不看")
+                NumberRow(title: "未总结文字达到", value: model.number("autoSummarizeChars", 0), unit: "字", placeholder: "不看")
+            } header: {
+                Text("自动总结")
+            } footer: {
+                Text("任一门槛到了就在后台总结一次，每次调用一次接口（走记忆接口，没单独配时走副用）。三项都填 0 时不自动总结，默认如此。失败的那一次也算试过，要再攒够一个间隔才重试。")
+            }
+            Section {
+                NumberRow(title: "一次总结的条数", value: model.number("memoryBatch", 200), unit: "条", placeholder: "全部")
+                NumberRow(title: "总结记忆的输出上限", value: model.number("memoryExtractMaxTokens", 0), unit: "token", placeholder: "不限")
+            } footer: {
+                Text("一次总结最多拿最早的这么多条消息去拼请求，填 0 表示一次全拿；剩下的下次接着总结。输出上限偏小时会在半路截断，那一次照样计费。")
+            }
+            ProblemSection(text: model.problem)
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             ForEach(chars) { c in
                 NavigationLink { MemoryListView(charId: c.id) } label: {

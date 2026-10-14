@@ -16,6 +16,9 @@ struct ChatSettingsView: View {
     @State private var confirmDelete = false
     @State private var problem: String?
     @State private var loaded = false
+    @State private var backlog = 0
+    @State private var summarizing = false
+    @State private var summaryNote: String?
 
     var body: some View {
         Form {
@@ -42,6 +45,20 @@ struct ChatSettingsView: View {
                 Text("更早之前发生过什么")
             } footer: {
                 Text("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
+            }
+            Section {
+                LabeledContent("未总结的消息", value: "\(backlog) 条")
+                Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2 || chat?.isGroup == true)
+                Button("全部标为已总结") {
+                    do { let n = try MemorySummary.markCaughtUp(chatId: chatId); summaryNote = "已将 \(n) 条标为已总结。"; refreshBacklog() }
+                    catch { problem = "未能保存：\(error.localizedDescription)" }
+                }
+                .disabled(summarizing || backlog == 0)
+                if let summaryNote { Text(summaryNote).font(.footnote).foregroundStyle(Theme.secondaryText) }
+            } header: {
+                Text("记忆总结")
+            } footer: {
+                Text("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
             }
             Section {
                 Button("清空聊天记录", role: .destructive) { confirmClear = true }
@@ -73,7 +90,29 @@ struct ChatSettingsView: View {
         .onDisappear(perform: save)
     }
 
+    private func refreshBacklog() {
+        backlog = (try? MemorySummary.pending(chatId: chatId).count) ?? 0
+    }
+
+    private func summarizeNow() {
+        summarizing = true
+        summaryNote = nil
+        let id = chatId
+        Task {
+            do {
+                let r = try await MemorySummary.extract(chatId: id)
+                await MainActor.run {
+                    summaryNote = r.total + r.state == 0 ? "没有需要新记下的内容。" : "新记 \(r.added) 条，更新 \(r.updated) 条，了结 \(r.closed) 条" + (r.state > 0 ? "，现状改写 \(r.state) 块。" : "。")
+                }
+            } catch {
+                await MainActor.run { problem = "总结失败：\(error.localizedDescription)" }
+            }
+            await MainActor.run { summarizing = false; refreshBacklog() }
+        }
+    }
+
     private func load() {
+        refreshBacklog()
         do {
             guard let c = try Repo.chat(chatId) else { problem = "这段会话不存在"; return }
             chat = c
