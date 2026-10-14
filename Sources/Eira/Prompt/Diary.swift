@@ -236,7 +236,7 @@ enum Diary {
         return Int(n.rounded())
     }
 
-    static func isAuto(_ char: Character) -> Bool { char.row["diaryAuto"]?.bool == true }
+    static func isAuto(_ char: Character) -> Bool { char.row["diaryAuto"]?.bool == true && !char.archived }
 
     /// 角色那边到了可以写的时刻：设定的钟点之后，或者凌晨（算前一天的那一次机会）。
     static func due(_ char: Character, _ now: Date = Date()) -> Bool {

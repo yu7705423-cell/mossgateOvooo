@@ -28,6 +28,7 @@ struct Character: Identifiable, Equatable, Sendable {
     var parentId: String? { row["parentId"]?.string }
     var isNpc: Bool { row.bool("isNpc") }
     var pinned: Bool { row.bool("pinned") }
+    /// 封存（网页版 archive.js，4.557）：存封存那一刻，0 或没有就是没封存。封存的角色不再自己做任何事
     var archived: Bool { (row.number("archived") ?? 0) > 0 }
 
     /// 列表里显示的名字：用户写了备注就用备注。
@@ -222,4 +223,13 @@ struct LoreEntry: Identifiable, Equatable, Sendable {
 
     /// 0 留在系统区；N 插在倒数第 N 条历史之前。
     var depth: Int { max(0, Int(json["depth"]?.number ?? 0)) }
+}
+
+enum Archive {
+    /// 一段会话里的角色全都封存了：私聊的那一位封存了，或者群里一个没封存的都不剩（网页版 chatArchived）
+    static func chatArchived(_ chat: Chat) -> Bool {
+        let ids = chat.characterIds
+        guard !ids.isEmpty else { return false }
+        return ids.allSatisfy { (try? Repo.character($0))?.archived ?? false }
+    }
 }

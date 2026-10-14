@@ -62,6 +62,8 @@ enum ChatPrompt {
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
+        // 基线之后新加的区块：用户开了才进（网页版 4.486）
+        blocks = blocks.filter { NewFeat.blockOn($0.key, s) }
 
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         P["opening"] = Templates.render("skeleton.opening", names, settings: s)
@@ -319,6 +321,15 @@ enum ChatPrompt {
     /// 能力一节。原生版只开回复解析认得的那几项。
     /// 顺序照网页版 CAPS 数组：图片、语音、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
+    /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
+    static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
+                           "diary", "day", "music", "moments", "ties", "memory"]
+    /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
+    static let capIds = ["image", "voice", "ties", "listen", "agenda", "sticker", "quote", "transfer", "gift", "location", "takeout",
+                         "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
+    static let protocolCaps: Set<String> = ["time", "translate"]
+    static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
+
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner", "ties"]
 
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
@@ -332,7 +343,9 @@ enum ChatPrompt {
         var lines: [String] = []
         var details: [String] = []
         func cap(_ id: String, on: Bool, hot: Bool, line: String?, detail: () -> String) {
-            guard on, !off.contains(id) || id == "time" else { return }
+            // 关掉的不进；解析格式的一部分（时间戳、译文）与自己有开关的（旁白、心声）不受这里管（网页版 PROTOCOL、OWN_SWITCH）
+            guard on, !off.contains(id) || protocolCaps.contains(id) || ownSwitchCaps.contains(id) else { return }
+            guard NewFeat.capOn(id, s) else { return }
             if chat.isGroup && !groupCaps.contains(id) { return }
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
         }

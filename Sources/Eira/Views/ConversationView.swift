@@ -53,6 +53,8 @@ struct ConversationView: View {
     @State private var openStacks: Set<String> = []
     /// 这段会话的背景与上下栏（chat.look）
     @State private var look = ChatLook.Look()
+    /// 角色已封存：记录照看，不能再发（网页版 4.557）
+    @State private var archivedChat = false
     /// 这段会话挂着的美化里原生版画得出来的那几格（气泡、头像、间距）
     @State private var skin = Skins.Look()
     @State private var showLook = false
@@ -99,7 +101,7 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
-            if picking != nil { pickBar } else { composer }
+            if picking != nil { pickBar } else if archivedChat { archivedBar } else { composer }
         }
         .background { ChatBackdrop(look: look) }
         .modifier(TopBarLook(bar: look.top))
@@ -115,7 +117,7 @@ struct ConversationView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button("全选") { picking = Set(messages.map(\.id)) }
                 }
-            } else if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false {
+            } else if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false, !archivedChat {
                 ToolbarItem(placement: .primaryAction) {
                     Button { calling = char } label: { NavIcon("phone") }
                         .accessibilityLabel("语音通话")
@@ -332,6 +334,14 @@ struct ConversationView: View {
         }
         .padding(.horizontal, Theme.pad + Theme.avatarSize + Theme.gap)
         .foregroundStyle(Theme.secondaryText)
+    }
+
+    private var archivedBar: some View {
+        Text("该角色已封存。聊天记录可以翻看，不能继续对话。解除封存在该角色的编辑资料页。")
+            .font(.footnote).foregroundStyle(Theme.text2)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Theme.pad).padding(.vertical, Theme.sp3)
+            .modifier(BottomBarLook(bar: look.bottom))
     }
 
     private var composer: some View {
@@ -1228,6 +1238,7 @@ struct ConversationView: View {
         do {
             chat = try Repo.chat(chatId)
             look = chat.map(ChatLook.of) ?? ChatLook.Look()
+            archivedChat = chat.map(Archive.chatArchived) ?? false
             skin = Skins.look(Skins.of(chat))
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
             me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()

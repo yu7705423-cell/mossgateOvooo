@@ -752,19 +752,42 @@ struct BanView: View {
 /// 原生版只列回复解析认得的几项；capsOff 里网页版其余能力的开关原样留着。
 struct CapsView: View {
     @ObservedObject private var model = SettingsModel.shared
+    @State private var query = ""
 
     struct Cap: Identifiable {
         let id: String
         let label: String
+        let group: String
         let info: String
     }
 
+    /// 原生版会拼进提示词、能在这里关的那几样（网页版 CapsPage 的 INFO，分组与说明同一份）。
+    /// 时间戳、译文是解析格式的一部分，旁白、心声的开关在会话里，这里不列（网页版 PROTOCOL、OWN_SWITCH）
     static let caps = [
-        Cap(id: "sticker", label: "表情", info: "角色可以发送表情包里的表情"),
-        Cap(id: "quote", label: "引用", info: "角色可以引用某一条消息再回复"),
-        Cap(id: "recall", label: "撤回", info: "角色可以撤回自己的消息"),
-        Cap(id: "dice", label: "骰子", info: "角色可以掷骰子"),
+        Cap(id: "image", label: "发图片", group: "消息", info: "角色可以发送图片。生成图片需另外配置生图接口"),
+        Cap(id: "voice", label: "发语音", group: "消息", info: "角色可以发送语音消息"),
+        Cap(id: "sticker", label: "发表情", group: "消息", info: "角色可以发送表情包里的表情"),
+        Cap(id: "quote", label: "引用消息", group: "消息", info: "角色可以引用某一条消息再回复"),
+        Cap(id: "recall", label: "撤回", group: "消息", info: "角色可以撤回自己的消息"),
+        Cap(id: "react", label: "回应消息", group: "消息", info: "角色可以对某一条消息贴一个 emoji 回应"),
+        Cap(id: "silence", label: "不回复", group: "消息", info: "角色可以选择不回复，此时会话中显示「已读，未回复」。角色卡上的开关默认关闭"),
+        Cap(id: "transfer", label: "转账", group: "互动", info: "角色可以转账，以及收下或退回用户的转账"),
+        Cap(id: "gift", label: "送礼物", group: "互动", info: "角色可以送礼物"),
+        Cap(id: "takeout", label: "外卖与请客", group: "互动", info: "角色可以点外卖或请客"),
+        Cap(id: "pat", label: "拍一拍", group: "互动", info: "角色可以拍一拍"),
+        Cap(id: "remark", label: "改备注", group: "互动", info: "角色可以修改给用户的备注"),
+        Cap(id: "dice", label: "骰子", group: "互动", info: "角色可以掷骰子"),
+        Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
+        Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
+        Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),
+        Cap(id: "listen", label: "一起听、点歌、分享歌曲与歌单", group: "一起", info: "角色可以邀请一起听、点歌、分享歌曲与歌单"),
     ]
+    static let groups = ["消息", "互动", "社交", "生活", "一起"]
+    /// 开关不在这里的
+    static let elsewhere: [(label: String, info: String)] = [
+        ("旁白", "开关在会话菜单的「旁白」中"), ("心声", "开关、写法与样式在会话菜单的「心声」中"),
+    ]
+    static let always: [String] = ["时间戳", "译文"]
 
     static func off(_ s: AppSettings) -> Set<String> {
         Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
@@ -776,22 +799,68 @@ struct CapsView: View {
     }
 
     var body: some View {
+        let key = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let hit = { (c: Cap) in key.isEmpty || c.label.contains(key) || c.info.contains(key) }
         Form {
             Section {
-                ForEach(Self.caps) { c in
-                    Toggle(isOn: binding(c.id)) {
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(c.label)
-                            Text(c.info + (Self.off(model.s).contains(c.id) ? "。已关闭：角色卡与各处对这一项的开关不再生效" : ""))
-                                .font(.footnote).foregroundStyle(Theme.secondaryText)
+                HStack {
+                    Text("已开启 \(Self.onCount(model.s)) / \(Self.caps.count)").foregroundStyle(Theme.text2)
+                    Spacer()
+                    Button("全部开启") { setAll(true) }.buttonStyle(.borderless)
+                    Button("全部关闭") { setAll(false) }.buttonStyle(.borderless)
+                }
+                .font(.footnote)
+            } footer: {
+                HelpNote("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效，角色卡上的同一项随之不生效；只让某一个角色不发图、不发语音，在该角色的角色卡中设置。关闭某项不会删除已有的记录。预设里的「能力说明」一条跟随这里与角色卡的开关，不能在预设里单独关闭。", title: "能力开关")
+            }
+            if key.isEmpty {
+                Section {
+                    ForEach(NewFeat.features, id: \.id) { f in
+                        Toggle(isOn: featureBinding(f.id)) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(f.label)
+                                if NewFeat.decided(f.id, model.s).isEmpty {
+                                    Text("尚未选择").font(.footnote).foregroundStyle(Theme.text3)
+                                }
+                            }
                         }
                     }
+                } header: { Text("新功能") } footer: {
+                    HelpNote("新加的功能默认不写进提示词，开启后才生效。宠物、测试问卷所在的 app 原生版尚未提供，这里的选择与网页版共用同一个设置。", title: "新功能")
                 }
-            } footer: {
-                HelpNote("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效。旁白的开关在会话设置中。网页版其余能力的开关原样保留，原生版提供这些功能后一并列出。", title: "能力开关")
+            }
+            ForEach(Self.groups, id: \.self) { g in
+                let items = Self.caps.filter { $0.group == g && hit($0) }
+                if !items.isEmpty {
+                    Section {
+                        ForEach(items) { c in
+                            Toggle(isOn: binding(c.id)) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(c.label)
+                                    if Self.off(model.s).contains(c.id) {
+                                        Text("已关闭：角色卡与各处对这一项的开关不再生效").font(.footnote).foregroundStyle(Theme.text3)
+                                    }
+                                }
+                            }
+                        }
+                    } header: { Text("\(g) · \(items.count) 项") }
+                }
+            }
+            if key.isEmpty {
+                Section {
+                    ForEach(Self.elsewhere, id: \.label) { e in
+                        LabeledContent(e.label) { Text(e.info).font(.footnote).foregroundStyle(Theme.text3) }
+                    }
+                } header: { Text("开关在会话中") }
+                Section {
+                    ForEach(Self.always, id: \.self) { Text($0) }
+                } header: { Text("始终开启") } footer: {
+                    HelpNote("这几项是解析格式的一部分，关闭后应用读不出模型写的那几行。", title: "始终开启")
+                }
             }
             ProblemSection(text: model.problem)
         }
+        .searchable(text: $query, prompt: "搜索能力")
         .navigationTitle("能力")
     }
 
@@ -802,6 +871,18 @@ struct CapsView: View {
                     if !want { list.append(id) }
                     model.set("capsOff", .array(list.map { .string($0) }))
                 })
+    }
+
+    /// 全部开启只清掉这里列出的那几样；网页版有、原生版还没有的能力，关过的照旧关着
+    private func setAll(_ on: Bool) {
+        let mine = Set(Self.caps.map(\.id))
+        var list = (model.s.raw["capsOff"]?.array ?? []).compactMap(\.string).filter { !mine.contains($0) }
+        if !on { list += Self.caps.map(\.id) }
+        model.set("capsOff", .array(list.map { .string($0) }))
+    }
+
+    private func featureBinding(_ id: String) -> Binding<Bool> {
+        Binding(get: { NewFeat.isOn(id, model.s) }, set: { v in model.update { NewFeat.set(id, v, &$0) } })
     }
 }
 

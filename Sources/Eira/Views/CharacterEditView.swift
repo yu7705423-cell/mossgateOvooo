@@ -30,6 +30,7 @@ struct CharacterEditView: View {
     @State private var confirmDelete = false
     @State private var problem: String?
     @State private var saved = false
+    @State private var archived = false
 
     var body: some View {
         Form {
@@ -93,6 +94,11 @@ struct CharacterEditView: View {
                 HelpNote(voiceFooter)
             }
             Section {
+                Toggle("封存", isOn: Binding(get: { archived }, set: { setArchived($0) }))
+            } footer: {
+                HelpNote("封存后，角色不出现在联系人与发起群聊的名单里，与该角色的单聊可以翻看、不能继续对话，角色也不再主动发起对话。数据全部保留，关闭封存即恢复。", title: "封存")
+            }
+            Section {
                 Button("删除角色", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             } footer: {
                 Text("同时删除与该角色的单聊、全部记忆与按角色存的数据，无法撤销。群聊中只移除该角色。")
@@ -136,11 +142,27 @@ struct CharacterEditView: View {
         return "音色填在当前语音接口「\(vp.name)」上，换一套接口需另填。填写后角色可以在回复里发语音，每条调用一次语音接口。"
     }
 
+    /// 封存（网页版 characters.archived，记的是封存那一刻的毫秒）：随改随存，不等「保存」
+    private func setArchived(_ on: Bool) {
+        do {
+            guard var c = try Repo.character(charId) else { return }
+            if on { c.row["archived"] = .number(Date().millis) } else { c.row["archived"] = .number(0) }
+            c.row.touch()
+            try Database.shared.put(Collections.characters, c.row)
+            archived = on
+            if on { Proactive.setNext(charId, 0) }
+            NotificationCenter.default.post(name: .eiraChatChanged, object: nil)
+        } catch {
+            problem = "封存未能保存：\(error.localizedDescription)"
+        }
+    }
+
     private func load() {
         guard loaded == nil else { return }
         do {
             guard let c = try Repo.character(charId) else { problem = "这个角色不存在"; return }
             loaded = c
+            archived = c.archived
             name = c.name; remark = c.remark; signature = c.signature
             gender = c.row.string("gender"); age = c.row.string("age"); birthday = c.row.string("birthday")
             persona = c.persona; scenario = c.scenario; firstMessage = c.firstMessage

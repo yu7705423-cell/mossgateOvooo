@@ -42,6 +42,10 @@ enum ChatEngine {
             guard let t = try lastTurn(chatId: chatId) else { throw StoreError(message: "没有可以重新生成的回复") }
             old = t
         }
+        // 封存的角色不再对话，一次接口都不调（网页版 4.557）
+        if Archive.chatArchived(chat) {
+            throw StoreError(message: "该角色已封存，不能继续对话，未调用接口。解除封存在该角色的编辑资料页。")
+        }
         let settings = AppSettings.load().forChat(chat)
         // 好友与拉黑：角色拉黑了你，或者把你删了、你又没发好友申请，消息送不到，一次接口都不调（网页版 ties）
         let rejected = Ties.charRejects(chat)

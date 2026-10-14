@@ -28,9 +28,9 @@ final class CallSession: ObservableObject {
     init(chatId: String, char: Character) {
         self.chatId = chatId
         self.char = char
-        // 喇叭：手动按过就记住；没按过就看这个角色能不能用语音接口出声（网页版 prefs）
-        let s = AppSettings.load()
-        speak = s.raw["callSpeak"]?.bool ?? VoiceGen.canSpeak(char, s)
+        // 喇叭：默认关，按了才记住开着（网页版 callSpeak === true）。开着且有音色时每句走一次语音合成接口，
+        // 是会多花钱的那一种，登记在 ExtraCalls 的 callVoice（第 15 条：默认关）
+        speak = AppSettings.load().raw["callSpeak"]?.bool == true
     }
 
     /// 能用语音接口出这个角色的声音时说明为空；否则说清楚为什么只能用系统合成。

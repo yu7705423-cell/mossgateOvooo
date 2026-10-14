@@ -23,7 +23,8 @@ enum Proactive {
             return min(23, max(0, Int(n.rounded())))
         }
         let m = c["proactiveMinutes"]?.number ?? 60
-        return Config(on: c["proactive"]?.bool == true, minutes: max(1, m > 0 ? m : 60),
+        // 封存的角色不再主动发起对话（网页版 4.557）
+        return Config(on: c["proactive"]?.bool == true && char?.archived != true, minutes: max(1, m > 0 ? m : 60),
                       quietFrom: hour("proactiveQuietFrom", 0), quietTo: hour("proactiveQuietTo", 8))
     }
 

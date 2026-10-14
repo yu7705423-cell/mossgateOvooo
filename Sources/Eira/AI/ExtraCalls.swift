@@ -54,6 +54,10 @@ enum ExtraCalls {
         ExtraCall(id: "dayOn", label: "角色的当日日程",
                   isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["dayOn"]?.bool == true } },
                   when: { _ in "每个开了的角色，每天第一条消息之前一次（走副用接口）；失败当天不再自动排" }),
+        // 通话里角色每说一句走一次语音合成接口（网页版 callVoice）。通话页的喇叭键就是这个开关，默认关
+        ExtraCall(id: "callVoice", label: "通话时出声",
+                  isOn: { $0.raw["callSpeak"]?.bool == true && $0.voiceReady },
+                  when: { _ in "通话中角色每说一句，走一次语音合成接口（不是聊天接口）；该角色在当前语音接口上没有音色时用系统自带的合成，不花钱" }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),
