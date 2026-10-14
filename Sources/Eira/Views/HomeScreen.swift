@@ -118,6 +118,8 @@ struct HomeScreen: View {
     @Environment(\.colorScheme) private var scheme
     @State private var page = 0
     @State private var folder: Shell.Cell?
+    /// 长按图标换图标与名称
+    @State private var editingIcon: String?
 
     private var home: HomeLook { HomeLook(wallpaper: !layout.wallpaperHome.isEmpty, dark: scheme == .dark, s: settings) }
     private var cols: Int { Shell.cols(settings) }
@@ -145,10 +147,19 @@ struct HomeScreen: View {
             }
         }
         .onAppear { page = min(max(0, layout.currentPage), layout.pages.count - 1) }
+        .sheet(item: Binding(get: { editingIcon.map { IconTarget(id: $0) } }, set: { editingIcon = $0?.id })) { t in
+            NavigationStack { IconEditView(appId: t.id) { editingIcon = nil } }
+        }
         .sheet(item: $folder) { f in
             FolderSheet(cell: f, settings: settings, home: home) { id in folder = nil; open(id) }
                 .presentationDetents([.medium])
         }
+    }
+
+    struct IconTarget: Identifiable { var id: String }
+
+    @ViewBuilder private func iconMenu(_ appId: String) -> some View {
+        Button { editingIcon = appId } label: { Label("更换图标与名称", systemImage: "paintbrush") }
     }
 
     /// 格子边长（网页版 HomeScreen 的 measure）：先按宽度均分，再看这个高度放不放得下所有页里最高的那一页。
@@ -189,6 +200,7 @@ struct HomeScreen: View {
                 }
                 .buttonStyle(TilePress())
                 .accessibilityLabel(look.name)
+                .contextMenu { iconMenu(c.ref) }
             }
         case "folder":
             Button { folder = c } label: {
@@ -246,6 +258,7 @@ struct HomeScreen: View {
                 }
                 .buttonStyle(TilePress())
                 .accessibilityLabel(look.name)
+                .contextMenu { iconMenu(look.id) }
             }
         }
         .padding(.vertical, 8)

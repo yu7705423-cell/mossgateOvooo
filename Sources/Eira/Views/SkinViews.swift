@@ -21,7 +21,7 @@ struct SkinPageView: View {
                 Section {
                     Button("开启美化") {
                         run {
-                            var st = AppSettings.load()
+                            var st = try AppSettings.loadForWrite()
                             st.raw["skinOff"] = .bool(false)
                             try st.save()
                             NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)

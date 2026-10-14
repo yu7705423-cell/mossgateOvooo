@@ -77,7 +77,7 @@ enum Skins {
             c.row.touch()
             try Repo.save(c)
         }
-        var s = AppSettings.load()
+        var s = try AppSettings.loadForWrite()
         if s.raw["globalSkinId"]?.string == id {
             s.raw["globalSkinId"] = .string("")
             try s.save()

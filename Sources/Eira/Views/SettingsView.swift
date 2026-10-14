@@ -422,6 +422,10 @@ struct AppearanceView: View {
             } footer: {
                 Text("跟随系统时，随手机的深色模式切换。")
             }
+            WallpaperSection()
+            Section {
+                Text("在主界面长按一个图标，可以更换它的图片、线条图标与名称。").font(.footnote).foregroundStyle(Theme.text2)
+            } header: { Text("图标") }
             ProblemSection(text: model.problem)
         }
         .navigationTitle("主题")
