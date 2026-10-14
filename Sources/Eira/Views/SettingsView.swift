@@ -16,6 +16,11 @@ struct SettingsView: View {
                         row("用量与上限", "slider.horizontal.3", ExtraCalls.active(model.s).isEmpty ? "无额外调用" : "额外调用 \(ExtraCalls.active(model.s).count) 项")
                     }
                 }
+                Section("通知") {
+                    NavigationLink { BgPushView() } label: {
+                        row("后台消息", "bell", BgPush.isOn(model.s) ? "开启" : "关闭")
+                    }
+                }
                 Section("外观") {
                     NavigationLink { AppearanceView() } label: {
                         row("主题", "circle.lefthalf.filled", AppearanceView.label(model.s))

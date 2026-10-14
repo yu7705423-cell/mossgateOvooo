@@ -43,6 +43,12 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "未读达到几条暂停主动发起对话", value: model.number("proactiveMaxUnread", 3), unit: "条", placeholder: "不限")
+            } footer: {
+                Text("开了「主动发起对话」的角色，未读消息堆到这个条数后不再主动发，看过之后恢复。填 0 表示一直发。每个角色的开关在各自的会话设置里。")
+            }
+
+            Section {
                 Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
                 NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
             } header: {
@@ -139,6 +145,7 @@ struct UsageLimitsView: View {
             "inner.voice": "心声单独生成",
             "chat.call": "通话",
             "call.summary": "通话总结",
+            "chat.proactive": "主动发起对话",
         ][task] ?? task
     }
 }

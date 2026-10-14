@@ -139,6 +139,7 @@ final class VoiceTests: StoreTestCase {
 
     /// 改为输入：不调任何接口，角色收到的写法与录音识别后相同。
     func testTypedVoice() throws {
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
         let m = try Asr.sendTyped(" 晚上见 ", chatId: "chat_a", quote: nil)
         XCTAssertEqual(m.content, "[语音：晚上见]")
         XCTAssertEqual(m.row.string("asr"), "done")

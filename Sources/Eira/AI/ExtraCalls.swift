@@ -42,6 +42,10 @@ enum ExtraCalls {
         ExtraCall(id: "callSummary", label: "通话结束后写总结",
                   isOn: { $0.raw["callSummary"]?.bool != false },
                   when: { _ in "每通接通过、有对白的电话挂断时一次（走副用接口）" }, allowOn: true),
+        // 挂在角色身上（会话设置里），不是全局设置
+        ExtraCall(id: "proactive", label: "角色主动发起对话",
+                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["proactive"]?.bool == true } },
+                  when: { s in "每个开了的角色按设定的间隔一次" + (BgPush.isOn(s) ? "；应用不在前台时由后台消息服务器代发" : "；只在应用打开时发送") }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

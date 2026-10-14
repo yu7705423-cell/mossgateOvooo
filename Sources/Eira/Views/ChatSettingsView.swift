@@ -30,6 +30,7 @@ struct ChatSettingsView: View {
                 Toggle("置顶", isOn: $pinned)
                 Toggle("免打扰", isOn: $muted)
             }
+            if let c = chat, !c.isGroup, let charId = c.characterIds.first { ProactiveSection(charId: charId) }
             Section {
                 Toggle("旁白", isOn: $narration)
             } footer: {
@@ -173,5 +174,71 @@ struct ChatSettingsView: View {
         row.touch()
         do { try Database.shared.put(Collections.chats, row); problem = nil }
         catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+}
+
+/// 这个角色会不会主动找你（网页版 proactive.js 的 DEFAULTS，开关在角色身上）。
+struct ProactiveSection: View {
+    let charId: String
+    @State private var on = false
+    @State private var minutes = 60.0
+    @State private var quietFrom = 0
+    @State private var quietTo = 8
+    @State private var loaded = false
+    @State private var problem: String?
+    @ObservedObject private var bg = BgPush.shared
+
+    var body: some View {
+        Section {
+            Toggle("主动发起对话", isOn: $on)
+            if on {
+                NumberRow(title: "平均间隔", value: $minutes, unit: "分钟", placeholder: "60", range: 1...100000)
+                Stepper("免打扰开始：\(quietFrom) 点", value: $quietFrom, in: 0...23)
+                Stepper("免打扰结束：\(quietTo) 点", value: $quietTo, in: 0...23)
+            }
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } header: {
+            Text("主动发起对话")
+        } footer: {
+            Text(footer)
+        }
+        .onAppear(perform: load)
+        .onChange(of: on) { _, _ in save() }
+        .onChange(of: minutes) { _, _ in save() }
+        .onChange(of: quietFrom) { _, _ in save() }
+        .onChange(of: quietTo) { _, _ in save() }
+    }
+
+    private var footer: String {
+        var t = "开启后，角色在设定的间隔内主动发起对话，实际间隔在设定值的一半到一倍半之间。每次调用一次接口（走主用接口）。免打扰时段内不发，开始与结束相同表示不设。未读消息达到「设置 - 用量与上限」中的条数后暂停。"
+        t += BgPush.isOn() ? "应用不在前台时由后台消息服务器代发。" : "只在应用打开时发送；应用不在前台时的代发见「设置 - 后台消息」。"
+        if !bg.problem.isEmpty { t += "\n" + bg.problem }
+        return t
+    }
+
+    private func load() {
+        guard let c = try? Repo.character(charId) else { return }
+        let cfg = Proactive.config(c)
+        on = cfg.on; minutes = cfg.minutes; quietFrom = cfg.quietFrom; quietTo = cfg.quietTo
+        loaded = true
+    }
+
+    private func save() {
+        guard loaded, var c = try? Repo.character(charId) else { return }
+        let old = Proactive.config(c)
+        let next = Proactive.Config(on: on, minutes: max(1, minutes), quietFrom: quietFrom, quietTo: quietTo)
+        guard old != next else { return }
+        c.row["proactive"] = .bool(on)
+        c.row["proactiveMinutes"] = .number(next.minutes)
+        c.row["proactiveQuietFrom"] = .number(Double(quietFrom))
+        c.row["proactiveQuietTo"] = .number(Double(quietTo))
+        c.row.touch()
+        do {
+            try Database.shared.put(Collections.characters, c.row)
+            Proactive.reschedule(charId)
+            problem = nil
+        } catch {
+            problem = "保存失败：\(error.localizedDescription)"
+        }
     }
 }
