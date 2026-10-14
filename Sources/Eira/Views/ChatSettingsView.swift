@@ -22,6 +22,9 @@ struct ChatSettingsView: View {
     @State private var innerMode = "off"
     @State private var innerWhat = ""
     @State private var translateTo = ""
+    @State private var translateRules = ""
+    /// 常见的几个，够挑就行；要别的直接填（网页版 TranslatePage 的 COMMON）
+    static let commonLangs = ["中文", "英文", "日文", "韩文", "法文", "德文", "西班牙文", "俄文"]
     @State private var presetId = ""
     @State private var summary = ""
     @State private var presets: [AppSettings.Preset] = []
@@ -96,11 +99,29 @@ struct ChatSettingsView: View {
                      : "开启后显示角色每轮话语背后的想法。")
             }
             Section {
-                TextField("译成哪种语言（留空为不翻译）", text: $translateTo)
+                Toggle("翻译这段对话", isOn: Binding(
+                    get: { !translateTo.trimmingCharacters(in: .whitespaces).isEmpty },
+                    set: { translateTo = $0 ? (translateTo.isEmpty ? "中文" : translateTo) : ""; save() }))
+                if !translateTo.trimmingCharacters(in: .whitespaces).isEmpty {
+                    TextField("译成什么语言", text: $translateTo)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Theme.sp2) {
+                            ForEach(Self.commonLangs, id: \.self) { l in
+                                Button(l) { translateTo = l; save() }
+                                    .font(.system(size: 13))
+                                    .foregroundStyle(translateTo == l ? Theme.onAccent : Theme.text)
+                                    .padding(.horizontal, Theme.sp3).padding(.vertical, 5)
+                                    .background(translateTo == l ? Theme.accent : Theme.surface2, in: Capsule())
+                                    .buttonStyle(.plain)
+                            }
+                        }
+                    }
+                    TextField("额外的翻译要求（例如：保留原文中的称呼）", text: $translateRules, axis: .vertical).lineLimit(1...4)
+                }
             } header: {
                 Text("翻译")
             } footer: {
-                Text("填写后，角色每条消息在同一行附上译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。")
+                Text("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
             }
             Section {
                 Picker("预设", selection: $presetId) {
@@ -198,6 +219,7 @@ struct ChatSettingsView: View {
             pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration"); userNarration = c.row.bool("userNarration")
             innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat")
             translateTo = c.row.string("translateTo")
+            translateRules = c.row.string("translateRules")
             presetId = c.presetId; summary = c.summary
             presets = AppSettings.load().presets
             loaded = true
@@ -219,6 +241,7 @@ struct ChatSettingsView: View {
         if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }
         let lang = translateTo.trimmingCharacters(in: .whitespaces)
         if lang != c.row.string("translateTo") { f["translateTo"] = .string(String(lang.prefix(40))) }
+        if translateRules != c.row.string("translateRules") { f["translateRules"] = .string(String(translateRules.prefix(500))) }
         if innerWhat != c.row.string("innerWhat") { f["innerWhat"] = .string(String(innerWhat.prefix(300))) }
         guard !f.isEmpty else { return }
         var row = c.row
