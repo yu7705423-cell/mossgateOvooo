@@ -675,12 +675,18 @@ struct ConversationView: View {
                           latestTurn: ctx.latestTurn,
                           translateLang: chat?.row.string("translateTo") ?? "",
                           quoteName: quoteName(of: m),
+                          speakerName: groupName(of: m),
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
                           onRetry: retry,
                           onOpenImage: { viewing = ViewingImage(id: $0) },
                           onAction: { act($0, m) })
+    }
+
+    private func groupName(of m: Message) -> String {
+        guard let chat, chat.isGroup, m.role != .user, let c = members[m.authorId] else { return "" }
+        return GroupChat.nameIn(chat, c)
     }
 
     private func reactorName(_ id: String) -> String {
@@ -1149,6 +1155,8 @@ struct MessageRow: View {
     var translateLang = ""
     /// 引用的那一条是谁说的
     var quoteName = ""
+    /// 群里气泡上方写的名字：有群昵称写群昵称
+    var speakerName = ""
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1329,7 +1337,7 @@ struct MessageRow: View {
             if !mine { avatarView(false) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
                 if showName && !mine {
-                    Text(char?.displayName ?? "某人").font(.caption).foregroundStyle(Theme.secondaryText)
+                    Text(speakerName.isEmpty ? (char?.displayName ?? "某人") : speakerName).font(.caption).foregroundStyle(Theme.secondaryText)
                 }
                 let quote = message.row.string("quoteText")
                 if !quote.isEmpty {
