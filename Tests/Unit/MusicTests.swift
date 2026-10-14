@@ -7,6 +7,7 @@ final class MusicTests: StoreTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
         URLProtocol.registerClass(MockNet.self)
+        Netease.session = Netease.makeSession(protocols: [MockNet.self])
         MockNet.reset { _, _ in .init(status: 500, body: "{}") }
         try importFixture("data.json")
         try setSettings(["services": .object(["chat": .object([
@@ -17,6 +18,7 @@ final class MusicTests: StoreTestCase {
 
     override func tearDownWithError() throws {
         URLProtocol.unregisterClass(MockNet.self)
+        Netease.session = Netease.makeSession()
         try super.tearDownWithError()
     }
 

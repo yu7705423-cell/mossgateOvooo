@@ -122,14 +122,17 @@ enum Netease {
     static let uaWeapi = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0"
     static let uaEapi = "NeteaseMusic 9.0.90/5038 (iPhone; iOS 16.2; zh_CN)"
 
-    /// 不让系统替我们存、替我们带 cookie：两个账号（你的与角色的）各带各的。
-    static let session: URLSession = {
+    /// 不让系统替我们存、替我们带 cookie：两个账号（你的与角色的）各带各的。测试里换成接住请求的那一个。
+    nonisolated(unsafe) static var session: URLSession = makeSession()
+
+    static func makeSession(protocols: [AnyClass] = []) -> URLSession {
         let c = URLSessionConfiguration.ephemeral
+        if !protocols.isEmpty { c.protocolClasses = protocols }
         c.httpCookieAcceptPolicy = .never
         c.httpShouldSetCookies = false
         c.timeoutIntervalForRequest = 30
         return URLSession(configuration: c)
-    }()
+    }
 
     // MARK: - 设置
 

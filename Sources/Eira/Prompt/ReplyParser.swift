@@ -187,7 +187,7 @@ enum ReplyParser {
             case "建歌单", "加入歌单":
                 let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
                 let name = (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces)
-                let songs = bar.map { String(body[body.index(after: $0)...]) } ?? ""
+                let songs = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
                 if !name.isEmpty && (kind == "建歌单" || !songs.trimmingCharacters(in: .whitespaces).isEmpty) {
                     var p = Part(type: .newlist, text: name)
                     p.extra = songs
