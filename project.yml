@@ -26,6 +26,9 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # 新版界面的标题宋体（Resources/EiraSerif-SemiBold.ttf，scripts/make-serif.py 由网页版的字体合成）
+        UIAppFonts:
+          - EiraSerif-SemiBold.ttf
         UIApplicationSupportsIndirectInputEvents: true
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

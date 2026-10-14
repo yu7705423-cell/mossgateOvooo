@@ -24,6 +24,7 @@ struct ContactsView: View {
                     NavigationLink(value: Route.personas) {
                         row(avatar: me?.avatar ?? "", name: me?.name ?? "我", sub: me?.signature ?? "")
                     }
+                    .eiraRow()
                 }
                 ForEach(groups) { g in
                     Section(g.title) {
@@ -31,11 +32,13 @@ struct ContactsView: View {
                             NavigationLink(value: Route.profile(c.id)) {
                                 row(avatar: c.avatar, name: c.displayName, sub: c.signature)
                             }
+                            .eiraRow()
                         }
                     }
                 }
                 if chars.isEmpty {
-                    Text("暂无角色。点右上角新建，或在「设置 - 存储与备份 - 导入网页版备份」中导入。").foregroundStyle(Theme.secondaryText)
+                    EmptyState(title: "暂无角色", desc: "点右上角新建，或在「设置 - 存储与备份 - 导入网页版备份」中导入。")
+                        .listRowBackground(Color.clear)
                 }
             }
             .searchable(text: $query, prompt: "搜索名字或备注")
@@ -94,8 +97,8 @@ struct ContactsView: View {
         HStack(spacing: Theme.pad) {
             Avatar(imageId: avatar, name: name, size: 40)
             VStack(alignment: .leading, spacing: 2) {
-                Text(name).lineLimit(1)
-                if !sub.isEmpty { Text(sub).font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1) }
+                Text(name).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                if !sub.isEmpty { Text(sub).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1) }
             }
         }
     }

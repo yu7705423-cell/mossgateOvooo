@@ -34,10 +34,11 @@ struct RootView: View {
         }
         .fullScreenCover(item: $opened, onDismiss: refresh) { app in
             AppHost(appId: app.id) { opened = nil }
+                .eiraLook()
                 .preferredColorScheme(AppearanceView.scheme(settings.s))
         }
         .fullScreenCover(isPresented: $onboarding, onDismiss: refresh) {
-            OnboardingView { onboarding = false; settings.reload() }
+            OnboardingView { onboarding = false; settings.reload() }.eiraLook()
         }
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in unread = Shell.chatUnread() }
         .preferredColorScheme(AppearanceView.scheme(settings.s))
@@ -113,10 +114,9 @@ struct UnsupportedAppView: View {
 
     var body: some View {
         NavigationStack {
-            ContentUnavailableView {
-                Label("「\(name)」尚未支持", systemImage: "square.dashed")
-            } description: {
-                Text("原生版暂未完成该应用。导入的数据已完整保存，完成后即可在此查看；在此之前可在网页版中使用。")
+            ScrollView {
+                EmptyState(title: "「\(name)」尚未支持",
+                           desc: "原生版暂未完成该应用。导入的数据已完整保存，完成后即可在此查看；在此之前可在网页版中使用。")
             }
             .navigationTitle(name)
             .navigationBarTitleDisplayMode(.inline)

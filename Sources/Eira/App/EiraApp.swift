@@ -6,6 +6,7 @@ struct EiraApp: App {
 
     init() {
         CrashCollector.shared.start()
+        Theme.install()
         let info = Bundle.main.infoDictionary ?? [:]
         // 后台刷新的任务要在启动完成之前登记
         Notifier.shared.install()
@@ -15,7 +16,7 @@ struct EiraApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView()
+            RootView().eiraLook()
         }
         // 主动发起对话与后台消息跟着前后台走：前台本机发，后台交给服务器（BgPush）
         .onChange(of: phase) { _, p in

@@ -29,6 +29,7 @@ struct ConversationView: View {
     @State private var deleting: Message?
     @State private var showSettings = false
     @State private var showStickers = false
+    @State private var showPanel = false
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
@@ -52,9 +53,12 @@ struct ConversationView: View {
                             HStack(alignment: .top, spacing: Theme.gap) {
                                 Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "")
                                 Text(greet)
-                                    .padding(.horizontal, Theme.pad).padding(.vertical, 8)
+                                    .font(.system(size: Theme.bubbleFont))
+                                    .lineSpacing(Theme.bubbleFont * 0.4)
+                                    .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
                                     .foregroundStyle(Theme.bubbleTheirsText)
-                                    .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                                    .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+                                    .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
                                 Spacer(minLength: 48)
                             }
                             .padding(.horizontal, Theme.pad)
@@ -168,6 +172,7 @@ struct ConversationView: View {
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
             picked = []
+            showPanel = false
             sendPhotos(items)
         }
     }
@@ -204,73 +209,116 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
-            HStack(alignment: .bottom, spacing: Theme.gap) {
-                // 一次选几张不设上限（网页版第 13 条）
-                PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
-                    Image(systemName: "photo").font(.title2)
+            // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
+            HStack(alignment: .bottom, spacing: Theme.sp2) {
+                sideButton("plus", label: showPanel ? "收起" : "添加内容") {
+                    showPanel.toggle()
+                    if showPanel { showStickers = false; typing = false }
                 }
-                .accessibilityLabel("发送图片")
-                .disabled(busy)
-                Menu {
-                    Button { recordingVoice = true } label: { Label("语音", systemImage: "mic") }
-                    if chat?.isGroup == false {
-                        Button {
-                            do { try music.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
-                        } label: { Label("一起听", systemImage: "headphones") }
-                    }
-                    Button { composing = .transfer } label: { Label("转账", systemImage: "yensign.circle") }
-                    Button { composing = .gift } label: { Label("礼物", systemImage: "gift") }
-                    Button { composing = .takeout } label: { Label("外卖", systemImage: "takeoutbag.and.cup.and.straw") }
-                    Button { composing = .location } label: { Label("位置", systemImage: "mappin.and.ellipse") }
-                    Button { post { try ChatEngine.pat(chatId: chatId) } } label: { Label("拍一拍", systemImage: "hand.tap") }
-                } label: {
-                    Image(systemName: "plus.circle").font(.title2)
-                }
-                .accessibilityLabel("更多")
-                .disabled(busy)
-                if let chat, chat.isGroup {
-                    Menu {
-                        ForEach(GroupChat.members(chat)) { c in
-                            Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
-                        }
-                    } label: {
-                        Image(systemName: "at").font(.title2)
-                    }
-                    .accessibilityLabel("提到成员")
-                    .disabled(busy)
-                }
-                Button {
-                    showStickers.toggle()
-                    if showStickers { typing = false }
-                } label: {
-                    Image(systemName: showStickers ? "keyboard" : "face.smiling").font(.title2)
-                }
-                .accessibilityLabel(showStickers ? "收起表情" : "表情")
-                .disabled(busy)
-                TextField("输入消息", text: $draft, axis: .vertical)
+                TextField("Aa…", text: $draft, axis: .vertical)
                     .focused($typing)
-                    .onChange(of: typing) { _, t in if t { showStickers = false } }
+                    .onChange(of: typing) { _, t in if t { showStickers = false; showPanel = false } }
                     .lineLimit(1...5)
-                    .padding(.horizontal, Theme.pad).padding(.vertical, 8)
-                    .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                    .font(.system(size: 15))
+                    .padding(.horizontal, Theme.sp3).padding(.vertical, Theme.sp2)
+                    .frame(minHeight: Theme.composerH)
+                    .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+                sideButton("heart", label: showStickers ? "收起表情" : "表情") {
+                    showStickers.toggle()
+                    if showStickers { showPanel = false; typing = false }
+                }
                 if busy {
-                    Button { job?.cancel() } label: {
-                        Image(systemName: "stop.circle").font(.title2)
-                    }
-                    .accessibilityLabel("停止")
+                    sendButton("close", size: 17, filled: false, stop: true, label: "停止") { job?.cancel() }
+                } else if !draftEmpty {
+                    sendButton("send", size: 17, filled: true, label: "发送", action: primary)
                 } else {
-                    Button(action: primary) {
-                        Image(systemName: draftEmpty ? "sparkles" : "arrow.up.circle.fill").font(.title2)
-                    }
-                    .accessibilityLabel(draftEmpty ? "请角色回复" : "发送")
+                    sendButton("reply", size: 22, filled: false, label: "请角色回复", action: primary)
                 }
             }
-            .padding(Theme.pad)
+            .padding(.horizontal, Theme.sp3)
+            .padding(.vertical, Theme.sp2)
+            if showPanel { plusPanel }
             if showStickers {
                 StickerPanel { st in sendSticker(st) }
             }
         }
-        .background(Theme.background)
+        .background(Theme.bg)
+    }
+
+    /// 输入栏两侧的圆按钮（.composer-side）
+    private func sideButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            SvgIcon(name: icon, size: 20, color: Theme.text2)
+                .frame(width: Theme.composerH, height: Theme.composerH)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// 发送键（.send-btn）：有字时黑底圆键；空着时是「请角色回复」，不垫底；回复中是停止
+    private func sendButton(_ icon: String, size: CGFloat, filled: Bool, stop: Bool = false, label: String,
+                            action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            SvgIcon(name: icon, size: size, color: filled ? Theme.onAccent : Theme.text)
+                .frame(width: Theme.composerH, height: Theme.composerH)
+                .background(Circle().fill(filled ? Theme.accent : (stop ? Theme.surface3 : Color.clear)))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+
+    /// 加号面板（.composer-panel .panel-grid）：一行四格，浅灰圆角方块里一个线条图标，下面一行小字
+    private var plusPanel: some View {
+        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
+            PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
+                panelItem("image", "图片")
+            }
+            .disabled(busy)
+            panelButton("mic", "语音") { recordingVoice = true }
+            if chat?.isGroup == false {
+                panelButton("headphone", "一起听") {
+                    do { try music.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
+                }
+            }
+            panelButton("wallet", "转账") { composing = .transfer }
+            panelButton("gift", "礼物") { composing = .gift }
+            panelButton("bag", "外卖") { composing = .takeout }
+            panelButton("map", "位置") { composing = .location }
+            panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
+            if let chat, chat.isGroup {
+                Menu {
+                    ForEach(GroupChat.members(chat)) { c in
+                        Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
+                    }
+                } label: { panelItem("users", "提到成员") }
+            }
+        }
+        .padding(.horizontal, Theme.sp4)
+        .padding(.top, Theme.sp3)
+        .padding(.bottom, Theme.sp5)
+        .background(Theme.bg)
+        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
+    }
+
+    private func panelButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Button {
+            showPanel = false
+            action()
+        } label: { panelItem(icon, label) }
+        .buttonStyle(.plain)
+        .disabled(busy)
+    }
+
+    private func panelItem(_ icon: String, _ label: String) -> some View {
+        VStack(spacing: 6) {
+            SvgIcon(name: icon, size: 22, color: Theme.text)
+                .frame(width: 52, height: 52)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.rMd, style: .continuous))
+            Text(label).font(.system(size: 11)).foregroundStyle(Theme.text2)
+        }
     }
 
     private func post(_ make: () throws -> Message) {
@@ -807,21 +855,26 @@ struct MessageRow: View {
         }
     }
 
+    /// 气泡（.bubble）：角色的是白底加一道很淡的阴影，自己的是黑底白字；14 号字，行高 1.6
     private func bubble(_ text: String) -> some View {
         Text(text)
+            .font(.system(size: Theme.bubbleFont))
+            .lineSpacing(Theme.bubbleFont * 0.4)
             .textSelection(.disabled)
-            .padding(.horizontal, Theme.pad).padding(.vertical, 8)
+            .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
             .foregroundStyle(mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)
-            .background(mine ? Theme.bubbleMine : Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+            .background(mine ? Theme.bubbleMine : Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+            .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
     }
 
     private func card(icon: String, text: String) -> some View {
         HStack(alignment: .top, spacing: Theme.gap) {
             Image(systemName: icon).foregroundStyle(Theme.secondaryText)
-            Text(text).foregroundStyle(Theme.bubbleTheirsText)
+            Text(text).font(.system(size: Theme.bubbleFont)).foregroundStyle(Theme.bubbleTheirsText)
         }
         .padding(Theme.pad)
-        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
     }
 
     /// 贴在这一条上的回应，按 emoji 归并。点自己贴的那一个就是取消。

@@ -24,44 +24,52 @@ struct ChatListView: View {
                     Text(loadError).foregroundStyle(Theme.danger)
                 }
                 if rows.isEmpty && loadError == nil {
-                    Text("暂无会话。可在「设置 - 存储与备份 - 导入网页版备份」中导入网页版的数据。")
-                        .foregroundStyle(Theme.secondaryText)
+                    EmptyState(title: "暂无会话", desc: "可在「设置 - 存储与备份 - 导入网页版备份」中导入网页版的数据。")
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
-                ForEach(rows) { item in
-                    NavigationLink(value: item.chat.id) {
-                        HStack(spacing: Theme.pad) {
-                            Avatar(imageId: item.avatar, name: item.title, size: Theme.listAvatarSize)
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack {
-                                    Text(item.title).font(.body).lineLimit(1)
-                                    Spacer()
-                                    Text(shortTime(item.chat.lastMessageAt))
-                                        .font(.caption).foregroundStyle(Theme.tertiaryText)
-                                }
-                                HStack {
-                                    Text(item.preview).font(.subheadline).foregroundStyle(Theme.secondaryText).lineLimit(1)
-                                    Spacer()
-                                    if item.chat.unread > 0 {
-                                        Text("\(item.chat.unread)").font(.caption2.monospacedDigit())
-                                            .padding(.horizontal, 6).padding(.vertical, 1)
-                                            .foregroundStyle(Theme.background)
-                                            .background(item.chat.muted ? Theme.tertiaryText : Theme.danger, in: Capsule())
-                                            .accessibilityLabel("\(item.chat.unread) 条未读")
+                // 网页版的消息列表：一整块浅灰胶囊，行与行之间一条发丝线（.msg-list .capsule .msg-row）
+                Section {
+                    ForEach(rows) { item in
+                        NavigationLink(value: item.chat.id) {
+                            HStack(spacing: Theme.sp3) {
+                                Avatar(imageId: item.avatar, name: item.title, size: Theme.listAvatarSize)
+                                VStack(alignment: .leading, spacing: 3) {
+                                    HStack(alignment: .firstTextBaseline, spacing: Theme.sp2) {
+                                        Text(item.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                                        Spacer(minLength: 0)
+                                        Text(shortTime(item.chat.lastMessageAt))
+                                            .font(.system(size: 11)).foregroundStyle(Theme.text3)
+                                    }
+                                    HStack(spacing: Theme.sp2) {
+                                        Text(item.preview).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1)
+                                        Spacer(minLength: 0)
+                                        if item.chat.unread > 0 {
+                                            Text(item.chat.unread > 99 ? "99+" : "\(item.chat.unread)")
+                                                .font(.system(size: 11).monospacedDigit())
+                                                .padding(.horizontal, 5)
+                                                .frame(minWidth: 17, minHeight: 17)
+                                                .foregroundStyle(Theme.onAccent)
+                                                .background(item.chat.muted ? Theme.text3 : Theme.accent, in: Capsule())
+                                                .accessibilityLabel("\(item.chat.unread) 条未读")
+                                        }
                                     }
                                 }
                             }
+                            .frame(minHeight: 62 - 2 * Theme.sp3)
                         }
-                        .padding(.vertical, 4)
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) { deleting = item.chat } label: { Label("删除", systemImage: "trash") }
-                        Button { togglePin(item.chat) } label: {
-                            Label(item.chat.pinned ? "取消置顶" : "置顶", systemImage: item.chat.pinned ? "pin.slash" : "pin")
+                        .eiraRow()
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) { deleting = item.chat } label: { Label("删除", systemImage: "trash") }
+                            Button { togglePin(item.chat) } label: {
+                                Label(item.chat.pinned ? "取消置顶" : "置顶", systemImage: item.chat.pinned ? "pin.slash" : "pin")
+                            }
+                            .tint(Theme.text3)
                         }
                     }
                 }
             }
-            .listStyle(.plain)
+            .listStyle(.insetGrouped)
             .navigationTitle("消息")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
