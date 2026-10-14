@@ -47,6 +47,7 @@ actor AIService {
 
         let tries = min(max(0, retries), settings.retryMax)
         var lastError: AIError?
+        var failed: [AIError.FailedPreset] = []
         for preset in chain {
             for attempt in 0...tries {
                 try Task.checkCancellation()
@@ -73,13 +74,23 @@ actor AIService {
                 } catch let e as AIError {
                     log(e.status, e.cancelled ? "已取消" : e.message + (e.partial.isEmpty ? "" : "（已收到部分回复）"))
                     lastError = e
-                    if e.cancelled || !e.partial.isEmpty { throw e }
-                    guard e.retryable, attempt < tries else { break }
+                    if e.cancelled { throw e }
+                    if !e.partial.isEmpty {
+                        var out = e
+                        out.failedPresets = [.init(id: preset.id, balance: false)]
+                        throw out
+                    }
+                    guard e.retryable, attempt < tries else {
+                        failed.append(.init(id: preset.id, balance: e.isBalance))
+                        break
+                    }
                     try await Task.sleep(nanoseconds: UInt64(600_000_000 * (1 << attempt)))
                 }
             }
         }
-        throw lastError ?? AIError(status: nil, message: "请求失败")
+        var last = lastError ?? AIError(status: nil, message: "请求失败")
+        last.failedPresets = failed
+        throw last
     }
 
     /// 依次要试的接口。没开 chatFallback 时只有挑中的那一套。

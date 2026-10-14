@@ -70,6 +70,8 @@ struct PresetEditor: View {
     @State private var baseUrl = ""
     @State private var apiKey = ""
     @State private var model = ""
+    @State private var siteUrl = ""
+    @State private var topupUrl = ""
     @State private var isMain = false
     @State private var isFallback = false
     @State private var confirmDelete = false
@@ -98,6 +100,16 @@ struct PresetEditor: View {
                 Text("地址、密钥与模型")
             } footer: {
                 Text("地址留空时使用该格式的官方地址。密钥只保存在本机。")
+            }
+            Section {
+                TextField("站点链接", text: $siteUrl)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                TextField("充值链接", text: $topupUrl)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+            } header: {
+                Text("站点与充值")
+            } footer: {
+                Text("回复失败时，失败的那一条下方给出「打开站点」；余额不足时给出「去充值」。充值链接未填写时使用站点链接。")
             }
             Section {
                 Button(testing ? "连接中" : "测试连接", action: test).disabled(testing)
@@ -158,6 +170,7 @@ struct PresetEditor: View {
         isFallback = s.fallbackPreset?.id == presetId
         guard let p = s.chatPresets.first(where: { $0.id == presetId }) else { return }
         name = p.name; provider = p.provider.rawValue; baseUrl = p.baseUrl; apiKey = p.apiKey; model = p.model
+        siteUrl = p.siteUrl; topupUrl = p.topupUrl
     }
 
     private func save() {
@@ -172,6 +185,8 @@ struct PresetEditor: View {
             "baseUrl": .string(baseUrl.trimmingCharacters(in: .whitespaces)),
             "apiKey": .string(apiKey.trimmingCharacters(in: .whitespacesAndNewlines)),
             "model": .string(model.trimmingCharacters(in: .whitespaces)),
+            "siteUrl": .string(siteUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "topupUrl": .string(topupUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
         ]
         if let i = list.firstIndex(where: { $0["id"]?.string == presetId }), case .object(var old) = list[i] {
             old.merge(fields) { _, new in new }

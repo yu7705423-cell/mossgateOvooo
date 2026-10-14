@@ -227,3 +227,24 @@ extension CostTests {
         XCTAssertFalse(after.contains { $0.isError && $0.createdAt > 0 && $0.content.isEmpty && $0.row.string("error").contains("overloaded") })
     }
 }
+
+extension CostTests {
+    /// 余额不足：失败那一条记下是哪一套、是不是余额不足；填了链接的给「去充值」，没填充值链接时用站点
+    func testBalanceFailureGivesTopupLink() async throws {
+        try setSettings(["services": .object(["chat": .object([
+            "presets": .array([.object(["id": .string("svc_main"), "name": .string("主"), "provider": .string("anthropic"),
+                                         "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m"),
+                                         "siteUrl": .string("main.example.com")])]),
+            "activeId": .string("svc_main")])])])
+        MockNet.reset { _, _ in .init(status: 402, body: #"{"error":{"message":"insufficient balance"}}"#) }
+        do { try await ChatEngine.reply(chatId: "chat_a") { _ in }; XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        let last = try XCTUnwrap(Repo.messages(chatId: "chat_a").last)
+        XCTAssertTrue(last.isError)
+        let links = FailLinks.of(last, settings: AppSettings.load())
+        XCTAssertTrue(links.broke)
+        XCTAssertEqual(links.rows.map(\.label), ["去充值"])
+        XCTAssertEqual(links.rows.first?.url.absoluteString, "https://main.example.com")
+        XCTAssertNil(ChatPreset.link("javascript:alert(1)"))
+    }
+}

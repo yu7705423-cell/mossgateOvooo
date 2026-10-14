@@ -62,6 +62,9 @@ enum ChatEngine {
             var row = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "", turnId: turnId)
             row.row["status"] = .string("error")
             row.row["error"] = .string(error.localizedDescription)
+            if let e = error as? AIError, !e.failedPresets.isEmpty {
+                row.row["failedPresets"] = .array(e.failedPresets.map { .object(["id": .string($0.id), "balance": .bool($0.balance)]) })
+            }
             row = (try? Repo.append(row)) ?? row
             onRow(row)
             throw error

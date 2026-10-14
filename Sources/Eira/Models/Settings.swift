@@ -16,6 +16,9 @@ struct ChatPreset: Identifiable, Equatable, Sendable {
     var temperature: Double?
     /// 只有 openai 用：'system' 时历史中段的系统消息原样发，否则改成用户消息（网页版 midsystem.js）
     var midSystem: String
+    /// 站点与充值链接（网页版 siteUrl / topupUrl）。回复失败时给「打开站点」或「去充值」
+    var siteUrl: String
+    var topupUrl: String
 
     /// 填全了密钥与模型才算能用（网页版 engine.js 的 usable）。
     var usable: Bool { !apiKey.isEmpty && !model.isEmpty }
@@ -31,7 +34,21 @@ struct ChatPreset: Identifiable, Equatable, Sendable {
         effort = json["effort"]?.string ?? ""
         temperature = json["temperature"]?.number ?? (json["temperature"]?.isNull == true ? nil : 0.9)
         midSystem = json["midSystem"]?.string ?? ""
+        siteUrl = json["siteUrl"]?.string ?? ""
+        topupUrl = json["topupUrl"]?.string ?? ""
     }
+
+    /// 补上协议头再认（网页版 services.linkOf）。认不出回 nil
+    static func link(_ raw: String) -> URL? {
+        let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        let u = t.range(of: "^[a-z][a-z0-9+.-]*:", options: [.regularExpression, .caseInsensitive]) != nil ? t : "https://\(t)"
+        guard let url = URL(string: u), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme), url.host != nil else { return nil }
+        return url
+    }
+    var site: URL? { Self.link(siteUrl) }
+    /// 没填充值链接时退回站点
+    var topup: URL? { Self.link(topupUrl) ?? site }
 }
 
 /// settings 这一份 kv 的视图。只读原生版用得到的那几项，其余原样留在库里。

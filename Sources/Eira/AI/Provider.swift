@@ -21,7 +21,21 @@ struct AIError: LocalizedError {
     /// 已经收到了一部分正文。这种失败不重试、不换接口：再来一次是另付一次钱，而用户已经看到了一半。
     var partial: String = ""
     var cancelled = false
+    /// 这一次试过、都失败了的那几套，各自是不是余额不足（网页版 err.failedPresets）。会话里那条失败据此给「去充值」
+    var failedPresets: [FailedPreset] = []
     var errorDescription: String? { message }
+
+    struct FailedPreset: Equatable, Sendable {
+        var id: String
+        var balance: Bool
+    }
+
+    /// 余额不足。各家写法不一：402，或者报错正文里带这几种说法（网页版 isBalanceError）
+    var isBalance: Bool {
+        if status == 402 { return true }
+        return message.range(of: "insufficient|quota|balance|credit|billing|payment|余额|额度|欠费|充值",
+                             options: [.regularExpression, .caseInsensitive]) != nil
+    }
 
     /// 值得原样再试一次的：限流、服务端出错、连接断了且一个字都没收到。
     var retryable: Bool {

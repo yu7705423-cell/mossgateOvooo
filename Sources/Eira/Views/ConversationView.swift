@@ -1569,12 +1569,23 @@ struct MessageRow: View {
             .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
     }
 
+    /// 回复失败那一条（网页版 FailNote）：报错原文、重试；失败的那一套填了站点或充值链接的，再给一个能点开的链接
     private var errorRow: some View {
-        VStack(spacing: 4) {
-            Text("回复失败：\(message.error)").font(.footnote).foregroundStyle(Theme.danger)
+        let links = FailLinks.of(message, settings: SettingsModel.shared.s)
+        return VStack(spacing: 4) {
+            Text("回复失败：\(links.broke ? "余额不足。" : "")\(message.error)").font(.footnote).foregroundStyle(Theme.danger)
                 .multilineTextAlignment(.center)
-            if let onRetry {
-                Button("重新请求", action: onRetry).font(.footnote)
+            HStack(spacing: Theme.sp4) {
+                if let onRetry {
+                    Button("重新请求", action: onRetry).font(.footnote)
+                }
+                ForEach(links.rows, id: \.id) { r in
+                    Link(r.label, destination: r.url).font(.footnote)
+                }
+            }
+            if links.broke && links.rows.isEmpty {
+                Text("可在「设置 - 接口」中为这一套接口填写充值链接，此后在这里直接打开。")
+                    .font(.caption).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
             }
         }
         .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
