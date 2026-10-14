@@ -49,6 +49,8 @@ struct RootView: View {
 
     /// 从 app 回到主屏：导入备份、改了外观都可能换掉版式与壁纸，重读一遍。
     private func refresh() {
+        // 定时寄出的信：到点了就寄（投递时间用当初定的时刻）
+        Space.deliverDue()
         settings.reload()
         layout = Shell.layout()
         unread = Shell.chatUnread()
@@ -87,6 +89,8 @@ struct AppHost: View {
         case "daily": NavigationStack { DailyHomeView() }
         case "music": NavigationStack { MusicHomeView() }
         case "album": NavigationStack { AlbumHomeView() }
+        case "space": NavigationStack { SpaceHomeView() }
+        case "health": NavigationStack { HealthHomeView() }
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }

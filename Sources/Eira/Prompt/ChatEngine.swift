@@ -376,6 +376,16 @@ enum ChatEngine {
         case .tie:
             // 好友与拉黑：改它自己这一方的状态。拉黑、删除不落提示（照微信）；通过你的好友申请落一行
             return try Ties.fromMark(char: char, chat: chat, kind: p.extra ?? "", name: p.text, turnId: turnId)?.note
+        case .pact:
+            guard char.row["canPact"]?.bool != false, !chat.isGroup else { return nil }
+            return try Space.makePact(chatId: chat.id, role: .char, authorId: char.id, title: p.text, turnId: turnId)
+        case .pactDone:
+            // 认不出是哪一条约定就当没写过：凭空标完一条别的约定比不标更糟
+            guard !chat.isGroup, let target = Space.findOpenPact(chat.id, p.text) else { return nil }
+            return try Space.completePact(target.id, turnId: turnId, byChar: true, charId: char.id)
+        case .letter:
+            guard !chat.isGroup else { return nil }
+            return try Space.letterMessage(chatId: chat.id, role: .char, authorId: char.id, title: p.extra ?? "", body: p.text, turnId: turnId)
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -471,7 +481,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

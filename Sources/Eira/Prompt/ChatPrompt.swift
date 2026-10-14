@@ -59,6 +59,10 @@ enum ChatPrompt {
             "music": Netease.block(char, now: now.millis),
             "moments": Moments.block(char: char, userName: me?.name ?? "对方", now: now),
             "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
+            // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
+            "space": Space.block(chat, now: now),
+            // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
+            "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -231,6 +235,8 @@ enum ChatPrompt {
     }
 
     private static func withQuote(_ m: Message, _ byId: [String: Message]) -> String {
+        // 封到某一天才能拆的信：那天之前只有信封（网页版 4.336）
+        if Space.sealed(m) { return Space.sealedText(m) }
         let qid = m.row.string("quoteId")
         let qtext = m.row.string("quoteText")
         guard !qid.isEmpty || !qtext.isEmpty else { return m.content }
@@ -326,9 +332,9 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
-                           "diary", "day", "music", "moments", "ties", "memory"]
+                           "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
-    static let capIds = ["image", "voice", "ties", "listen", "agenda", "sticker", "quote", "transfer", "gift", "location", "takeout",
+    static let capIds = ["image", "voice", "ties", "listen", "agenda", "pact", "sticker", "quote", "transfer", "gift", "location", "takeout",
                          "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
@@ -379,6 +385,12 @@ enum ChatPrompt {
         // 今天的安排：今天排了日程才有，一直给全文（网页版 capabilities.js 的 agenda，always）
         cap("agenda", on: DayPlan.brief(char) != nil, hot: true, line: nil) {
             Templates.get("skeleton.agenda", settings: s)
+        }
+        // 约定（网页版 capabilities.js 的 pact）：还欠着约定就一直给全文，它得知道「完成」怎么写才标得掉
+        let openPact = msgs.contains { $0.kind == "pact" && $0.row.string("pact") == Space.pactOpen }
+        cap("pact", on: char.row["canPact"]?.bool != false, hot: used(#"^pact$|[\[【]约定"#) || openPact,
+            line: "Make a promise: write a line on its own, [约定：the thing]; when it is fulfilled, write [约定完成：the thing]") {
+            Templates.get("skeleton.pact", settings: s)
         }
         let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
                                                                    used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))

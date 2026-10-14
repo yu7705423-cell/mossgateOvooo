@@ -34,7 +34,7 @@ enum StatusBar {
         var custom: Bool { kind == "custom" }
         var writtenByModel: Bool { kind == "var" || kind == "custom" }
         /// 原生版读得出值的：时间与所有要模型写的
-        var supported: Bool { kind != "record" || id == "time" }
+        var supported: Bool { kind != "record" || id == "time" || id == "health" }
     }
 
     static let builtin: [Item] = [
@@ -187,7 +187,7 @@ enum StatusBar {
         var items: [JSONValue] = []
         for it in cfg.items where it.on {
             let value: String
-            if it.kind == "record" { value = it.id == "time" ? timeText(char, settings: s, now: now) : "" }
+            if it.kind == "record" { value = it.id == "time" ? timeText(char, settings: s, now: now) : it.id == "health" ? Health.statusText(char) : "" }
             else { value = (vals?[it.label] ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
             if !value.isEmpty { items.append(.object(["id": .string(it.id), "label": .string(it.label), "value": .string(value)])) }
         }

@@ -779,6 +779,7 @@ struct CapsView: View {
         Cap(id: "dice", label: "骰子", group: "互动", info: "角色可以掷骰子"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
+        Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),
         Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),
         Cap(id: "listen", label: "一起听、点歌、分享歌曲与歌单", group: "一起", info: "角色可以邀请一起听、点歌、分享歌曲与歌单"),
     ]

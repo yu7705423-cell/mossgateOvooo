@@ -19,6 +19,8 @@ enum ReplyParser {
         case dm, recallPost
         // 好友与拉黑：角色改自己这一方对某人的状态（extra 是 block / unblock / remove / add / accept，text 是名字）
         case tie
+        // 情侣空间：约定、约定完成（text 是那件事）、信（extra 是信封上的标题）
+        case pact, pactDone, letter
     }
 
     struct Part: Equatable, Sendable {
@@ -222,6 +224,21 @@ enum ReplyParser {
                 var p = Part(type: .tie, text: body.trimmingCharacters(in: .whitespaces))
                 p.extra = Ties.kinds[kind] ?? ""
                 push(p)
+            case "约定", "pact":
+                let t = body.trimmingCharacters(in: .whitespaces)
+                if !t.isEmpty { push(Part(type: .pact, text: t)) }
+            case "约定完成":
+                push(Part(type: .pactDone, text: body.trimmingCharacters(in: .whitespaces)))
+            case "信", "letter":
+                // 竖线前是信封上写的标题，后面是正文；不写竖线整段都是正文
+                let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                let title = (bar.map { String(body[..<$0]) } ?? "").trimmingCharacters(in: .whitespaces)
+                let text = (bar.map { String(body[body.index(after: $0)...]) } ?? body).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !text.isEmpty {
+                    var p = Part(type: .letter, text: text)
+                    p.extra = title
+                    push(p)
+                }
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"

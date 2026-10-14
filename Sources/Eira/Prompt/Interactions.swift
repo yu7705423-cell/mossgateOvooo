@@ -298,7 +298,9 @@ enum Interact {
     static func unsettle(_ notice: Message) throws {
         guard notice.kind == "notice", case let id = notice.row.string("settledId"), !id.isEmpty,
               let row = try Database.shared.get(Collections.messages, id: id) else { return }
-        if notice.row.string("settledKind") == "gift" {
+        if notice.row.string("settledKind") == "pact" {
+            try Space.unsettlePact(notice)
+        } else if notice.row.string("settledKind") == "gift" {
             guard row.string("kind") == "gift" else { return }
             try update(id) {
                 $0["gift"] = .string("pending")

@@ -30,7 +30,7 @@ enum Shell {
     static func app(_ id: String) -> AppInfo? { apps.first { $0.id == id } }
 
     /// 原生版已经做了的 app。其余的点开是一页说明。
-    static let nativeApps: Set<String> = ["chat", "contact", "preset", "settings", "diary", "daily", "music", "album"]
+    static let nativeApps: Set<String> = ["chat", "contact", "preset", "settings", "diary", "daily", "music", "album", "space", "health"]
 
     // MARK: - 图标与名字（网页版 look.js 的 appLook）
 
