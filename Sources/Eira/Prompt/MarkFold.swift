@@ -8,7 +8,7 @@ enum MarkFold {
     /// 繁体（含日文写法）到简体，逐字对齐的两行（字典字面量太长时编译器推断不过来，所以写成两行再拼）
     private static let from = "圖視頻語轉賬帳禮點單樂調約項聲換頭備註賣請親屬辦給歸還碼譯應復擲動態刪開戶駁絕電話撥聽暫繼續進簽時間內攜圍願達號認過發讚贊評論貨掛識價閒閑夢題"
     private static let to = "图视频语转账账礼点单乐调约项声换头备注卖请亲属办给归还码译应复掷动态删开户驳绝电话拨听暂继续进签时间内携围愿达号认过发赞赞评论货挂识价闲闲梦题"
-    static let t2s: [Character: Character] = Dictionary(uniqueKeysWithValues: zip(from, to))
+    static let t2s: [Swift.Character: Swift.Character] = Dictionary(uniqueKeysWithValues: zip(from, to))
 
     static let heads: Set<String> = [
         "图片",
