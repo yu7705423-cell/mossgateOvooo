@@ -1,6 +1,8 @@
 import SwiftUI
 
 /// 一段会话的设置。从会话右上角进来（网页版第 5 条：这段对话的事放在这段对话里）。
+private struct EditTarget: Identifiable { var id: String }
+
 struct ChatSettingsView: View {
     let chatId: String
     var onDeleted: () -> Void = {}
@@ -14,6 +16,9 @@ struct ChatSettingsView: View {
     @State private var muted = false
     @State private var narration = false
     @State private var userNarration = false
+    /// 在这里打开角色卡（编辑资料）：一张自带导航的页，从「聊天」与「联系」进来的会话都打得开
+    @State private var editingChar: String?
+    @State private var cardPath = NavigationPath()
     @State private var innerMode = "off"
     @State private var innerWhat = ""
     @State private var translateTo = ""
@@ -50,6 +55,15 @@ struct ChatSettingsView: View {
                 Toggle("免打扰", isOn: $muted)
             }
             if let c = chat, !c.isGroup, let charId = c.characterIds.first {
+                Section {
+                    Button { cardPath = NavigationPath(); editingChar = charId } label: {
+                        HStack {
+                            Text("角色卡与备注").foregroundStyle(Theme.text)
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.text3)
+                        }
+                    }
+                } header: { Text("这个角色") }
                 ProactiveSection(charId: charId)
                 DayOnSection(charId: charId)
                 MusicCharSection(charId: charId)
@@ -142,6 +156,12 @@ struct ChatSettingsView: View {
         .onAppear(perform: load)
         .onChange(of: pinned) { _, _ in save() }
         .onChange(of: muted) { _, _ in save() }
+        .sheet(item: Binding(get: { editingChar.map { EditTarget(id: $0) } }, set: { editingChar = $0?.id })) { t in
+            NavigationStack(path: $cardPath) {
+                CharacterEditView(charId: t.id, path: $cardPath)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { editingChar = nil } } }
+            }
+        }
         .onChange(of: narration) { _, _ in save() }
         .onChange(of: userNarration) { _, _ in save() }
         .onChange(of: presetId) { _, _ in save() }
