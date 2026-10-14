@@ -9,6 +9,8 @@ struct RootView: View {
     @State private var layout = Shell.layout()
     @State private var opened: OpenedApp?
     @State private var unread = Shell.chatUnread()
+    /// 打开 app 时从那个图标放大出来、关上时缩回去（iOS 18 起）
+    @Namespace private var appZoom
 
     struct OpenedApp: Identifiable { var id: String }
 
@@ -23,7 +25,7 @@ struct RootView: View {
                 }
                 .ignoresSafeArea()
             }
-            HomeScreen(layout: layout, settings: settings.s.raw, unread: unread,
+            HomeScreen(layout: layout, settings: settings.s.raw, unread: unread, zoom: appZoom,
                        open: { opened = OpenedApp(id: $0) },
                        openChat: { id in notifier.openChat = id })
         }
@@ -36,6 +38,7 @@ struct RootView: View {
             AppHost(appId: app.id) { opened = nil }
                 .eiraLook()
                 .preferredColorScheme(AppearanceView.scheme(settings.s))
+                .zoomFrom(app.id, appZoom)
         }
         .fullScreenCover(isPresented: $onboarding, onDismiss: refresh) {
             OnboardingView { onboarding = false; settings.reload() }.eiraLook()
@@ -145,4 +148,24 @@ struct ProblemBanner: View {
 
 #Preview {
     RootView()
+}
+
+extension View {
+    /// 打开 app 的动画从这个图标起（iOS 18 起；更早的系统照旧从下往上推）
+    @ViewBuilder func zoomSource(_ id: String, _ ns: Namespace.ID?) -> some View {
+        if #available(iOS 18.0, *), let ns {
+            matchedTransitionSource(id: id, in: ns)
+        } else {
+            self
+        }
+    }
+
+    /// 整屏打开的 app 从对应的图标放大出来，关上时缩回图标
+    @ViewBuilder func zoomFrom(_ id: String, _ ns: Namespace.ID) -> some View {
+        if #available(iOS 18.0, *) {
+            navigationTransition(.zoom(sourceID: id, in: ns))
+        } else {
+            self
+        }
+    }
 }

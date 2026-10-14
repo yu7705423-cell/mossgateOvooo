@@ -112,6 +112,7 @@ struct HomeScreen: View {
     let layout: Shell.Layout
     let settings: [String: JSONValue]
     let unread: Int
+    var zoom: Namespace.ID?
     var open: (String) -> Void
     var openChat: (String) -> Void
 
@@ -195,7 +196,7 @@ struct HomeScreen: View {
         case "app":
             if let look = Shell.look(c.ref, settings: settings) {
                 Button { open(c.ref) } label: {
-                    labeled(AppTileView(look: look, size: tile, badge: c.ref == "chat" ? unread : 0, home: home),
+                    labeled(AppTileView(look: look, size: tile, badge: c.ref == "chat" ? unread : 0, home: home).zoomSource(c.ref, zoom),
                             name: look.name, show: Shell.showLabel(look.label, settings: settings))
                 }
                 .buttonStyle(TilePress())
@@ -252,6 +253,7 @@ struct HomeScreen: View {
                 Button { open(look.id) } label: {
                     VStack(spacing: 5) {
                         AppTileView(look: look, size: tile, badge: look.id == "chat" ? unread : 0, home: home)
+                            .zoomSource(look.id, zoom)
                         if named[i] { Text(look.name).font(.system(size: 11)).lineLimit(1).foregroundStyle(home.nameColor) }
                     }
                     .frame(width: slotW)
