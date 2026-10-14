@@ -169,6 +169,20 @@ enum Proactive {
         guard let chat = try Repo.chat(chatId), let char = try Repo.character(charId) else { throw StoreError(message: "会话或角色不存在") }
         guard Running.claim(chatId) else { return [] }
         defer { Running.release(chatId) }
+        // 生成中这段会话的标题写「正在输入」（网页版 4.533）
+        await MainActor.run { Typing.shared.begin(chatId) }
+        do {
+            let made = try await speak(chat: chat, char: char, onRow: onRow)
+            await MainActor.run { Typing.shared.end(chatId) }
+            return made
+        } catch {
+            await MainActor.run { Typing.shared.end(chatId) }
+            throw error
+        }
+    }
+
+    private static func speak(chat: Chat, char: Character, onRow: @escaping ChatEngine.OnRow) async throws -> [Message] {
+        let chatId = chat.id
         let p = try payload(chat: chat, char: char)
         let r = try await AIService.shared.send(task: "chat.proactive", system: p.system, messages: p.messages, maxTokens: p.maxTokens)
         let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)

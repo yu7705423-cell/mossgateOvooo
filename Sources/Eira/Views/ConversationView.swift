@@ -28,6 +28,9 @@ struct ConversationView: View {
     @State private var draft = ""
     @State private var quoting: Message?
     @State private var busy = false
+    @ObservedObject private var typingState = Typing.shared
+    /// 这一页在忙，或者这段会话在别处还在生成（离开再回来、主动消息）
+    private var isBusy: Bool { busy || typingState.isOn(chatId) }
     @State private var job: Task<Void, Never>?
     @State private var problem: String?
     @State private var picked: [PhotosPickerItem] = []
@@ -98,7 +101,7 @@ struct ConversationView: View {
                 ToolbarItem(placement: .primaryAction) {
                     Button { calling = char } label: { NavIcon("phone") }
                         .accessibilityLabel("语音通话")
-                        .disabled(busy)
+                        .disabled(isBusy)
                 }
             }
             if picking == nil {
@@ -175,7 +178,7 @@ struct ConversationView: View {
         }
         // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
-            guard (note.object as? String) == chatId, !busy else { return }
+            guard (note.object as? String) == chatId, !isBusy else { return }
             reload()
             markRead()
         }
@@ -294,8 +297,8 @@ struct ConversationView: View {
                     showStickers.toggle()
                     if showStickers { showPanel = false; typing = false }
                 }
-                if busy {
-                    sendButton("close", size: 17, filled: false, stop: true, label: "停止") { job?.cancel() }
+                if isBusy {
+                    sendButton("close", size: 17, filled: false, stop: true, label: "停止") { job?.cancel(); typingState.cancel(chatId) }
                 } else if !draftEmpty {
                     sendButton("send", size: 17, filled: true, label: "发送", action: primary)
                 } else {
@@ -387,7 +390,7 @@ struct ConversationView: View {
             PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
                 panelItem("image", "图片")
             }
-            .disabled(busy)
+            .disabled(isBusy)
             panelButton("mic", "语音") { recordingVoice = true }
             panelButton("grid", "骰子") { dicing = true }
             // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
@@ -422,7 +425,7 @@ struct ConversationView: View {
             action()
         } label: { panelItem(icon, label) }
         .buttonStyle(.plain)
-        .disabled(busy)
+        .disabled(isBusy)
     }
 
     private func panelItem(_ icon: String, _ label: String) -> some View {
@@ -590,7 +593,7 @@ struct ConversationView: View {
             Color.clear.frame(height: 1)
                 .onAppear { atBottom = true; unseen = 0 }
                 .onDisappear { atBottom = false }
-            if !busy, let turn {
+            if !isBusy, let turn {
                 turnBar(turn)
             }
         }
@@ -698,7 +701,7 @@ struct ConversationView: View {
     /// 标题：生成中写「正在输入」；群名加人数（成员与我，网页版 group.headcount），单聊是角色备注名
     private var pageTitle: String {
         guard let chat else { return "" }
-        if busy { return "正在输入" }
+        if isBusy { return "正在输入" }
         guard chat.isGroup else { return char?.displayName ?? chat.title }
         let list = chat.characterIds.compactMap { members[$0] }
         return "\(GroupChat.title(chat, members: list))（\(list.count + 1)）"
@@ -866,17 +869,17 @@ struct ConversationView: View {
     /// 请角色回复；regenerate 时重新生成最后一轮。新落下的几条到了，旧的那一轮才从屏幕上拿掉。
     /// 重新生成：这一轮里有角色发的图片时先问图片怎么处理（底部一列，网页版 4.522）
     private func askRegenerate() {
-        guard !busy else { return }
+        guard !isBusy else { return }
         if let turn, ChatEngine.hasImages(turn) { askingImageKeep = true } else { generate(regenerate: true) }
     }
 
     private func generate(regenerate: Bool = false, imageKeep: ChatEngine.ImageKeep = .all) {
-        guard !busy else { return }
+        guard !isBusy else { return }
         busy = true
         problem = nil
         let id = chatId
         let oldIds = regenerate ? Set(turn?.rows.map(\.id) ?? []) : []
-        job = Task {
+        let task = Task {
             do {
                 try await ChatEngine.reply(chatId: id, regenerate: regenerate, imageKeep: imageKeep) { m in
                     Task { @MainActor in
@@ -898,14 +901,17 @@ struct ConversationView: View {
             }
             await MainActor.run {
                 busy = false
+                Typing.shared.end(id)
                 reload()
             }
         }
+        job = task
+        typingState.begin(id, job: task)
     }
 
     /// 切到上一个或下一个版本：存着的原文重新切一遍，不调接口。
     private func switchVersion(_ step: Int) {
-        guard !busy else { return }
+        guard !isBusy else { return }
         busy = true
         let id = chatId
         Task {
