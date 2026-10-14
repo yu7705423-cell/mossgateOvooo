@@ -79,6 +79,11 @@ struct ConversationView: View {
     struct ViewingImage: Identifiable { let id: String }
 
     var body: some View {
+        withEditors(withPanels(page))
+    }
+
+    /// 页面本身：消息列表、输入栏、顶栏，以及开关这一页时要做的事
+    private var page: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
                 messageScroll(proxy)
@@ -131,6 +136,26 @@ struct ConversationView: View {
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
                              onSelect: { showSettings = false; picking = [] })
         }
+        .onAppear {
+            Notifier.shared.visibleChat = chatId
+            reload()
+        }
+        .onDisappear {
+            if Notifier.shared.visibleChat == chatId { Notifier.shared.visibleChat = nil }
+            markRead()
+        }
+        // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
+        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
+            guard (note.object as? String) == chatId, !isBusy else { return }
+            reload()
+            markRead()
+        }
+        .fullScreenCover(item: $viewing) { v in ImageViewer(imageId: v.id) }
+    }
+
+    /// 会话页上弹出的那几样（拆开写：整页挂在一个表达式上，编译器推断不过来）
+    private func withPanels<V: View>(_ base: V) -> some View {
+        base
         .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
             Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
             Button("保留图片，只重新生成文字") { generate(regenerate: true, imageKeep: .keep) }
@@ -207,21 +232,10 @@ struct ConversationView: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { showSearch = false } } }
             }
         }
-        .onAppear {
-            Notifier.shared.visibleChat = chatId
-            reload()
-        }
-        .onDisappear {
-            if Notifier.shared.visibleChat == chatId { Notifier.shared.visibleChat = nil }
-            markRead()
-        }
-        // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
-        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
-            guard (note.object as? String) == chatId, !isBusy else { return }
-            reload()
-            markRead()
-        }
-        .fullScreenCover(item: $viewing) { v in ImageViewer(imageId: v.id) }
+    }
+
+    private func withEditors<V: View>(_ base: V) -> some View {
+        base
         .sheet(item: $editing) { m in
             NavigationStack {
                 EditMessageView(message: m) { saved in
