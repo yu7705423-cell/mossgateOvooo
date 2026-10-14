@@ -18,14 +18,12 @@ enum CardImport {
         var exampleDialogue = ""
     }
 
-    /// 资料最多带前 12000 字（网页版同样）。
-    static let rawLimit = 12000
-
     static func parse(raw: String) async throws -> Draft {
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw StoreError(message: "这个文件是空的") }
         let s = AppSettings.load()
-        let system = Templates.render("task.card-import", ["raw": String(text.prefix(rawLimit))], settings: s)
+        // 资料整份带上，不截字数（用户定的，2026-10-14；网页版截在前 12000 字）
+        let system = Templates.render("task.card-import", ["raw": text], settings: s)
         let r = try await AIService.shared.send(task: "card.import", system: system,
                                                 messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.")],
                                                 maxTokens: 3000, retries: 1)

@@ -26,7 +26,7 @@ struct CardImportView: View {
                     HStack { ProgressView(); Text("正在读取").foregroundStyle(Theme.secondaryText); Spacer(); Button("停止") { job?.cancel() } }
                 }
             } footer: {
-                Text("支持 txt、md、docx。由副用接口读取，调用一次；资料只取前 \(CardImport.rawLimit) 字。")
+                Text("支持 txt、md、docx。由副用接口读取，调用一次。资料整份发给模型，不截字数：资料越长，这一次的用量越大。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
             if draft != nil { draftSections }

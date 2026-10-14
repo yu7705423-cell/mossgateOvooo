@@ -26,7 +26,7 @@ final class CardImportTests: StoreTestCase {
         XCTAssertEqual(d.persona, "PERSONA")
         XCTAssertEqual(d.age, "24")
         XCTAssertEqual(MockNet.count, 1)
-        // 资料进了请求（截在前 12000 字）
+        // 资料进了请求
         let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
         XCTAssertTrue(body.contains("一段资料"))
 
@@ -103,5 +103,16 @@ final class CardImportTests: StoreTestCase {
         let data = try XCTUnwrap("中文资料".data(using: String.Encoding(rawValue: gb)))
         XCTAssertEqual(DocText.plain(data), "中文资料")
         XCTAssertEqual(DocText.plain(Data("a\r\nb".utf8)), "a\nb")
+    }
+}
+
+extension CardImportTests {
+    /// 资料整份带上，不截字数（用户定的）：两万字之后的那一句也在请求里。
+    func testLongMaterialIsSentWhole() async throws {
+        MockNet.reset { [self] _, _ in reply("{\"name\":\"林\",\"persona\":\"P\"}") }
+        let long = String(repeating: "很长的资料。", count: 4000) + "TAIL_MARKER"
+        _ = try await CardImport.parse(raw: long)
+        let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("TAIL_MARKER"))
     }
 }
