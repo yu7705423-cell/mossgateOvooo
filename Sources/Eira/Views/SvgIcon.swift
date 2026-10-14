@@ -245,3 +245,36 @@ enum PathData {
         }
     }
 }
+
+/// 顶栏右边的图标按钮（网页版 IconButton：34 见方，线条图标 20，文字色）
+struct NavIcon: View {
+    let name: String
+    init(_ name: String) { self.name = name }
+    var body: some View {
+        SvgIcon(name: name, size: 20, color: Theme.text)
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
+    }
+}
+
+extension SvgShapes {
+    /// 画成一张模板图（UIKit 要图的地方用，比如顶栏的返回箭头）。颜色由 tintColor 决定
+    static func uiImage(_ name: String, size: CGFloat, lineWidth: CGFloat = 1.6) -> UIImage {
+        let ps = Self.parts(name)
+        let k = size / 24
+        let img = UIGraphicsImageRenderer(size: CGSize(width: size, height: size)).image { r in
+            let ctx = r.cgContext
+            ctx.scaleBy(x: k, y: k)
+            ctx.setLineCap(.round)
+            ctx.setLineJoin(.round)
+            ctx.setLineWidth(lineWidth)
+            ctx.setStrokeColor(UIColor.black.cgColor)
+            ctx.setFillColor(UIColor.black.cgColor)
+            for p in ps {
+                if p.fill { ctx.addPath(p.path); ctx.fillPath() }
+                if p.stroke { ctx.addPath(p.path); ctx.strokePath() }
+            }
+        }
+        return img.withRenderingMode(.alwaysTemplate)
+    }
+}

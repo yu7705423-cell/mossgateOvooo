@@ -94,10 +94,29 @@ enum Theme {
         nav.shadowColor = .clear
         nav.titleTextAttributes = [.font: UIFont.systemFont(ofSize: 17, weight: .semibold), .foregroundColor: UIColor(text)]
         nav.largeTitleTextAttributes = [.font: serifUI(30), .foregroundColor: UIColor(text), .kern: 0.6]
+        // 返回：网页版顶栏左上角那个细线左箭头（chevronLeft，22），不带上一页的标题
+        let back = SvgShapes.uiImage("chevronLeft", size: 22)
+        nav.setBackIndicatorImage(back, transitionMaskImage: back)
+        let hidden: [NSAttributedString.Key: Any] = [.foregroundColor: UIColor.clear, .font: UIFont.systemFont(ofSize: 0.1)]
+        nav.backButtonAppearance.normal.titleTextAttributes = hidden
+        nav.backButtonAppearance.highlighted.titleTextAttributes = hidden
+        // 顶栏的文字按钮（取消、保存）：网页版 .nav-text，14 号文字色
+        let plain = UIBarButtonItemAppearance()
+        plain.normal.titleTextAttributes = [.font: UIFont.systemFont(ofSize: 15), .foregroundColor: UIColor(text)]
+        nav.buttonAppearance = plain
+        let done = UIBarButtonItemAppearance()
+        done.normal.titleTextAttributes = [.font: UIFont.systemFont(ofSize: 15, weight: .semibold), .foregroundColor: UIColor(text)]
+        nav.doneButtonAppearance = done
         UINavigationBar.appearance().standardAppearance = nav
         UINavigationBar.appearance().scrollEdgeAppearance = nav
         UINavigationBar.appearance().compactAppearance = nav
         UINavigationBar.appearance().tintColor = UIColor(text)
+        // 分段选择（.segmented）：浅灰底，选中的那一格白底，13 号字
+        let seg = UISegmentedControl.appearance()
+        seg.backgroundColor = UIColor(surface2)
+        seg.selectedSegmentTintColor = UIColor(surface)
+        seg.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 13), .foregroundColor: UIColor(text2)], for: .normal)
+        seg.setTitleTextAttributes([.font: UIFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: UIColor(text)], for: .selected)
     }
 }
 

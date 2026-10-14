@@ -26,6 +26,8 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # 不用 iOS 26 的液态玻璃：顶栏按钮、返回、分段选择器照网页版画，不套系统的玻璃圆底
+        UIDesignRequiresCompatibility: true
         # 新版界面的标题宋体（Resources/EiraSerif-SemiBold.ttf，scripts/make-serif.py 由网页版的字体合成）
         UIAppFonts:
           - EiraSerif-SemiBold.ttf

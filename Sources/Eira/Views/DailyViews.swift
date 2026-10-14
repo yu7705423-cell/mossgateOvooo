@@ -118,7 +118,7 @@ struct DayTodayView: View {
         .toolbar {
             if row != nil {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { confirmRedo = true } label: { Image(systemName: "arrow.clockwise") }
+                    Button { confirmRedo = true } label: { NavIcon("refresh") }
                         .accessibilityLabel("重新安排").disabled(busy)
                 }
             }
@@ -329,7 +329,7 @@ struct EventCellView: View {
             }
         }
         .navigationTitle("\(domain.label) · \(tone.label)")
-        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("添加词条") } }
+        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { NavIcon("plus") }.accessibilityLabel("添加词条") } }
         .sheet(item: $editing, onDismiss: reload) { r in NavigationStack { EventEditView(domain: domain, tone: tone, row: r) } }
         .sheet(isPresented: $adding, onDismiss: reload) { NavigationStack { EventEditView(domain: domain, tone: tone, row: nil) } }
         .onAppear(perform: reload)
@@ -487,7 +487,7 @@ struct FoodRegionsView: View {
             }
         }
         .navigationTitle("吃什么")
-        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("新增地区") } }
+        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { NavIcon("plus") }.accessibilityLabel("新增地区") } }
         .alert("新增地区", isPresented: $adding) {
             TextField("地区（最多 20 字）", text: $newName)
             Button("添加") {
@@ -553,7 +553,7 @@ struct FoodListView: View {
             }
         }
         .navigationTitle("吃什么 · \(region.isEmpty ? "不分地区" : region)")
-        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { Image(systemName: "plus") }.accessibilityLabel("添加") } }
+        .toolbar { ToolbarItem(placement: .primaryAction) { Button { adding = true } label: { NavIcon("plus") }.accessibilityLabel("添加") } }
         .sheet(item: $editing, onDismiss: reload) { r in NavigationStack { FoodEditView(region: region, row: r) } }
         .sheet(isPresented: $adding, onDismiss: reload) { NavigationStack { FoodEditView(region: region, row: nil) } }
         .onAppear(perform: reload)

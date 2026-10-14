@@ -34,7 +34,7 @@ struct MemoryListView: View {
         .navigationTitle("记忆")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { editing = EditTarget(id: "") } label: { Image(systemName: "plus") }.accessibilityLabel("新建记忆")
+                Button { editing = EditTarget(id: "") } label: { NavIcon("plus") }.accessibilityLabel("新建记忆")
             }
         }
         .navigationDestination(item: $editing) { t in

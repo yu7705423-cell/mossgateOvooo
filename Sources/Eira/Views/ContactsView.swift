@@ -50,7 +50,7 @@ struct ContactsView: View {
                     Menu {
                         Button("新建角色", action: create)
                         Button("从资料读取角色卡") { path.append(Route.cardImport) }
-                    } label: { Image(systemName: "plus") }
+                    } label: { NavIcon("plus") }
                     .accessibilityLabel("新建角色")
                 }
             }

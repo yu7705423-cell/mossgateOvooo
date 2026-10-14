@@ -24,7 +24,7 @@ struct LorebookListView: View {
         .navigationTitle("世界书")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button(action: create) { Image(systemName: "plus") }.accessibilityLabel("新建世界书")
+                Button(action: create) { NavIcon("plus") }.accessibilityLabel("新建世界书")
             }
         }
         .navigationDestination(item: $opening) { t in LorebookView(bookId: t.id) }

@@ -104,13 +104,13 @@ struct ConversationView: View {
         .toolbar {
             if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { calling = char } label: { Image(systemName: "phone") }
+                    Button { calling = char } label: { NavIcon("phone") }
                         .accessibilityLabel("语音通话")
                         .disabled(busy)
                 }
             }
             ToolbarItem(placement: .primaryAction) {
-                Button { showSettings = true } label: { Image(systemName: "ellipsis") }.accessibilityLabel("会话设置")
+                Button { showSettings = true } label: { NavIcon("more") }.accessibilityLabel("会话设置")
             }
         }
         .navigationDestination(isPresented: $showSettings) {

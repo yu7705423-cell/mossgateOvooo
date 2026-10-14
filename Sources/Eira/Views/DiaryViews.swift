@@ -58,7 +58,7 @@ struct DiaryHomeView: View {
         .toolbar {
             if tab == 0 {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { writing = true } label: { Image(systemName: "square.and.pencil") }.accessibilityLabel("写日记")
+                    Button { writing = true } label: { NavIcon("edit") }.accessibilityLabel("写日记")
                 }
             }
         }
@@ -199,7 +199,7 @@ struct DiaryReadView: View {
                         Button { editing = true } label: { Label("编辑", systemImage: "pencil") }
                     }
                     Button(role: .destructive) { confirmDelete = true } label: { Label("删除", systemImage: "trash") }
-                } label: { Image(systemName: "ellipsis") }
+                } label: { NavIcon("more") }
             }
         }
         .sheet(isPresented: $editing, onDismiss: load) { NavigationStack { DiaryEditView(id: id) } }
