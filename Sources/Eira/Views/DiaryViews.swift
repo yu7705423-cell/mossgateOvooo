@@ -1,19 +1,5 @@
 import SwiftUI
 
-/// 「应用」页：网页版的其余 app 做到哪个，就在这里多一个入口。
-struct AppsView: View {
-    var body: some View {
-        NavigationStack {
-            List {
-                NavigationLink { DailyHomeView() } label: { Label("日常", systemImage: "sunrise") }
-                NavigationLink { MusicHomeView() } label: { Label("音乐", systemImage: "music.note") }
-                NavigationLink { DiaryHomeView() } label: { Label("日记", systemImage: "book.closed") }
-            }
-            .navigationTitle("应用")
-        }
-    }
-}
-
 /// 日记首页：我的、角色的。
 struct DiaryHomeView: View {
     @State private var tab = 0

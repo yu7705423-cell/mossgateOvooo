@@ -74,7 +74,11 @@ struct ChatListView: View {
             .navigationDestination(for: String.self) { id in
                 ConversationView(chatId: id)
             }
-            .onAppear(perform: reload)
+            .onAppear {
+                reload()
+                // 从主屏的会话或通知打开时，聊天 app 刚出现，那一段还挂在这里
+                if let id = notifier.openChat { notifier.openChat = nil; path = [id] }
+            }
             .refreshable { reload() }
             .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
             .onChange(of: notifier.openChat) { _, id in
