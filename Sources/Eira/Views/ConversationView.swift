@@ -677,7 +677,8 @@ struct MessageRow: View {
         case "takeout":
             takeoutCard
         default:
-            bubble(message.content)
+            // 正则替换里「屏幕上显示」的那一份
+            bubble(RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s))
         }
     }
 

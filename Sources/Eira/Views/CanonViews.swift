@@ -17,6 +17,10 @@ struct CanonView: View {
                     NavigationLink { PresetListView() } label: {
                         row("预设", "slider.horizontal.3", Presets.name(model.s, Presets.activeId(model.s)))
                     }
+                    NavigationLink { RegexListView() } label: {
+                        let n = RegexRules.list(model.s).filter(\.on).count
+                        row("正则替换", "chevron.left.forwardslash.chevron.right", n > 0 ? "\(n) 条开启" : "未设置")
+                    }
                     NavigationLink { BanView() } label: {
                         row("不要写这些", "nosign", Ban.list(model.s).isEmpty ? "未设置" : "\(Ban.list(model.s).count) 条")
                     }
@@ -757,5 +761,167 @@ struct CapsView: View {
                     if !want { list.append(id) }
                     model.set("capsOff", .array(list.map { .string($0) }))
                 })
+    }
+}
+
+// MARK: - 正则替换
+
+struct RegexListView: View {
+    @ObservedObject private var model = SettingsModel.shared
+    @State private var opening: Target?
+
+    struct Target: Identifiable, Hashable { let id: String }
+
+    var body: some View {
+        List {
+            Section {
+                ForEach(RegexRules.list(model.s)) { r in
+                    HStack {
+                        Button { opening = Target(id: r.id) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(r.name.isEmpty ? "未命名规则" : r.name).foregroundStyle(Theme.bubbleTheirsText)
+                                Text(summary(r)).font(.footnote).foregroundStyle(summaryIsError(r) ? Theme.danger : Theme.secondaryText)
+                            }
+                        }
+                        Spacer()
+                        Toggle("", isOn: Binding(get: { r.on }, set: { v in patch(r.id, ["on": .bool(v)]) })).labelsHidden()
+                    }
+                }
+                .onMove { from, to in
+                    var rules = model.s.raw["regexRules"]?.array ?? []
+                    rules.move(fromOffsets: from, toOffset: to)
+                    model.set("regexRules", .array(rules))
+                }
+                Button("新建规则") {
+                    let row = RegexRules.blank(name: "规则 \(RegexRules.list(model.s).count + 1)")
+                    model.update { $0.raw["regexRules"] = .array(($0.raw["regexRules"]?.array ?? []) + [.object(row)]) }
+                    if model.problem == nil, let id = row["id"]?.string { opening = Target(id: id) }
+                }
+            } footer: {
+                Text("把消息里的字词换成别的写法。每条规则可以只改屏幕上的显示、只改发给角色的聊天记录，或两边都改。存着的原文不变，关闭规则后立即恢复原样。规则按列表顺序依次套用，长按拖动调整先后。不调用接口。")
+            }
+            ProblemSection(text: model.problem)
+        }
+        .navigationTitle("正则替换")
+        .navigationDestination(item: $opening) { t in RegexEditView(ruleId: t.id) }
+        .onAppear { model.reload() }
+    }
+
+    private func summaryIsError(_ r: RegexRules.Rule) -> Bool { !RegexRules.compile(r).1.isEmpty }
+
+    private func summary(_ r: RegexRules.Rule) -> String {
+        let err = RegexRules.compile(r).1
+        if !err.isEmpty { return "正则有误：\(err)" }
+        if r.find.isEmpty { return "尚未填写查找内容" }
+        let mode = RegexRules.modes.first { $0.id == r.mode }?.label ?? "只改显示"
+        let who = [r.who.contains("char") ? "角色的消息" : "", r.who.contains("user") ? "我的消息" : ""].filter { !$0.isEmpty }.joined(separator: "、")
+        return [mode, who.isEmpty ? "未选" : who, r.charIds.isEmpty ? "全部角色" : "\(r.charIds.count) 个角色"].joined(separator: " · ")
+    }
+
+    private func patch(_ id: String, _ fields: [String: JSONValue]) {
+        model.update {
+            $0.raw["regexRules"] = .array(($0.raw["regexRules"]?.array ?? []).map { v in
+                guard v["id"]?.string == id, case .object(var o) = v else { return v }
+                o.merge(fields) { _, n in n }
+                return .object(o)
+            })
+        }
+    }
+}
+
+struct RegexEditView: View {
+    let ruleId: String
+    @ObservedObject private var model = SettingsModel.shared
+    @Environment(\.dismiss) private var dismiss
+    @State private var chars: [Character] = []
+    @State private var probe = ""
+    @State private var confirmDelete = false
+
+    private var rule: RegexRules.Rule? { RegexRules.list(model.s).first { $0.id == ruleId } }
+
+    var body: some View {
+        Form {
+            if let r = rule {
+                Section {
+                    TextField("名称", text: text("name"))
+                    TextField("查找", text: text("find")).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    TextField("替换为", text: text("replace")).textInputAutocapitalization(.never).autocorrectionDisabled()
+                    Toggle("按正则表达式查找", isOn: flag("regex", false))
+                    Toggle("区分大小写", isOn: flag("caseSensitive", true))
+                } footer: {
+                    let err = RegexRules.compile(r).1
+                    Text(err.isEmpty ? (r.isRegex ? "替换里可以写 $1、$2 引用分组。" : "按原文查找，替换里的符号原样写出。") : "正则有误：\(err)")
+                        .foregroundStyle(err.isEmpty ? Theme.secondaryText : Theme.danger)
+                }
+                Section("改哪里") {
+                    Picker("改哪里", selection: text("mode")) {
+                        ForEach(RegexRules.modes.indices, id: \.self) { i in Text(RegexRules.modes[i].label).tag(RegexRules.modes[i].id) }
+                    }
+                    .pickerStyle(.inline).labelsHidden()
+                }
+                Section("作用于") {
+                    Toggle("角色的消息", isOn: member("who", "char", r.who))
+                    Toggle("我的消息", isOn: member("who", "user", r.who))
+                    Toggle("线上聊天", isOn: member("where", "online", r.whereList))
+                    Toggle("线下正文", isOn: member("where", "offline", r.whereList))
+                }
+                Section {
+                    ForEach(chars) { c in
+                        Toggle(c.name, isOn: member("charIds", c.id, r.charIds))
+                    }
+                } header: {
+                    Text("适用的角色")
+                } footer: {
+                    Text("一个都不选表示全部角色。")
+                }
+                Section {
+                    TextField("输入一段文字试一试", text: $probe, axis: .vertical)
+                    if !probe.isEmpty {
+                        Text(RegexRules.apply(r, probe)).font(.footnote).foregroundStyle(Theme.secondaryText)
+                    }
+                } header: {
+                    Text("试一试")
+                }
+                Section { Button("删除这条规则", role: .destructive) { confirmDelete = true } }
+                ProblemSection(text: model.problem)
+            } else {
+                Text("这条规则已删除。").foregroundStyle(Theme.secondaryText)
+            }
+        }
+        .navigationTitle(rule?.name.isEmpty == false ? rule!.name : "规则")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                model.update { $0.raw["regexRules"] = .array(($0.raw["regexRules"]?.array ?? []).filter { $0["id"]?.string != ruleId }) }
+                dismiss()
+            }
+        }
+        .onAppear { chars = ((try? Repo.characters()) ?? []).filter { !$0.row.bool("isNpc") && $0.row.string("parentId").isEmpty } }
+    }
+
+    private func patch(_ fields: [String: JSONValue]) {
+        model.update {
+            $0.raw["regexRules"] = .array(($0.raw["regexRules"]?.array ?? []).map { v in
+                guard v["id"]?.string == ruleId, case .object(var o) = v else { return v }
+                o.merge(fields) { _, n in n }
+                return .object(o)
+            })
+        }
+    }
+
+    private func text(_ key: String) -> Binding<String> {
+        Binding(get: { rule?.json[key]?.string ?? (key == "mode" ? "display" : "") }, set: { patch([key: .string($0)]) })
+    }
+
+    private func flag(_ key: String, _ def: Bool) -> Binding<Bool> {
+        Binding(get: { rule?.json[key]?.bool ?? def }, set: { patch([key: .bool($0)]) })
+    }
+
+    private func member(_ key: String, _ value: String, _ current: [String]) -> Binding<Bool> {
+        Binding(get: { current.contains(value) }, set: { on in
+            var next = current.filter { $0 != value }
+            if on { next.append(value) }
+            patch([key: .array(next.map { .string($0) })])
+        })
     }
 }

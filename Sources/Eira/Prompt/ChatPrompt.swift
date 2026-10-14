@@ -106,7 +106,9 @@ enum ChatPrompt {
 
         var out: [AIMessage] = []
         var prev: Message?
-        for m in window {
+        for raw in window {
+            // 正则替换里「发给角色的」那一份（存着的原文不动）
+            let m = RegexRules.promptMessage(raw, chat: chat, settings: s)
             var text = (stampOn ? timeLine(m, prev) : "") + withQuote(m, byId)
             if m.isRecalled && m.role == .user {
                 let seen = m.row["recalled"]?["seen"]?.bool ?? false
