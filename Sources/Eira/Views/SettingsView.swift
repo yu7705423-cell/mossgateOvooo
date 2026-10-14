@@ -21,9 +21,6 @@ struct SettingsView: View {
                         row("主题", "circle.lefthalf.filled", AppearanceView.label(model.s))
                     }
                 }
-                Section("设定") {
-                    NavigationLink { LorebookListView() } label: { row("世界书", "book.closed", "") }
-                }
                 Section("数据") {
                     NavigationLink { StorageView() } label: { row("存储与备份", "externaldrive", "") }
                 }
@@ -32,7 +29,7 @@ struct SettingsView: View {
                 } header: {
                     Text("关于")
                 } footer: {
-                    Text("Eiraowo · 本地运行，数据只存在这台设备上\n版本 \(Self.version)")
+                    Text("角色读到的世界书、记忆、预设、能力在「设定集」中。\nEiraowo · 本地运行，数据只存在这台设备上\n版本 \(Self.version)")
                 }
             }
             .navigationTitle("设置")

@@ -12,6 +12,8 @@ struct RootView: View {
                 .tabItem { Label("消息", systemImage: "bubble.left") }
             ContactsView()
                 .tabItem { Label("联系", systemImage: "person.2") }
+            CanonView()
+                .tabItem { Label("设定集", systemImage: "books.vertical") }
             SettingsView()
                 .tabItem { Label("设置", systemImage: "gearshape") }
         }

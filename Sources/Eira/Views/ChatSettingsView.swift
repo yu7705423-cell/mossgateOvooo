@@ -34,7 +34,7 @@ struct ChatSettingsView: View {
                     ForEach(presets) { p in Text(p.name).tag(p.id) }
                 }
             } footer: {
-                Text("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在网页版「设定集」中编辑，原生版暂不支持编辑。")
+                Text("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
             }
             Section {
                 TextField("尚无摘要", text: $summary, axis: .vertical).lineLimit(3...20)

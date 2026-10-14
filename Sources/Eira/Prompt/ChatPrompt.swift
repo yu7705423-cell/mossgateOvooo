@@ -37,39 +37,42 @@ enum ChatPrompt {
         let recalled = memoryOn ? recall(memories, scanText: scanText, skip: Set(recent.map(\.id)),
                                          topK: Int(s.num("memoryTopK", 6)), now: now) : []
 
-        // 系统提示：各段 trim 后用空行连起来，空的不要
-        var pieces: [String] = []
-        func add(_ s: String) { let t = s.trimmingCharacters(in: .whitespacesAndNewlines); if !t.isEmpty { pieces.append(t) } }
-
-        add(Templates.render("skeleton.opening", names, settings: s))
-        let gender = genderPiece(char: char, me: me, names: names, settings: s)
-        add(gender)
-        add(loreBlock(lore.before))
-        add(bondBlock(char: char, rootId: rootId))
-        add(characterBlock(char))
-        add(loreBlock(lore.after))
-        add(userBlock(me: me, char: char))
-        add(pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))))
-        if !chat.summary.isEmpty { add("[更早之前发生过什么]\n\(chat.summary)") }
-        add(Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s))
-        add(capabilities(char: char, chat: chat, msgs: all, settings: s))
-        if !char.core.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            add(Templates.render("skeleton.core", ["core": char.core.trimmingCharacters(in: .whitespacesAndNewlines)], settings: s))
-        }
-        add(banPiece(s))
-        add(gender)
-
-        // 放在历史末尾的那一段
-        var tailParts: [String] = []
-        let volatile = [timeBlock(char: char, msgs: all, settings: s, now: now), recentBlock(recent, now: now)]
-            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-        if !volatile.isEmpty { tailParts.append(volatile) }
+        // 各段先算出来，先后与开关交给预设的条目顺序（Layout，网页版 4.387）。默认顺序与从前一字不差
         let memoryDepth = Int(s.num("memoryDepth", 1))
+        var blocks: [String: String] = [
+            "lorebook": loreBlock(lore.before),
+            "bond": bondBlock(char: char, rootId: rootId),
+            "character": characterBlock(char),
+            "loreAfter": loreBlock(lore.after),
+            "user": userBlock(me: me, char: char),
+            "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
+            "time": timeBlock(char: char, msgs: all, settings: s, now: now),
+            "recent": recentBlock(recent, now: now),
+        ]
+        // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
+        if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
+
+        var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
+        P["opening"] = Templates.render("skeleton.opening", names, settings: s)
+        let gender = genderPiece(char: char, me: me, names: names, settings: s)
+        P["gender"] = gender
+        if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
+        P["rules"] = Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s)
+        P["caps"] = capabilities(char: char, chat: chat, msgs: all, settings: s)
+        let core = char.core.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !core.isEmpty { P["core"] = Templates.render("skeleton.core", ["core": core], settings: s) }
+        P["ban"] = banPiece(s)
+        P["genderTail"] = gender
+        let arranged = Layout.arrange("chat", pieces: P, settings: s, names: names)
+
+        // 放在历史末尾的那一段：条目里排在聊天记录下面的（默认是「此刻的状态」），再加本轮相关记忆
+        var tailParts: [String] = []
+        if !arranged.tail.isEmpty { tailParts.append(arranged.tail) }
         if memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
 
         let (messages, seen) = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
                                        tailDepth: max(1, memoryDepth), lore: lore.deep)
-        return Built(system: pieces.joined(separator: "\n\n"), messages: messages, recalled: recalled.map(\.id),
+        return Built(system: arranged.system, messages: messages, recalled: recalled.map(\.id),
                      seenImages: seen)
     }
 
@@ -255,8 +258,7 @@ enum ChatPrompt {
     }
 
     private static func banPiece(_ s: AppSettings) -> String {
-        let phrases = (s.raw["banPhrases"]?.array ?? []).compactMap(\.string)
-            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let phrases = Ban.list(s)
         guard !phrases.isEmpty else { return "" }
         let list = phrases.map { "- " + $0.replacingOccurrences(of: "*", with: "…") }.joined(separator: "\n")
         return Templates.render("skeleton.ban", ["list": list], settings: s)
