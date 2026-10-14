@@ -47,6 +47,7 @@ struct ConversationView: View {
     @State private var editingTrans: Message?
     @State private var dicing = false
     @State private var typingPhoto = false
+    @State private var bindingSticker: Message?
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
@@ -133,6 +134,23 @@ struct ConversationView: View {
             Button("保留图片描述，重新生成图片") { generate(regenerate: true, imageKeep: .redraw) }
         } message: {
             Text("一起重新生成时，原图片删除，新回复中的图片按新描述生成。保留图片时不调用生图接口；重新生成图片时按原描述各重画一次，每张调用一次生图接口。")
+        }
+        .sheet(item: $bindingSticker) { m in
+            NavigationStack {
+                VStack(alignment: .leading, spacing: Theme.sp3) {
+                    Text("没有找到名为「\(m.row.string("stickerName"))」的表情。选择一个之后，这条消息将显示该表情；这个名称会一并记为它的关键词，之后再写同一个名称即可自动匹配。")
+                        .font(.footnote).foregroundStyle(Theme.text3).padding(.horizontal, Theme.sp4)
+                    StickerPanel { st in
+                        bindingSticker = nil
+                        do { replace(try StickerMatch.bind(m, to: st.row)) }
+                        catch { problem = "指认未能保存：\(error.localizedDescription)" }
+                    }
+                    Spacer()
+                }
+                .padding(.top, Theme.sp3)
+                .navigationTitle("指认这个表情").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { bindingSticker = nil } } }
+            }
         }
         .alert("输入图片内容", isPresented: $typingPhoto) {
             TextField("描述图片上的画面", text: $photoText, axis: .vertical)
@@ -848,6 +866,8 @@ struct ConversationView: View {
             reactingTo = m
         case .regenerate:
             askRegenerate()
+        case .bindSticker:
+            bindingSticker = m
         case .revoice:
             var pending = m
             pending.row["media"] = .string("pending")
@@ -1161,7 +1181,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker }
 
     let message: Message
     let char: Character?
@@ -1429,6 +1449,14 @@ struct MessageRow: View {
 
     @ViewBuilder private var content: some View {
         switch message.kind {
+        case "sticker" where !mine && message.row.string("stickerId").isEmpty:
+            // 角色写的那个表情名没认出来：写出它想发的名字，点一下自己指认
+            VStack(alignment: .leading, spacing: 4) {
+                StickerView(id: "", name: message.row.string("stickerName"))
+                Text("点击指认").font(.caption).foregroundStyle(Theme.text3)
+            }
+            .contentShape(Rectangle())
+            .onTapGesture { onAction?(.bindSticker) }
         case "sticker":
             StickerView(id: message.row.string("stickerId"), name: message.row.string("stickerName"))
         case "image" where !message.imageId.isEmpty:

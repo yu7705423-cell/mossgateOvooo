@@ -463,21 +463,7 @@ enum ChatEngine {
     }
 
     private static func sticker(named name: String) -> Row? {
-        func norm(_ s: String) -> String {
-            s.trimmingCharacters(in: .whitespaces)
-                .replacingOccurrences(of: #"\.(png|jpe?g|gif|webp)$"#, with: "", options: [.regularExpression, .caseInsensitive])
-                .lowercased()
-        }
-        let rows = (try? Database.shared.all("stickers")) ?? []
-        // 重名的写成「名字（分组）」
-        if let m = name.range(of: #"^(.+?)（(.+)）$"#, options: .regularExpression) {
-            let inner = String(name[m])
-            let parts = inner.dropLast().split(separator: "（", maxSplits: 1).map(String.init)
-            if parts.count == 2, let r = rows.first(where: { norm($0.string("name")) == norm(parts[0]) && $0.string("group") == parts[1] }) {
-                return r
-            }
-        }
-        return rows.first { norm($0.string("name")) == norm(name) }
+        StickerMatch.find(name, in: (try? Database.shared.all("stickers")) ?? [])
     }
 
     /// 时间戳去掉括号与「时间：」，只留时间本身（历史里写回 `[…] `）。

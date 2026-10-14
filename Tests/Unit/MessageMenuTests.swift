@@ -166,3 +166,31 @@ final class TextImageTests: StoreTestCase {
         XCTAssertThrowsError(try ChatEngine.sendTextImage("  ", chatId: "chat_a"))
     }
 }
+
+/// 表情按名字找：精确、关键词、去空白、包含；指认之后记成关键词
+final class StickerMatchTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testFindAndLearn() throws {
+        let all = try Database.shared.all("stickers")
+        XCTAssertEqual(StickerMatch.find("开心", in: all)?.id, "stk_1")
+        XCTAssertEqual(StickerMatch.find("「开心」.png", in: all)?.id, "stk_1")
+        XCTAssertEqual(StickerMatch.find("很开心呀", in: all)?.id, "stk_1")
+        XCTAssertNil(StickerMatch.find("哦", in: all))
+        XCTAssertNil(StickerMatch.find("转圈圈", in: all))
+
+        var m = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[表情：转圈圈]", kind: "sticker")
+        m.row["stickerName"] = .string("转圈圈")
+        m = try Repo.append(m)
+        let bound = try StickerMatch.bind(m, to: try XCTUnwrap(Database.shared.get("stickers", id: "stk_1")))
+        XCTAssertEqual(bound.row.string("stickerId"), "stk_1")
+        XCTAssertEqual(bound.content, "[表情：开心]")
+        XCTAssertEqual(StickerMatch.find("转圈圈", in: try Database.shared.all("stickers"))?.id, "stk_1")
+        // 已经认得的不重复记
+        try StickerMatch.learn("stk_1", name: "转圈圈")
+        XCTAssertEqual(StickerMatch.keywords(try XCTUnwrap(Database.shared.get("stickers", id: "stk_1"))).filter { $0 == "转圈圈" }.count, 1)
+    }
+}
