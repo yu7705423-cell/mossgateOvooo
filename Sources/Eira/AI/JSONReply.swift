@@ -32,8 +32,9 @@ enum JSONReply {
         if let v = try? JSONValue.parse(Data(text.utf8)), v.object != nil || v.array != nil { return v }
         let chars = Array(text)
         guard let start = chars.firstIndex(where: { $0 == "{" || $0 == "[" }) else { return nil }
-        let open: Character = chars[start]
-        let close: Character = open == Character("{") ? Character("}") : Character("]")
+        // 写全名：本项目的角色模型也叫 Character，会把 Swift 的字符类型遮住
+        let open: Swift.Character = chars[start]
+        let close: Swift.Character = open == "{" ? "}" : "]"
         var depth = 0, inStr = false, esc = false
         for i in start..<chars.count {
             let c = chars[i]
