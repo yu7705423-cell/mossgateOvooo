@@ -13,6 +13,7 @@ struct ConversationView: View {
 
     @State private var chat: Chat?
     @State private var char: Character?
+    @State private var members: [String: Character] = [:]
     @State private var messages: [Message] = []
     @State private var turn: ChatEngine.Turn?
     @State private var pageSize = 100
@@ -61,7 +62,8 @@ struct ConversationView: View {
                             .padding(.horizontal, Theme.pad)
                         }
                         ForEach(messages) { m in
-                            MessageRow(message: m, char: char,
+                            MessageRow(message: m, char: chat?.isGroup == true ? (members[m.authorId] ?? char) : char,
+                                       showName: chat?.isGroup == true,
                                        onRetry: m.isError ? { retry(m) } : nil,
                                        onOpenImage: { viewing = ViewingImage(id: $0) },
                                        onAction: { act($0, m) })
@@ -73,7 +75,7 @@ struct ConversationView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(.horizontal, Theme.pad)
                                 .id("busy")
-                        } else if let turn, chat?.isGroup != true {
+                        } else if let turn {
                             turnBar(turn)
                         }
                     }
@@ -93,9 +95,9 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
-            if chat?.isGroup != true { composer }
+            composer
         }
-        .navigationTitle(char?.displayName ?? chat?.title ?? "")
+        .navigationTitle(chat?.isGroup == true ? GroupChat.title(chat!, members: chat!.characterIds.compactMap { members[$0] }) : (char?.displayName ?? chat?.title ?? ""))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
@@ -191,6 +193,17 @@ struct ConversationView: View {
                 }
                 .accessibilityLabel("更多")
                 .disabled(busy)
+                if let chat, chat.isGroup {
+                    Menu {
+                        ForEach(GroupChat.members(chat)) { c in
+                            Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
+                        }
+                    } label: {
+                        Image(systemName: "at").font(.title2)
+                    }
+                    .accessibilityLabel("提到成员")
+                    .disabled(busy)
+                }
                 Button {
                     showStickers.toggle()
                     if showStickers { typing = false }
@@ -407,6 +420,9 @@ struct ConversationView: View {
         do {
             chat = try Repo.chat(chatId)
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
+            if let chat, chat.isGroup {
+                members = Dictionary(GroupChat.members(chat).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+            }
             let list = try Repo.messages(chatId: chatId, limit: pageSize + 1)
             hasMore = list.count > pageSize
             messages = Array(list.suffix(pageSize))
@@ -550,6 +566,8 @@ struct MessageRow: View {
 
     let message: Message
     let char: Character?
+    /// 群聊里在气泡上方写是谁说的
+    var showName = false
     var onRetry: (() -> Void)?
     var onOpenImage: ((String) -> Void)?
     var onAction: ((Action) -> Void)?
@@ -632,6 +650,9 @@ struct MessageRow: View {
             if mine { Spacer(minLength: 48) }
             if !mine { Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "") }
             VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                if showName && !mine {
+                    Text(char?.displayName ?? "某人").font(.caption).foregroundStyle(Theme.secondaryText)
+                }
                 let quote = message.row.string("quoteText")
                 if !quote.isEmpty {
                     Text("引用：\(quote)").font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2)

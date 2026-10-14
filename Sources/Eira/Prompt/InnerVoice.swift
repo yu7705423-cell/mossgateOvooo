@@ -24,7 +24,7 @@ enum InnerVoice {
 
     /// apart 那一档：挂在这一轮角色最后说的那一条文字上。失败不抛（这一轮已经发出去的话不受影响），在屏幕上说。
     static func attach(chat: Chat, char: Character, created: [Message]) async -> Message? {
-        guard mode(chat) == "apart", let target = created.last(where: { $0.role == .char && $0.kind == "text" }) else { return nil }
+        guard mode(chat) == "apart", !chat.isGroup, let target = created.last(where: { $0.role == .char && $0.kind == "text" }) else { return nil }
         let said = created.filter { $0.kind == "text" }.map(\.content).joined(separator: "\n")
         guard !said.isEmpty else { return nil }
         let s = AppSettings.load()

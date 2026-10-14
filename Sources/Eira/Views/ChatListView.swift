@@ -5,6 +5,8 @@ struct ChatListView: View {
     @State private var rows: [Item] = []
     @State private var loadError: String?
     @State private var deleting: Chat?
+    @State private var newGroup = false
+    @State private var path: [String] = []
 
     struct Item: Identifiable {
         let chat: Chat
@@ -15,7 +17,7 @@ struct ChatListView: View {
     }
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 if let loadError {
                     Text(loadError).foregroundStyle(Theme.danger)
@@ -50,6 +52,14 @@ struct ChatListView: View {
             }
             .listStyle(.plain)
             .navigationTitle("消息")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { newGroup = true } label: { Image(systemName: "person.3") }.accessibilityLabel("新建群聊")
+                }
+            }
+            .sheet(isPresented: $newGroup) {
+                NavigationStack { NewGroupView { id in reload(); path.append(id) } }
+            }
             .navigationDestination(for: String.self) { id in
                 ConversationView(chatId: id)
             }

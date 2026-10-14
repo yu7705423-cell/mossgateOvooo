@@ -25,6 +25,7 @@ struct ChatSettingsView: View {
 
     var body: some View {
         Form {
+            if chat?.isGroup == true { GroupMembersSection(chatId: chatId) }
             Section {
                 Toggle("置顶", isOn: $pinned)
                 Toggle("免打扰", isOn: $muted)

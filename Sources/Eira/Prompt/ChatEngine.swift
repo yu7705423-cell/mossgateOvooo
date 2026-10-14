@@ -30,7 +30,15 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
-        let built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
+        let built: ChatPrompt.Built
+        if chat.isGroup {
+            // 一个能说话的都没有：不调接口。调了写出来的也一句都发不出去
+            let members = GroupChat.members(chat)
+            guard !GroupChat.speaking(chat, members: members).isEmpty else { throw StoreError(message: "群成员都在禁言中，本轮不调用接口") }
+            built = try ChatPrompt.buildGroup(chat: chat, members: members, settings: settings, excludeTurn: old?.id)
+        } else {
+            built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
+        }
         let turnId = old?.id ?? Ids.make("turn")
 
         let result: AIService.Result
@@ -61,7 +69,7 @@ enum ChatEngine {
             versions.served = old.versions.served + [served]
         }
         // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
-        guard !ReplyParser.split(result.text).parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
+        guard !plan(raw: result.text, chat: chat, char: char).plan.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         if let old { try removeRows(old.rows, turnId: old.id, chatId: chat.id) }
         let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
         // 心声「单独生成」那一档：整轮说完之后另调一次（默认关，在会话设置里开）
@@ -98,7 +106,7 @@ enum ChatEngine {
         let n = t.versions.swipes.count
         var v = t.versions
         v.index = ((v.index + step) % n + n) % n
-        guard !ReplyParser.split(v.swipes[v.index]).parts.isEmpty else { throw StoreError(message: "这个版本没有内容") }
+        guard !plan(raw: v.swipes[v.index], chat: chat, char: char).plan.isEmpty else { throw StoreError(message: "这个版本没有内容") }
         try removeRows(t.rows, turnId: t.id, chatId: chatId)
         try await write(raw: v.swipes[v.index], chat: chat, char: char, turnId: t.id, versions: v, instant: true, onRow: onRow)
     }
@@ -109,12 +117,37 @@ enum ChatEngine {
         try Interact.undoReactions(chatId: chatId, turnId: turnId)
     }
 
+    typealias Plan = [(part: ReplyParser.Part, char: Character)]
+
+    /// 一次回复切成「谁说了什么」。一对一时全是同一个人；群聊时先按名字拆回各人，再各自切（网页版 renderGroupTurn）。
+    static func plan(raw: String, chat: Chat, char: Character) -> (plan: Plan, think: String, stamp: String?) {
+        guard chat.isGroup else {
+            let parsed = ReplyParser.split(raw)
+            return (parsed.parts.map { (part: $0, char: char) }, parsed.think, parsed.stamp)
+        }
+        let members = GroupChat.members(chat)
+        let byId = Dictionary(members.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        let msgs = (try? Repo.messages(chatId: chat.id)) ?? []
+        let personas = (try? Repo.personas()) ?? []
+        let me = personas.first { $0.id == chat.personaId } ?? ((try? Repo.activePersona(.load())) ?? nil)
+        var out: Plan = []
+        var stamp: String?
+        for (i, seg) in GroupChat.splitSpeakers(raw, members: members, chat: chat, userName: me?.name ?? "",
+                                                fallback: GroupChat.pendingMentions(msgs).first ?? "").enumerated() {
+            guard let who = byId[seg.charId] else { continue }
+            let parsed = ReplyParser.split(seg.text)
+            if i == 0 { stamp = parsed.stamp }
+            out += parsed.parts.map { (part: $0, char: who) }
+        }
+        return (out, ReplyParser.stripThink(raw).1, stamp)
+    }
+
     /// 把一次回复落成消息。parts 之间按网页版的节奏停顿：非文字 700 毫秒，文字 320 + 每字 28 毫秒，最多 1.8 秒。
     @discardableResult
     static func write(raw: String, chat: Chat, char: Character, turnId: String, versions: Versions,
                       instant: Bool = false, onRow: @escaping OnRow) async throws -> [Message] {
-        let parsed = ReplyParser.split(raw)
-        guard !parsed.parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
+        let parsed = plan(raw: raw, chat: chat, char: char)
+        guard !parsed.plan.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         func head(_ m: inout Message) {
             m.row["raw"] = .string(raw)
             m.row["think"] = .string(parsed.think)
@@ -124,13 +157,18 @@ enum ChatEngine {
         }
 
         let narrationOn = chat.row.bool("narration")
-        let parts = parsed.parts.filter { $0.type != .narration || narrationOn }
+        let steps = parsed.plan.filter { $0.part.type != .narration || narrationOn }
+        let parts = steps.map(\.part)
         var created: [Message] = []
         var sawSilence = false
 
-        for (i, part) in parts.enumerated() {
+        for (i, step) in steps.enumerated() {
+            let part = step.part
+            let who = step.char
             if part.type == .silence { sawSilence = true; continue }
-            let built = try effect(part, chat: chat, char: char, turnId: turnId) ?? row(for: part, chat: chat, char: char, turnId: turnId)
+            // 被禁言的成员这一轮写的一概不落。每一条都现查
+            if chat.isGroup, let now = try Repo.chat(chat.id), GroupChat.isMuted(now, who.id) { continue }
+            let built = try effect(part, chat: chat, char: who, turnId: turnId) ?? row(for: part, chat: chat, char: who, turnId: turnId)
             guard var m = built else { continue }
             if created.isEmpty {
                 head(&m)
@@ -148,7 +186,7 @@ enum ChatEngine {
         // 一条气泡都没落、而模型写了 [不回复] 或只回应了：落一行「已读，未回复」，原文与版本挂在它上面
         let reacted = parts.contains { $0.type == .react }
         if created.isEmpty && (sawSilence || reacted) {
-            var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[不回复]", kind: "silence", turnId: turnId)
+            var m = Message.new(chatId: chat.id, role: .char, authorId: steps.first?.char.id ?? char.id, content: "[不回复]", kind: "silence", turnId: turnId)
             m.row["reacted"] = .bool(reacted)
             head(&m)
             m = try Repo.append(m)
@@ -391,6 +429,11 @@ enum ChatEngine {
     static func send(text: String, chatId: String, quote: Message? = nil) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)
         if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
+        // 群里写了「@名字」：记下这一轮点了谁（网页版 mentions）
+        if let chat = try Repo.chat(chatId), chat.isGroup {
+            let ids = GroupChat.mentions(in: text, chat: chat, members: GroupChat.members(chat))
+            if !ids.isEmpty { m.row["mentions"] = .array(ids.map { .string($0) }) }
+        }
         m = try Repo.append(m)
         if var c = try Repo.chat(chatId) {
             c.row["lastMessageAt"] = .number(Date().millis)

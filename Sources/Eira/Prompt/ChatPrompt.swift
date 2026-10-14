@@ -79,8 +79,11 @@ enum ChatPrompt {
 
     // MARK: - 历史
 
+    /// group：群聊时成员 id 对应群里显示的名字。成员说的话都算 assistant，前面带着名字 ——
+    /// 和它要写出来的格式一模一样，历史就是示范（网页版 buildGroupHistory）。
     private static func history(_ all: [Message], chat: Chat, char: Character, settings s: AppSettings,
-                                tail: String, tailDepth: Int, lore: [(Int, String)]) -> ([AIMessage], [String]) {
+                                tail: String, tailDepth: Int, lore: [(Int, String)],
+                                group: [String: String]? = nil) -> ([AIMessage], [String]) {
         let window: [Message]
         if s.raw["historyMode"]?.string == "turn" {
             window = takeTurns(all, Int(s.num("historyTurns", 10)))
@@ -115,7 +118,11 @@ enum ChatPrompt {
                 let seen = m.row["recalled"]?["seen"]?.bool ?? false
                 text = seen ? "[撤回了一条消息：\(m.content)]" : "[撤回了一条消息]"
             }
-            if m.role == .char && m.authorId == char.id {
+            if let group, m.role == .char {
+                if m.isRecalled { text += "\n[撤回]" }
+                let tr = chat.row.string("translateTo").isEmpty ? "" : m.row.string("translation")
+                out.append(AIMessage(role: .assistant, content: "\(group[m.authorId] ?? "某人")：\(text)\(tr.isEmpty ? "" : " [译文：\(tr)]")"))
+            } else if m.role == .char && m.authorId == char.id {
                 if m.isRecalled { text += "\n[撤回]" }
                 out.append(AIMessage(role: .assistant, content: text))
             } else {
@@ -277,6 +284,9 @@ enum ChatPrompt {
 
     /// 能力一节。原生版只开回复解析认得的那几项。
     /// 顺序照网页版 CAPS 数组：表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
+    /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner"]
+
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
         let lean = s.raw["promptLean"]?.bool ?? true
@@ -289,6 +299,7 @@ enum ChatPrompt {
         var details: [String] = []
         func cap(_ id: String, on: Bool, hot: Bool, line: String?, detail: () -> String) {
             guard on, !off.contains(id) || id == "time" else { return }
+            if chat.isGroup && !groupCaps.contains(id) { return }
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
         }
 
@@ -677,5 +688,93 @@ enum TimeText {
         if days < 365 { return "\(Int((Double(days) / 30).rounded())) months ago" }
         if days < 730 { return "about a year ago" }
         return "\(days / 365) years ago"
+    }
+}
+
+// MARK: - 群聊（网页版 engine.js 的 buildGroupSystem 与 buildGroupHistory）
+
+extension ChatPrompt {
+    /// 设定区分两层：全群一份（世界书取各人的并集、你是谁、时间）；每人一份（人设、情境、示例、核心设定、关系、钉住的、最近记下的、本轮召回）。
+    static func buildGroup(chat: Chat, members: [Character], settings s: AppSettings, now: Date = Date(),
+                           excludeTurn: String? = nil) throws -> Built {
+        guard let lead = members.first else { throw StoreError(message: "群里没有成员") }
+        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
+        let personas = try Repo.personas()
+        let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
+        let userName = (me?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "对方"
+        let rootId = Repo.rootId(of: me?.id ?? "", in: personas)
+        let scanText = scanTextOf(all, window: Int(s.num("scanWindow", 6)))
+        let budget = Int(s.num("contextBudget", 0))
+        let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
+        let memoryDepth = Int(s.num("memoryDepth", 1))
+
+        // 世界书：成员各自激活，取并集
+        var before: [String] = [], after: [String] = [], deep: [(Int, String)] = []
+        for c in members {
+            let l = activateLore(char: c, scanText: scanText, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0)
+            for x in l.before where !before.contains(x) { before.append(x) }
+            for x in l.after where !after.contains(x) { after.append(x) }
+            for x in l.deep where !deep.contains(where: { $0.1 == x.1 }) { deep.append(x) }
+        }
+
+        var recalledIds: [String] = []
+        var memberBlocks: [String] = []
+        for c in members {
+            var lines = ["[成员：\(c.name)]"]
+            func add(_ head: String?, _ v: String) {
+                let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty { lines.append(head.map { "\($0)\n\(t)" } ?? t) }
+            }
+            add(nil, c.persona)
+            add("[当前情境]", c.scenario)
+            add("[说话方式示例]", c.exampleDialogue)
+            add("[核心设定]", c.core)
+            let memories = try visibleMemories(char: c, chat: chat, rootId: rootId, personas: personas)
+            let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
+            let body = [bondBlock(char: c, rootId: rootId), pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))), recentBlock(recent, now: now)]
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+            add(nil, body)
+            if memoryOn {
+                let r = recall(memories, scanText: scanText, skip: Set(recent.map(\.id)), topK: Int(s.num("memoryTopK", 6)), now: now)
+                if !r.isEmpty { add(nil, recallText(r, now: now)); recalledIds += r.map(\.id) }
+            }
+            memberBlocks.append(lines.joined(separator: "\n\n"))
+        }
+
+        let blocks: [String: String] = [
+            "lorebook": loreBlock(before), "loreAfter": loreBlock(after),
+            "user": userBlock(me: me, char: lead),
+            "time": timeBlock(char: lead, msgs: all, settings: s, now: now),
+        ]
+        var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
+        let names = members.map(\.name).joined(separator: "、")
+        P["groupOpening"] = Templates.render("skeleton.group-opening", ["userName": userName, "names": names], settings: s)
+        P["members"] = memberBlocks.joined(separator: "\n\n")
+        if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
+        P["groupRules"] = Templates.render("skeleton.group-rules", ["userName": userName, "example": lead.name], settings: s)
+        P["rules"] = Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s)
+        P["caps"] = capabilities(char: lead, chat: chat, msgs: all, settings: s)
+        P["inner"] = InnerVoice.piece(chat, settings: s)
+        P["ban"] = banPiece(s)
+        // 性别锚点：人多，放在贴着输出的末尾
+        var gl = members.compactMap { c -> String? in
+            let g = c.row.string("gender").trimmingCharacters(in: .whitespaces)
+            return g.isEmpty ? nil : "\(c.name)：\(g)"
+        }
+        let ug = (me?.row.string("gender") ?? "").trimmingCharacters(in: .whitespaces)
+        if !ug.isEmpty { gl.append("\(userName)：\(ug)") }
+        if !gl.isEmpty { P["genderTail"] = Templates.render("skeleton.gender", ["lines": gl.joined(separator: "\n")], settings: s) }
+        let arranged = Layout.arrange("group", pieces: P, settings: s, names: ["userName": userName])
+
+        // 末尾：此刻的状态，以及这一轮被 @ 的人
+        let display = Dictionary(members.map { ($0.id, GroupChat.nameIn(chat, $0)) }, uniquingKeysWith: { a, _ in a })
+        let called = GroupChat.pendingMentions(all).compactMap { display[$0] }
+        var tail: [String] = []
+        if !arranged.tail.isEmpty { tail.append(arranged.tail) }
+        if !called.isEmpty { tail.append(Templates.render("skeleton.group-mention", ["names": called.joined(separator: "、")], settings: s)) }
+
+        let (messages, seen) = history(all, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
+                                       tailDepth: max(1, memoryDepth), lore: deep, group: display)
+        return Built(system: arranged.system, messages: messages, recalled: recalledIds, seenImages: seen)
     }
 }
