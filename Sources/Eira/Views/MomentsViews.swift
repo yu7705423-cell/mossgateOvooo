@@ -342,7 +342,7 @@ struct EditMomentView: View {
             Section {
                 TextField("这一刻的想法", text: $text, axis: .vertical).lineLimit(4...12)
             } footer: {
-                Text("只改文字，图片与可见范围不变。保存后显示「已编辑」，角色之后读到的是改过的文字。")
+                HelpNote("只改文字，图片与可见范围不变。保存后显示「已编辑」，角色之后读到的是改过的文字。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.dangerText) } }
         }
@@ -530,7 +530,7 @@ struct ComposeMomentView: View {
                     }
                 }
                 .padding(.vertical, Theme.sp1)
-            } footer: { Text("最多九张。") }
+            } footer: { HelpNote("最多九张。") }
             Section {
                 Picker("谁可以看", selection: $vis) {
                     Text("所有角色").tag("all")
@@ -552,7 +552,8 @@ struct ComposeMomentView: View {
                     }
                 }
             } footer: {
-                Text(viewerCount == 0
+                if viewerCount > 0 { Text("发布后，可以看到的 \(viewerCount) 位角色各调用一次接口。") }
+                HelpNote(viewerCount == 0
                      ? "聊天时这些角色知道你发了这条动态。当前没有角色可以看到，发布后不调用接口。"
                      : "聊天时这些角色知道你发了这条动态。发布后，可以看到的 \(viewerCount) 位角色各调用一次接口，写一条评论并点赞，共 \(viewerCount) 次。")
             }

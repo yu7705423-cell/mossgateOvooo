@@ -95,7 +95,7 @@ struct StickerManagerView: View {
                 Button { groupName = ""; newGroup = true } label: { Label("新建分组", systemImage: "folder.badge.plus") }
                 if let progress { Text(progress).font(.footnote).foregroundStyle(Theme.secondaryText) }
             } footer: {
-                Text("一次选几张不设上限。名字取自图片的文件名，可逐个修改；角色按名字挑选表情，名字写清楚含义更容易被选中。")
+                HelpNote("一次选几张不设上限。名字取自图片的文件名，可逐个修改；角色按名字挑选表情，名字写清楚含义更容易被选中。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
             ForEach(groups, id: \.self) { g in
@@ -237,7 +237,7 @@ struct StickerEditView: View {
                     ForEach(groups, id: \.self) { Text($0).tag($0) }
                 }
             } footer: {
-                Text("角色按名字挑选表情。关键词用于搜索与联想。")
+                HelpNote("角色按名字挑选表情。关键词用于搜索与联想。")
             }
             Section { Button("删除这个表情", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }

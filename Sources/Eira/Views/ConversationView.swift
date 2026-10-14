@@ -1315,19 +1315,19 @@ struct InteractSheet: View {
                     TextField("金额", text: $amount).keyboardType(.decimalPad)
                     TextField("留言（可不填）", text: $a)
                 } footer: {
-                    Text("币种：\(Interact.currency().name)。对方可以收下或退回。")
+                    HelpNote("币种：\(Interact.currency().name)。对方可以收下或退回。")
                 }
             case .gift:
                 Section {
                     TextField("礼物名称", text: $a)
                     TextField("里面是什么（可不填）", text: $b)
                 } footer: {
-                    Text("里面不填时与名称相同。")
+                    HelpNote("里面不填时与名称相同。")
                 }
                 Section {
                     Toggle("拆开前保密", isOn: SettingsModel.shared.bool("giftBlind", true))
                 } footer: {
-                    Text((SettingsModel.shared.s.raw["giftBlind"]?.bool != false
+                    HelpNote((SettingsModel.shared.s.raw["giftBlind"]?.bool != false
                           ? "角色拆开之前不知道里面装的是什么，拆开后才会知道。"
                           : "已关闭。角色收到时就知道里面是什么。")
                          + "此设置对所有对话生效。对方送来的礼物不受影响，你始终是拆开后才看到内容。")
@@ -1343,7 +1343,7 @@ struct InteractSheet: View {
                     TextField("点什么", text: $a)
                     TextField("金额（可不填）", text: $amount).keyboardType(.decimalPad)
                 } footer: {
-                    Text(sub == "self" ? "自己点自己吃，对方不需要表态。" : sub == "treat" ? "给对方点，自己付。对方可以收下或谢绝。" : "自己吃，让对方付。对方可以付款或不付。")
+                    HelpNote(sub == "self" ? "自己点自己吃，对方不需要表态。" : sub == "treat" ? "给对方点，自己付。对方可以收下或谢绝。" : "自己吃，让对方付。对方可以付款或不付。")
                 }
             case .location:
                 Section {
@@ -1379,13 +1379,13 @@ struct EditMessageView: View {
                 TextField(translation ? "译文" : "内容", text: $text, axis: .vertical).lineLimit(3...20)
             } footer: {
                 if translation {
-                    Text("译文只在气泡下方显示。清空后保存即去掉译文。")
+                    HelpNote("译文只在气泡下方显示。清空后保存即去掉译文。", title: "改译文")
                 } else if MessageActions.needsRegen(message) {
                     Text(message.kind == "image" ? "保存后按新的描述重新生成这张图片，调用一次生图接口。" : "保存后按新的文本重新生成这段语音，调用一次语音接口。")
                 } else if message.role == .user && (message.kind == "image" || message.kind == "voice") {
-                    Text("只改角色读到的文字，图片或录音本身不变。")
+                    HelpNote("只改角色读到的文字，图片或录音本身不变。", title: "编辑消息")
                 } else if message.role == .char {
-                    Text("修改后，角色在之后的对话中看到的是修改后的内容。")
+                    HelpNote("修改后，角色在之后的对话中看到的是修改后的内容。", title: "编辑消息")
                 }
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }

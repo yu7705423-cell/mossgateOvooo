@@ -38,13 +38,13 @@ struct OnboardingView: View {
                             catch { problem = error.localizedDescription }
                         }
                     } footer: {
-                        Text("在网页版「设置 - 存储」中导出备份，再在此处选择那份文件。")
+                        HelpNote("在网页版「设置 - 存储」中导出备份，再在此处选择那份文件。")
                     }
                 } else {
                     Section {
                         NavigationLink("填写接口") { ApiSettingsView() }
                     } footer: {
-                        Text("聊天需要一套接口。导入的备份若含有接口设置，可以跳过这一步。之后也可以在「设置 - 接口」中填写。")
+                        HelpNote("聊天需要一套接口。导入的备份若含有接口设置，可以跳过这一步。之后也可以在「设置 - 接口」中填写。", title: "填写接口")
                     }
                     Section {
                         Button("开始使用", action: finish)

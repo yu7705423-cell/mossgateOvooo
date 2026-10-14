@@ -22,7 +22,7 @@ struct FeedbackView: View {
                     Label(copied ? "已复制" : "复制诊断信息", systemImage: "doc.on.doc")
                 }
             } footer: {
-                Text("诊断信息包括版本、设备型号、各类数据的条数、接口的格式与模型名，以及最近 \(Diagnostics.limit) 条请求、导入、错误与闪退记录。不包括聊天内容、人设、记忆、提示词、密钥与接口地址。导出前可在下方查看全文。")
+                HelpNote("诊断信息包括版本、设备型号、各类数据的条数、接口的格式与模型名，以及最近 \(Diagnostics.limit) 条请求、导入、错误与闪退记录。不包括聊天内容、人设、记忆、提示词、密钥与接口地址。导出前可在下方查看全文。")
             }
 
             if let problem {
@@ -38,7 +38,7 @@ struct FeedbackView: View {
             Section {
                 Button("清空诊断记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
             } footer: {
-                Text("只清空上方的记录，不影响聊天与其他数据。")
+                HelpNote("只清空上方的记录，不影响聊天与其他数据。")
             }
         }
         .navigationTitle("问题反馈")

@@ -25,7 +25,8 @@ struct ImageSettingsView: View {
             } header: {
                 Text("生图接口")
             } footer: {
-                Text("当前那一套填全了密钥与模型后，角色可以在回复里发图片：每张图调用一次生图接口，失败不自动重试，可在消息上手动重新生成。")
+                Text("每张图调用一次生图接口。")
+                HelpNote("当前那一套填全了密钥与模型后，角色可以在回复里发图片：每张图调用一次生图接口，失败不自动重试，可在消息上手动重新生成。")
             }
             Section {
                 TextEditor(text: model.textBinding("imagePrompt"))
@@ -33,7 +34,7 @@ struct ImageSettingsView: View {
             } header: {
                 Text("全局生图提示词")
             } footer: {
-                Text("接在每一张图的提示词末尾。其中单独成行的「Negative」之后的部分作为负面提示词处理，不会当作画面内容发送。")
+                HelpNote("接在每一张图的提示词末尾。其中单独成行的「Negative」之后的部分作为负面提示词处理，不会当作画面内容发送。")
             }
             Section {
                 ForEach(ImageGen.styles) { st in
@@ -42,7 +43,7 @@ struct ImageSettingsView: View {
             } header: {
                 Text("画风预设")
             } footer: {
-                Text("开启后，角色写图片描述时须写明场景、构图、光线与人物穿着，最终提示词末尾接上相应的画风。不增加调用次数。")
+                HelpNote("开启后，角色写图片描述时须写明场景、构图、光线与人物穿着，最终提示词末尾接上相应的画风。不增加调用次数。")
             }
             ProblemSection(text: model.problem)
         }
@@ -88,7 +89,7 @@ struct ImagePresetEditView: View {
                         Button("设为当前") { model.update { $0.setActiveImage(id) } }
                     }
                 } footer: {
-                    Text(kindNote(p.kind))
+                    HelpNote(kindNote(p.kind))
                 }
                 Section("连接") {
                     TextField(ImagePreset.kinds.first { $0.id == p.kind }?.base ?? "接口地址", text: field("baseUrl"))
@@ -115,7 +116,7 @@ struct ImagePresetEditView: View {
                 } header: {
                     Text("参数")
                 } footer: {
-                    Text(paramNote(p))
+                    HelpNote(paramNote(p))
                 }
                 if p.kind != "chat" {
                     Section {
@@ -126,7 +127,7 @@ struct ImagePresetEditView: View {
                     } header: {
                         Text("负面提示词")
                     } footer: {
-                        Text(p.kind == "openai"
+                        HelpNote(p.kind == "openai"
                              ? "OpenAI 兼容接口的标准中没有负面提示词字段，默认不发送；接口支持时再开启，不支持的接口收到后会报错。"
                              : "随每次请求发送。")
                     }
@@ -139,7 +140,8 @@ struct ImagePresetEditView: View {
                     }
                     if let testError { Text(testError).font(.footnote).foregroundStyle(Theme.danger) }
                 } footer: {
-                    Text("用这一套接口实际生成一张图，会按一张图计费。")
+                    Text("按一张图计费。")
+                    HelpNote("用这一套接口实际生成一张图，会按一张图计费。", title: "测试生图")
                 }
                 Section {
                     Button("删除这套接口", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)

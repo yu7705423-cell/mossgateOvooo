@@ -327,3 +327,12 @@ extension Theme {
         return "\(c.month ?? 1)月\(c.day ?? 1)日 · 周\(w)"
     }
 }
+
+/// 说明（网页版 ListItem 的 info，ARCHITECTURE 4.525、4.527）：界面上不显示，收进「设置 - 说明书」。
+/// 一项只写名字和当前状态；会多花钱的、不能撤销的那一句仍用 Text 写在原处。
+/// scripts/gen-help.mjs 从代码里收集这些文字生成 Resources/help.json，改了说明要重跑（编译时核对）。
+struct HelpNote: View {
+    /// title：说明书里这一条的标题，不写时取所在那一组的组头或第一个控件的名字
+    init(_ text: String, title: String = "") {}
+    var body: some View { EmptyView() }
+}

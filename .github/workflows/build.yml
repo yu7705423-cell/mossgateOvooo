@@ -26,6 +26,10 @@ jobs:
           sudo xcode-select -s "${NEWEST:-/Applications/Xcode.app}"
           xcodebuild -version
 
+      - name: 说明书是最新的
+        # 界面上收起来的说明（HelpNote）由 scripts/gen-help.mjs 收进 Resources/help.json；改了说明没重跑就不往下编
+        run: node scripts/gen-help.mjs --check
+
       - name: 生成工程
         run: |
           brew install xcodegen

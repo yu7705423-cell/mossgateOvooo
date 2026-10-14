@@ -98,7 +98,7 @@ struct IconEditView: View {
                         Text("隐藏").tag("hide")
                     }
                 } header: { Text("名称") } footer: {
-                    Text("留空时使用默认名称「\(defaultName)」。")
+                    HelpNote("留空时使用默认名称「\(defaultName)」。")
                 }
                 Section {
                     Button(look.imageId.isEmpty ? "选择图片" : "更换图片") { picking = true }
@@ -117,7 +117,7 @@ struct IconEditView: View {
                         Button("清除图片") { patch(["imageId": nil, "scale": nil, "bare": nil]) }
                     }
                 } header: { Text("图片") } footer: {
-                    Text("设置图片后，图片替代线条图标。不要底板开启时只显示图片本身，适合异形图标。")
+                    HelpNote("设置图片后，图片替代线条图标。不要底板开启时只显示图片本身，适合异形图标。")
                 }
                 if look.imageId.isEmpty {
                     Section {

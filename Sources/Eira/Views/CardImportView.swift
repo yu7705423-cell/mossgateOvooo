@@ -26,7 +26,8 @@ struct CardImportView: View {
                     HStack { ProgressView(); Text("正在读取").foregroundStyle(Theme.secondaryText); Spacer(); Button("停止") { job?.cancel() } }
                 }
             } footer: {
-                Text("支持 txt、md、docx。由副用接口读取，调用一次。资料整份发给模型，不截字数：资料越长，这一次的用量越大。")
+                Text("调用一次接口，资料越长用量越大。")
+                HelpNote("支持 txt、md、docx。由副用接口读取，调用一次。资料整份发给模型，不截字数：资料越长，这一次的用量越大。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
             if draft != nil { draftSections }
@@ -56,7 +57,8 @@ struct CardImportView: View {
             Toggle("同时生成核心设定", isOn: $withCore)
             Button("创建角色", action: create)
         } footer: {
-            Text("核心设定是从人设中压缩出的三到五行，放在提示词末尾。开启后创建时另调用一次接口；生成失败不影响角色的创建，之后可在编辑资料中填写。")
+            Text("开启后创建时另调用一次接口。")
+            HelpNote("核心设定是从人设中压缩出的三到五行，放在提示词末尾。开启后创建时另调用一次接口；生成失败不影响角色的创建，之后可在编辑资料中填写。")
         }
     }
 

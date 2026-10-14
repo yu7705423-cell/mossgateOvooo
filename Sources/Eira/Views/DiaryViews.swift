@@ -119,7 +119,8 @@ struct CharDiaryView: View {
                     Text("今天自动写日记失败：\(err)。明天到点后自动再试。").font(.footnote).foregroundStyle(Theme.danger)
                 }
             } footer: {
-                Text("调用一次接口（走副用接口），由角色自己决定写不写、写多少。每天自动写一篇的开关在与该角色的会话设置里。")
+                Text("调用一次接口。")
+                HelpNote("调用一次接口（走副用接口），由角色自己决定写不写、写多少。每天自动写一篇的开关在与该角色的会话设置里。", title: "请角色写一篇")
             }
             ForEach(entries) { e in
                 NavigationLink { DiaryReadView(id: e.id) } label: { DiaryRow(entry: e, who: char?.displayName ?? "") }
@@ -323,7 +324,7 @@ struct DiaryEditView: View {
                     }
                 }
             } footer: {
-                Text(visibility == "public"
+                HelpNote(visibility == "public"
                      ? "公开：所选角色（未选择时为所有角色）在当天及之后「设置 - 用量与上限」所设天数内的对话中读得到这一篇。"
                      : "仅自己：只在日记里显示，不写入任何对话。")
             }
@@ -376,7 +377,8 @@ struct DiaryAutoSection: View {
             if on { Stepper("\(hour) 点之后", value: $hour, in: 0...23) }
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
         } footer: {
-            Text("开启后，每天到了设定时刻之后给角色一次写日记的机会，写不写由角色决定。每天调用一次接口（走副用接口）；当天已经有一篇时不写；失败当天不再自动尝试，第二天再试。只在应用打开时进行。")
+            Text("每天调用一次接口。")
+            HelpNote("开启后，每天到了设定时刻之后给角色一次写日记的机会，写不写由角色决定。每天调用一次接口（走副用接口）；当天已经有一篇时不写；失败当天不再自动尝试，第二天再试。只在应用打开时进行。")
         }
         .onAppear {
             guard let c = try? Repo.character(charId) else { return }

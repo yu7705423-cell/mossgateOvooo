@@ -25,7 +25,7 @@ struct DailyHomeView: View {
                 NavigationLink { FoodRegionsView() } label: { IconRow(title: "吃什么", icon: "cup") }
                 NavigationLink { EventLibraryView() } label: { IconRow(title: "事件库", icon: "spark", value: "共 \(eventCount) 条") }
             } footer: {
-                Text("日程由模型按人设生成，一天一次。撞上的事、运势与三顿吃什么都由本地随机数决定，不额外调用接口。")
+                HelpNote("日程由模型按人设生成，一天一次。撞上的事、运势与三顿吃什么都由本地随机数决定，不额外调用接口。", title: "日常")
                     .font(.system(size: 12)).foregroundStyle(Theme.text2)
             }
         }
@@ -100,7 +100,8 @@ struct DayTodayView: View {
                             catch { problem = "未能保存：\(error.localizedDescription)" }
                         }
                     } footer: {
-                        Text("开启后，该角色每天第一次请求回复之前排一次当天的日程，调用一次接口（走副用接口）；失败当天不再自动排。")
+                        Text("每天调用一次接口。")
+                        HelpNote("开启后，该角色每天第一次请求回复之前排一次当天的日程，调用一次接口（走副用接口）；失败当天不再自动排。")
                     }
                 } else if let row {
                     content(c, row)
@@ -109,7 +110,8 @@ struct DayTodayView: View {
                         Text("\(DayPlan.dateKey(c)) 还没有安排").foregroundStyle(Theme.secondaryText)
                         Button(busy ? "正在安排" : "现在安排") { make(force: false) }.disabled(busy)
                     } footer: {
-                        Text("调用一次接口排今天的日程；撞上的事与三顿吃什么由本地随机决定。")
+                        Text("调用一次接口。")
+                        HelpNote("调用一次接口排今天的日程；撞上的事与三顿吃什么由本地随机决定。")
                     }
                 }
             }
@@ -184,7 +186,7 @@ struct DayTodayView: View {
             if ev?.object == nil { Text("今天没有撞上什么事。大部分日子本来就是这样。").font(.footnote).foregroundStyle(Theme.secondaryText) }
             Button("看看最近几天") { showRecent = true }
         } footer: {
-            Text("点击任意一条切换状态：计划中 · 已完成 · 已取消。角色在对话中也可以自己标记。")
+            HelpNote("点击任意一条切换状态：计划中 · 已完成 · 已取消。角色在对话中也可以自己标记。")
         }
     }
 
@@ -266,14 +268,14 @@ struct EventLibraryView: View {
                 }
                 NavigationLink { EventBatchView() } label: { Text("批量生成") }
             } footer: {
-                Text("共 \(total) 条。横向是色彩，纵向是领域。点任意一格查看与编辑该格的词条。事件库全局共用；每个角色要不要撞上事，在与该角色的会话设置里设置。")
+                HelpNote("共 \(total) 条。横向是色彩，纵向是领域。点任意一格查看与编辑该格的词条。事件库全局共用；每个角色要不要撞上事，在与该角色的会话设置里设置。", title: "事件库")
             }
             Section {
                 NumberRow(title: "每天撞上一件事的概率", value: chanceBinding, unit: "%", placeholder: "不发生", range: 0...100)
                 NumberRow(title: "刚抽过的压一压", value: model.number("eventCooldown", 12), unit: "条", placeholder: "不压")
                 NumberRow(title: "吃过的压一压", value: model.number("mealCooldown", 8), unit: "顿", placeholder: "不压")
             } footer: {
-                Text("概率是基础值，运势差、隔了几天没撞上事时会略升。「压一压」让最近抽过的那几条暂时更难再被抽中。")
+                HelpNote("概率是基础值，运势差、隔了几天没撞上事时会略升。「压一压」让最近抽过的那几条暂时更难再被抽中。")
             }
         }
         .navigationTitle("事件库")
@@ -420,7 +422,8 @@ struct EventBatchView: View {
                         .disabled(running || cells.isEmpty)
                     if let saved { Text(saved).font(.footnote).foregroundStyle(Theme.secondaryText) }
                 } footer: {
-                    Text("每一格调用一次接口（走副用接口）。生成的词条先列出来，勾选后才入库。")
+                    Text("每一格调用一次接口。")
+                    HelpNote("每一格调用一次接口（走副用接口）。生成的词条先列出来，勾选后才入库。")
                 }
             } else {
                 Section("确认入库") {
@@ -530,7 +533,8 @@ struct FoodListView: View {
                 Button(generating ? "正在生成" : "生成") { generate() }.disabled(generating)
                 if let note { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText) }
             } footer: {
-                Text("调用一次接口（走副用接口），生成的直接入库，可逐条停用或删除。")
+                Text("调用一次接口。")
+                HelpNote("调用一次接口（走副用接口），生成的直接入库，可逐条停用或删除。")
             }
             ForEach(rows, id: \.id) { r in
                 HStack {
@@ -631,7 +635,8 @@ struct DayOnSection: View {
         } header: {
             Text("日常")
         } footer: {
-            Text("当日日程：开启后，每天第一次请求回复之前排一次当天的日程，调用一次接口（走副用接口），失败当天不再自动排；角色能读到今天的安排并可以自己勾掉。随机事件：从事件库里按概率抽，不调用接口。")
+            Text("当日日程每天调用一次接口。")
+            HelpNote("当日日程：开启后，每天第一次请求回复之前排一次当天的日程，调用一次接口（走副用接口），失败当天不再自动排；角色能读到今天的安排并可以自己勾掉。随机事件：从事件库里按概率抽，不调用接口。")
         }
         .onAppear {
             guard let c = try? Repo.character(charId) else { return }

@@ -97,7 +97,7 @@ struct ChatSettingsView: View {
                     }
                 }
             } footer: {
-                Text("对所有会话生效。")
+                HelpNote("对所有会话生效。")
             }
             if chat?.isGroup == false {
                 Section {
@@ -127,12 +127,12 @@ struct ChatSettingsView: View {
             Section {
                 Toggle("旁白", isOn: $narration)
             } footer: {
-                Text("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
+                HelpNote("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
             }
             Section {
                 Toggle("我也写旁白", isOn: $userNarration)
             } footer: {
-                Text("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
+                HelpNote("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
             }
             Section {
                 Picker("心声", selection: $innerMode) {
@@ -148,7 +148,8 @@ struct ChatSettingsView: View {
                     TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
                 }
             } footer: {
-                Text(innerMode == "apart"
+                if innerMode == "apart" { Text("每轮多调用一次接口。") }
+                HelpNote(innerMode == "apart"
                      ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
                      : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
                      : "开启后显示角色每轮话语背后的想法。")
@@ -176,7 +177,8 @@ struct ChatSettingsView: View {
             } header: {
                 Text("翻译")
             } footer: {
-                Text("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
+                Text("回复变长，用量随之增加。")
+                HelpNote("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
             }
             Section {
                 Picker("预设", selection: $presetId) {
@@ -184,14 +186,14 @@ struct ChatSettingsView: View {
                     ForEach(presets) { p in Text(p.name).tag(p.id) }
                 }
             } footer: {
-                Text("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
+                HelpNote("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
             }
             Section {
                 TextField("尚无摘要", text: $summary, axis: .vertical).lineLimit(3...20)
             } header: {
                 Text("更早之前发生过什么")
             } footer: {
-                Text("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
+                HelpNote("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
             }
             Section {
                 LabeledContent("未总结的消息", value: "\(backlog) 条")
@@ -205,13 +207,15 @@ struct ChatSettingsView: View {
             } header: {
                 Text("记忆总结")
             } footer: {
-                Text("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
+                Text("立即总结调用一次接口。")
+                HelpNote("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
             }
             Section {
                 Button("清空聊天记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
                 Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             } footer: {
-                Text("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
+                Text("清空与删除均无法撤销。")
+                HelpNote("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
@@ -287,7 +291,7 @@ struct ChatSettingsView: View {
         } header: {
             Text("头像")
         } footer: {
-            Text("只在这段会话中更换，其他会话、联系人、朋友圈与资料页仍显示原来的头像。所有会话一起换，在角色卡或主页中更换。")
+            HelpNote("只在这段会话中更换，其他会话、联系人、朋友圈与资料页仍显示原来的头像。所有会话一起换，在角色卡或主页中更换。")
         }
     }
 
@@ -393,7 +397,8 @@ struct ProactiveSection: View {
         } header: {
             Text("主动发起对话")
         } footer: {
-            Text(footer)
+            Text("每次开口调用一次接口。" + (bg.problem.isEmpty ? "" : "\n" + bg.problem))
+            HelpNote(footer)
         }
         .onAppear(perform: load)
         .onChange(of: on) { _, _ in save() }
@@ -463,7 +468,7 @@ struct ShowSection: View {
         } header: {
             GroupTitle("显示")
         } footer: {
-            Text("对所有会话生效。按间隔：相隔五分钟以上时在两条消息之间显示一行时间。已读回执：角色开始回复时，之前发出的消息标为已读。心声默认收起，点角色的头像展开。")
+            HelpNote("对所有会话生效。按间隔：相隔五分钟以上时在两条消息之间显示一行时间。已读回执：角色开始回复时，之前发出的消息标为已读。心声默认收起，点角色的头像展开。")
         }
     }
 }
@@ -504,7 +509,8 @@ struct PaceSection: View {
         } header: {
             Text("节奏")
         } footer: {
-            Text("按按钮：发出去只是发出去，什么时候回由发送键右边那个按钮决定。发完就回：消息一发出去就立刻生成回复，每条都调用一次接口。"
+            Text("发完就回时，每条消息调用一次接口。")
+            HelpNote("按按钮：发出去只是发出去，什么时候回由发送键右边那个按钮决定。发完就回：消息一发出去就立刻生成回复，每条都调用一次接口。"
                  + "延迟回复：角色什么时候回取决于角色当时的状态。空闲时几分钟内回；「日常」里当前时段安排了事项，等这件事结束后回；"
                  + "免打扰时段（在「主动发起对话」中设置）内视为休息，起床后回。期间发出的多条消息一并回复，不消耗额外的接口调用；"
                  + "时刻由本地计算，不由模型决定。到点时应用不在前台的，在下次打开时补回。")
@@ -522,7 +528,7 @@ struct PaceSection: View {
                 Toggle("忙碌或休息时自动回复", isOn: Binding(get: { AutoReply.config(c, AutoReply.hers).on },
                                                     set: { setAuto(AutoReply.hers, ["on": .bool($0)]) }))
             } footer: {
-                Text("开启后，角色在「日常」当前时段有事项、或处于免打扰时段时，发来消息会先收到一条自动回复。内容随每天的日程一并生成，不另外调用接口。每段忙碌或休息期间只回一次。正式回复在「延迟回复」下于忙完之后照常发出；其余节奏不再立即回复。"
+                HelpNote("开启后，角色在「日常」当前时段有事项、或处于免打扰时段时，发来消息会先收到一条自动回复。内容随每天的日程一并生成，不另外调用接口。每段忙碌或休息期间只回一次。正式回复在「延迟回复」下于忙完之后照常发出；其余节奏不再立即回复。"
                      + (charDayOn ? "" : "该角色尚未开启「日常」，开启后才有当前事项与自动回复的内容。"))
             }
         }
@@ -546,7 +552,8 @@ struct PaceSection: View {
         } header: {
             Text("我的自动回复")
         } footer: {
-            Text((mine.on ? (mine.max > 0 ? "已开启，还可回 \(max(0, mine.max - mine.used)) 条。" : "已开启，不限条数。") : "")
+            if mine.on { Text(mine.max > 0 ? "已开启，还可回 \(max(0, mine.max - mine.used)) 条。" : "已开启，不限条数。") }
+            HelpNote((mine.on ? (mine.max > 0 ? "已开启，还可回 \(max(0, mine.max - mine.used)) 条。" : "已开启，不限条数。") : "")
                  + "开启后角色发来消息时，替你回一句固定的话，不经过模型，不消耗接口调用。条数或结束时间任一达到时自动关闭，并在对话中留下一行提示。双方的自动回复不会互相触发。")
         }
     }
@@ -604,7 +611,9 @@ struct TiesSection: View {
             } header: {
                 Text("好友与拉黑")
             } footer: {
-                Text("拉黑或删除后，你仍可发消息，角色仍可回复与主动发起对话，角色发来的每一条标为被拒收；角色从第一条被拒收起才知道。"
+                if theirs == "blocked" { Text("角色已将你拉黑。") }
+                if theirs == "removed" { Text("角色已将你删除。") }
+                HelpNote("拉黑或删除后，你仍可发消息，角色仍可回复与主动发起对话，角色发来的每一条标为被拒收；角色从第一条被拒收起才知道。"
                      + (theirs == "blocked" ? "角色已将你拉黑：强制解除不经过角色，对话中留下一行提示，角色下一轮看得到。" : "")
                      + (theirs == "removed" ? "角色已将你删除：发送好友申请后点回复键，角色在那一次回复中决定是否通过，未通过的那一轮不送达。" : ""))
             }

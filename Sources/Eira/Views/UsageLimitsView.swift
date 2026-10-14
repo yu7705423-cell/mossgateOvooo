@@ -45,31 +45,32 @@ struct UsageLimitsView: View {
                         .font(.footnote)
                 }
             } footer: {
-                Text("每次实际发出的请求都计入，失败的也计入。")
+                HelpNote("每次实际发出的请求都计入，失败的也计入。")
             }
 
             Section {
                 Stepper("自动重试：\(s.retryMax) 次", value: retryBinding, in: 0...3)
             } footer: {
-                Text("接口返回 429 或 5xx 时自动重发。每重试一次即多一次计费。设为 0 表示不重试，最多 3 次。主动取消不计为失败，不会重试。")
+                Text("每重试一次即多一次计费。")
+                HelpNote("接口返回 429 或 5xx 时自动重发。每重试一次即多一次计费。设为 0 表示不重试，最多 3 次。主动取消不计为失败，不会重试。")
             }
 
             Section {
                 NumberRow(title: "会话一次显示几条", value: model.number("chatPage", 60), unit: "条", placeholder: "全部")
             } footer: {
-                Text("打开会话时先显示最近这么多条，往上翻按同样的条数继续加载。填 0 表示一次全部显示，消息很多时打开会变慢。不影响发给模型的历史。")
+                HelpNote("打开会话时先显示最近这么多条，往上翻按同样的条数继续加载。填 0 表示一次全部显示，消息很多时打开会变慢。不影响发给模型的历史。")
             }
 
             Section {
                 NumberRow(title: "日记带最近几天", value: model.number("diaryDays", 2), unit: "天", placeholder: "全部")
             } footer: {
-                Text("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
+                HelpNote("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
             }
 
             Section {
                 NumberRow(title: "未读达到几条暂停主动发起对话", value: model.number("proactiveMaxUnread", 3), unit: "条", placeholder: "不限")
             } footer: {
-                Text("开了「主动发起对话」的角色，未读消息堆到这个条数后不再主动发，看过之后恢复。填 0 表示一直发。每个角色的开关在各自的会话设置里。")
+                HelpNote("开了「主动发起对话」的角色，未读消息堆到这个条数后不再主动发，看过之后恢复。填 0 表示一直发。每个角色的开关在各自的会话设置里。")
             }
 
             Section {
@@ -78,13 +79,15 @@ struct UsageLimitsView: View {
             } header: {
                 Text("通话")
             } footer: {
-                Text("通话每说一轮调用一次接口。总结默认开启：每通接通过、有对白的电话挂断时多调用一次（走副用接口），关闭后可在通话记录上手动生成。回复上限填 0 表示不限。")
+                Text("通话每轮调用一次接口；开启总结时每通电话多调用一次。")
+                HelpNote("通话每说一轮调用一次接口。总结默认开启：每通接通过、有对白的电话挂断时多调用一次（走副用接口），关闭后可在通话记录上手动生成。回复上限填 0 表示不限。")
             }
 
             Section {
                 Toggle("自动重压关系底色", isOn: model.bool("bondAuto", false))
             } footer: {
-                Text("关系转折级记忆有增删改之后，下一次请求回复时把这些记忆重新压成「你们之间」的几句现状，多调用一次接口（走记忆接口，未单独配置时走副用）。失败当次记为已尝试，记忆再有变动才会再压。关闭后底色保持上一次的结果。")
+                Text("开启后多调用一次接口。")
+                HelpNote("关系转折级记忆有增删改之后，下一次请求回复时把这些记忆重新压成「你们之间」的几句现状，多调用一次接口（走记忆接口，未单独配置时走副用）。失败当次记为已尝试，记忆再有变动才会再压。关闭后底色保持上一次的结果。")
             }
 
             Section {
@@ -100,13 +103,13 @@ struct UsageLimitsView: View {
             Section {
                 NumberRow(title: "回复多久没有新内容算断开", value: model.number("streamIdleSec", 120), unit: "秒", placeholder: "一直等")
             } footer: {
-                Text("流式回复超过这个秒数没有收到新内容，或非流式请求超过它的四倍没有回应，按连接断开处理并报错，已收到的部分保留。填 0 表示一直等。")
+                HelpNote("流式回复超过这个秒数没有收到新内容，或非流式请求超过它的四倍没有回应，按连接断开处理并报错，已收到的部分保留。填 0 表示一直等。")
             }
 
             Section {
                 Toggle("缓存设定区那一段", isOn: model.bool("promptCache", true))
             } footer: {
-                Text(s.promptCache
+                HelpNote(s.promptCache
                      ? "对话时人设、世界书、消息规则这些整轮不变的内容声明为可缓存。连续对话时重复命中，这一段按十分之一计价；间隔过久未命中的那一次按一点二五倍计价。仅 Anthropic 接口支持声明，其余接口由服务端自行处理，开关不影响。"
                      : "已关闭。每一轮都按完整价格计算输入部分。")
             }
@@ -122,7 +125,7 @@ struct UsageLimitsView: View {
             Section {
                 NumberRow(title: "后台任务的回复上限", value: model.number("taskMaxTokens", 0), unit: "token", placeholder: "不限")
             } footer: {
-                Text("读取角色卡、生成核心设定等后台任务一次最多写多少 token。默认不设，使用接口本身的上限。推理模型的思考过程也计入上限，数值偏小时回复会在写完之前被截断。上限只是封顶，没有用到的部分不计费。")
+                HelpNote("读取角色卡、生成核心设定等后台任务一次最多写多少 token。默认不设，使用接口本身的上限。推理模型的思考过程也计入上限，数值偏小时回复会在写完之前被截断。上限只是封顶，没有用到的部分不计费。")
             }
 
             ProblemSection(text: model.problem)

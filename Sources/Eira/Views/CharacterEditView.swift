@@ -53,7 +53,7 @@ struct CharacterEditView: View {
             } header: {
                 Text("人设")
             } footer: {
-                Text("每次请求都会带上。只在本页显示。")
+                HelpNote("每次请求都会带上。只在本页显示。")
             }
             Section("情境") { TextField("当前情境", text: $scenario, axis: .vertical).lineLimit(3...20) }
             Section {
@@ -61,7 +61,7 @@ struct CharacterEditView: View {
             } header: {
                 Text("开场白")
             } footer: {
-                Text("会话中还没有消息时显示，不发给模型。")
+                HelpNote("会话中还没有消息时显示，不发给模型。")
             }
             Section("说话示例") { TextField("说话示例", text: $exampleDialogue, axis: .vertical).lineLimit(3...30) }
             Section {
@@ -69,7 +69,7 @@ struct CharacterEditView: View {
             } header: {
                 Text("核心设定")
             } footer: {
-                Text("放在提示词末尾，每次请求都会带上。")
+                HelpNote("放在提示词末尾，每次请求都会带上。")
             }
             Section {
                 TextField("外貌", text: $appearance, axis: .vertical).lineLimit(2...10)
@@ -77,7 +77,7 @@ struct CharacterEditView: View {
             } header: {
                 Text("生图")
             } footer: {
-                Text("图片描述里出现这个角色的名字时，外貌随提示词一起发给生图接口；固定提示词接在这个角色发的每一张图后面。")
+                HelpNote("图片描述里出现这个角色的名字时，外貌随提示词一起发给生图接口；固定提示词接在这个角色发的每一张图后面。")
             }
             Section {
                 TextField("音色 ID", text: $voiceId)
@@ -90,7 +90,7 @@ struct CharacterEditView: View {
             } header: {
                 Text("语音")
             } footer: {
-                Text(voiceFooter)
+                HelpNote(voiceFooter)
             }
             Section {
                 Button("删除角色", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)

@@ -131,7 +131,7 @@ struct MemoryEditView: View {
         Form {
             Section {
                 TextField("内容", text: $content, axis: .vertical).lineLimit(3...12)
-            } header: { Text("内容") } footer: { Text("使用简洁的第三人称陈述。") }
+            } header: { Text("内容") } footer: { HelpNote("使用简洁的第三人称陈述。") }
 
             Section {
                 Picker("种类", selection: $kind) {
@@ -142,7 +142,7 @@ struct MemoryEditView: View {
                 .pickerStyle(.segmented)
                 DatePicker(kind == .fact ? "自哪天起成立" : kind == .open ? "从哪天开始" : "发生日期", selection: $at, displayedComponents: .date)
             } footer: {
-                Text("事件是发生过的事；事实是现在成立的事；进行中的事有状态，了结后写明日期与结果。日期随内容一并提供给模型，用于区分先后。")
+                HelpNote("事件是发生过的事；事实是现在成立的事；进行中的事有状态，了结后写明日期与结果。日期随内容一并提供给模型，用于区分先后。")
             }
 
             if kind == .open {
@@ -167,7 +167,7 @@ struct MemoryEditView: View {
                     Toggle("已不再成立", isOn: $hasValidTo)
                     if hasValidTo { DatePicker("失效日期", selection: $validTo, displayedComponents: .date) }
                 } footer: {
-                    Text("失效的事实不再作为一直成立的事注入，召回时写明到哪天为止。")
+                    HelpNote("失效的事实不再作为一直成立的事注入，召回时写明到哪天为止。")
                 }
             }
 
@@ -185,14 +185,14 @@ struct MemoryEditView: View {
             } header: {
                 Text("召回")
             } footer: {
-                Text("S 级压缩进关系底色常驻，不再逐条注入；A 级命中相关话题时召回；B 级须填写关键词才会被召回；C 级仅存档，不注入。")
+                HelpNote("S 级压缩进关系底色常驻，不再逐条注入；A 级命中相关话题时召回；B 级须填写关键词才会被召回；C 级仅存档，不注入。")
             }
 
             Section {
                 Toggle("一直记着", isOn: Binding(get: { pinned }, set: { pinned = $0; if $0 { taboo = false } }))
                 Toggle("不要主动提起", isOn: Binding(get: { taboo }, set: { taboo = $0; if $0 { pinned = false } }))
             } footer: {
-                Text("两项都会让这条每轮常驻，不参与相关度挑选。「不要主动提起」另外写明角色不主动提这件事，对方先提起时可以回应。两项只能开一项。")
+                HelpNote("两项都会让这条每轮常驻，不参与相关度挑选。「不要主动提起」另外写明角色不主动提这件事，对方先提起时可以回应。两项只能开一项。")
             }
 
             if memory != nil {

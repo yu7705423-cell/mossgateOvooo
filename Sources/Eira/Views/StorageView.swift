@@ -36,7 +36,7 @@ struct StorageView: View {
             } header: {
                 Text("备份")
             } footer: {
-                Text("导出的备份可以在网页版「设置 - 存储与备份」中恢复。")
+                HelpNote("导出的备份可以在网页版「设置 - 存储与备份」中恢复。")
             }
             Section {
                 Button("清空全部数据", role: .destructive) { confirmWipe = true }.foregroundStyle(Theme.dangerText)

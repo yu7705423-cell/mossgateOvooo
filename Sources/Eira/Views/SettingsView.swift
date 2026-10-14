@@ -34,12 +34,13 @@ struct SettingsView: View {
                     NavigationLink { StorageView() } label: { row("存储与备份", "database", "") }
                 } header: { groupTitle("数据") }
                 Section {
+                    NavigationLink { HelpView() } label: { row("说明书", "notes", "") }
                     NavigationLink { FeedbackView() } label: { row("问题反馈", "alert", "") }
                 } header: {
                     groupTitle("关于")
                 } footer: {
                     VStack(alignment: .leading, spacing: Theme.sp4) {
-                        Text("角色读到的世界书、记忆、预设、能力在「设定集」中。")
+                        HelpNote("角色读到的世界书、记忆、预设、能力在「设定集」中。")
                             .foregroundStyle(Theme.text2)
                         Text("Eiraowo · 本地运行，数据只存在这台设备上\n版本 \(Self.version)")
                             .foregroundStyle(Theme.text3)
@@ -214,7 +215,7 @@ struct ServiceConnSection: View {
         } header: {
             Text("接口")
         } footer: {
-            Text("\(endpointNote)选择已有的接口时，地址与密钥从那一套读取，模型仍在这里填写。\(modelHint)")
+            HelpNote("\(endpointNote)选择已有的接口时，地址与密钥从那一套读取，模型仍在这里填写。\(modelHint)")
         }
         if showTest {
         Section {
@@ -223,7 +224,8 @@ struct ServiceConnSection: View {
                 Text(result).font(.footnote).foregroundStyle(resultIsError ? Theme.danger : Theme.secondaryText)
             }
         } footer: {
-            Text("发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。")
+            Text("测试计入当天的请求次数。")
+            HelpNote("发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。", title: "测试连接")
         }
         }
     }
@@ -267,7 +269,7 @@ struct MemoryApiView: View {
                 }
                 .pickerStyle(.segmented)
             } footer: {
-                Text(isApi
+                HelpNote(isApi
                      ? "自动总结记忆、压缩关系底色、从文本导入记忆、历史压缩这四项走下面这套接口，其余后台任务仍走副用接口。未填全时退回副用接口。"
                      : "与其余后台任务一同走副用接口。副用接口未配置时退回主用接口。")
             }
@@ -309,11 +311,12 @@ struct VisionSettingsView: View {
             } footer: {
                 switch model.s.visionMode {
                 case "chat":
-                    Text("图片随当前这一轮的请求直接发给聊天模型，看过一次后不再重复传图。要求聊天模型本身能看图，否则请求会报错。")
+                    HelpNote("图片随当前这一轮的请求直接发给聊天模型，看过一次后不再重复传图。要求聊天模型本身能看图，否则请求会报错。")
                 case "api":
-                    Text("图片发出后先交给下面这套接口读成一段描述，描述随消息一起进入上下文。每张图调用一次识图接口。聊天模型本身不能看图时用这一档。")
+                    Text("每张图调用一次识图接口。")
+                    HelpNote("图片发出后先交给下面这套接口读成一段描述，描述随消息一起进入上下文。每张图调用一次识图接口。聊天模型本身不能看图时用这一档。")
                 default:
-                    Text("不识别。图片仍可正常发送与查看，角色只知道你发了一张图，不知道图上有什么。")
+                    HelpNote("不识别。图片仍可正常发送与查看，角色只知道你发了一张图，不知道图上有什么。")
                 }
             }
             if model.s.visionMode == "api" {
@@ -365,7 +368,7 @@ struct RoutesView: View {
                     }
                 }
             } footer: {
-                Text("为下面几项任务单独指定接口。只改变用哪一套，不增加调用次数。选定的接口缺少密钥或模型时，按默认方式选择。原生版尚未提供的功能也列在这里，设定在功能提供后生效。")
+                HelpNote("为下面几项任务单独指定接口。只改变用哪一套，不增加调用次数。选定的接口缺少密钥或模型时，按默认方式选择。原生版尚未提供的功能也列在这里，设定在功能提供后生效。", title: "任务用哪套接口")
             }
             ProblemSection(text: model.problem)
         }
@@ -420,7 +423,7 @@ struct AppearanceView: View {
                 .pickerStyle(.inline)
                 .labelsHidden()
             } footer: {
-                Text("跟随系统时，随手机的深色模式切换。")
+                HelpNote("跟随系统时，随手机的深色模式切换。")
             }
             WallpaperSection()
             Section {

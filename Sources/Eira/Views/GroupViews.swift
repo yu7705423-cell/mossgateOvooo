@@ -14,7 +14,7 @@ struct NewGroupView: View {
             Section {
                 TextField("群名（可不填）", text: $title)
             } footer: {
-                Text("不填时用成员的名字拼成群名。")
+                HelpNote("不填时用成员的名字拼成群名。")
             }
             Section {
                 ForEach(chars) { c in
@@ -32,7 +32,7 @@ struct NewGroupView: View {
             } header: {
                 Text("成员（已选 \(picked.count)）")
             } footer: {
-                Text("至少选择 \(GroupChat.minMembers) 名成员。每轮由一次调用写出开口的几个人。")
+                HelpNote("至少选择 \(GroupChat.minMembers) 名成员。每轮由一次调用写出开口的几个人。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
@@ -100,7 +100,7 @@ struct GroupMembersSection: View {
             } header: {
                 Text("群资料")
             } footer: {
-                Text("群聊至少保留 \(GroupChat.minMembers) 名成员。成员各自的记忆、世界书照常读取。")
+                HelpNote("群聊至少保留 \(GroupChat.minMembers) 名成员。成员各自的记忆、世界书照常读取。")
             }
         }
         .onAppear(perform: load)

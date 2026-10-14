@@ -175,7 +175,8 @@ struct VoiceSettingsView: View {
                 Toggle("角色发送语音", isOn: Binding(get: { model.s.voiceEnabled },
                                                     set: { v in model.update { $0.setVoiceEnabled(v) } }))
             } footer: {
-                Text("开启且当前接口填全后，在角色卡上为角色填写音色，角色即可在回复里发语音：每条语音调用一次语音接口，失败不自动重试。关闭后角色不再发语音，已有的语音照常播放。")
+                Text("每条语音调用一次语音接口。")
+                HelpNote("开启且当前接口填全后，在角色卡上为角色填写音色，角色即可在回复里发语音：每条语音调用一次语音接口，失败不自动重试。关闭后角色不再发语音，已有的语音照常播放。")
             }
             Section {
                 ForEach(model.s.voicePresets) { p in
@@ -195,7 +196,7 @@ struct VoiceSettingsView: View {
             } header: {
                 Text("语音接口")
             } footer: {
-                Text("角色的音色按接口分别填写：换一套接口后，需在角色卡上为这一套另填音色。")
+                HelpNote("角色的音色按接口分别填写：换一套接口后，需在角色卡上为这一套另填音色。")
             }
             ProblemSection(text: model.problem)
         }
@@ -228,7 +229,7 @@ struct VoicePresetEditView: View {
                         Button("设为当前") { model.update { $0.setActiveVoice(id) } }
                     }
                 } footer: {
-                    Text(kindNote(p.kind))
+                    HelpNote(kindNote(p.kind))
                 }
                 Section("连接") {
                     TextField(VoicePreset.kinds.first { $0.id == p.kind }?.base ?? "接口地址", text: field("baseUrl"))
@@ -251,7 +252,7 @@ struct VoicePresetEditView: View {
                 } header: {
                     Text("默认风格")
                 } footer: {
-                    Text("角色卡上填写了风格与语种时以角色卡为准。MiniMax 的风格只接受固定的情绪词（高兴、难过、生气、害怕、厌恶、惊讶、平静），其余不发送。")
+                    HelpNote("角色卡上填写了风格与语种时以角色卡为准。MiniMax 的风格只接受固定的情绪词（高兴、难过、生气、害怕、厌恶、惊讶、平静），其余不发送。")
                 }
                 Section {
                     TextField("试听用的音色 ID", text: $sample)
@@ -259,7 +260,8 @@ struct VoicePresetEditView: View {
                     Button(testing ? "正在合成" : "试听") { runTest(p) }.disabled(testing || !p.ready)
                     if let testResult { Text(testResult).font(.footnote).foregroundStyle(testOk ? Theme.secondaryText : Theme.danger) }
                 } footer: {
-                    Text("合成一句短句并播放，按一次语音合成计费。")
+                    Text("按一次语音合成计费。")
+                    HelpNote("合成一句短句并播放，按一次语音合成计费。")
                 }
                 Section {
                     Button("删除这套接口", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
@@ -324,7 +326,7 @@ struct AsrSettingsView: View {
                 }
                 .pickerStyle(.segmented)
             } footer: {
-                Text(model.s.asrMode == "tone"
+                HelpNote(model.s.asrMode == "tone"
                      ? "走 chat/completions，把录音交给能听声音的多模态模型，同时读出文字、语气、情绪与语速。普通的 whisper 端点不支持这一档。"
                      : "走 /audio/transcriptions（whisper 一类），只转成文字。绝大多数中转站都提供。")
             }
@@ -335,7 +337,8 @@ struct AsrSettingsView: View {
                     model.update { $0.setService("asr", ["apiKey": .string(""), "model": .string(""), "baseUrl": .string(""), "endpointId": .string("")]) }
                 }
             } footer: {
-                Text("未配置时，录音由系统识别转成文字，不调用接口。配置后每条语音调用一次识别接口。")
+                Text("配置后每条语音调用一次识别接口。")
+                HelpNote("未配置时，录音由系统识别转成文字，不调用接口。配置后每条语音调用一次识别接口。")
             }
             ProblemSection(text: model.problem)
         }

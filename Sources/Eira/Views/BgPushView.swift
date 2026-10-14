@@ -17,7 +17,7 @@ struct BgPushView: View {
             } header: {
                 Text("服务器地址")
             } footer: {
-                Text("与网页版同一台后台消息服务器（worker/push.js），部署步骤见网页版「部署教程」。开启后，地址需先关闭才能修改。")
+                HelpNote("与网页版同一台后台消息服务器（worker/push.js），部署步骤见网页版「部署教程」。开启后，地址需先关闭才能修改。")
             }
             Section {
                 Toggle("后台消息", isOn: Binding(get: { BgPush.isOn(model.s) }, set: toggle))
@@ -28,7 +28,8 @@ struct BgPushView: View {
                 if let note { Text(note).font(.footnote).foregroundStyle(noteIsError ? Theme.danger : Theme.secondaryText) }
                 if !bg.problem.isEmpty { Text(bg.problem).font(.footnote).foregroundStyle(Theme.danger) }
             } footer: {
-                Text("开启后，应用退到后台时，开了「主动发起对话」的角色接下来几次开口的时间，连同到时候发给模型的那一次完整请求（含接口密钥与聊天上下文），一起交给上面的服务器；服务器加密保存，到点代发，结果在打开应用时取回并落进会话。同一次开口只调用一次接口：应用在前台时由本机发，在后台时由服务器发；回到前台后先取回结果再恢复本机发送，取不回来时本机也不发。原生版收不到推送通知，消息在打开应用时出现。")
+                Text("开启后，接口密钥与聊天上下文交给后台消息服务器保管。")
+                HelpNote("开启后，应用退到后台时，开了「主动发起对话」的角色接下来几次开口的时间，连同到时候发给模型的那一次完整请求（含接口密钥与聊天上下文），一起交给上面的服务器；服务器加密保存，到点代发，结果在打开应用时取回并落进会话。同一次开口只调用一次接口：应用在前台时由本机发，在后台时由服务器发；回到前台后先取回结果再恢复本机发送，取不回来时本机也不发。原生版收不到推送通知，消息在打开应用时出现。")
             }
         }
         .navigationTitle("后台消息")

@@ -33,7 +33,7 @@ struct ApiSettingsView: View {
             } header: {
                 Text("对话接口")
             } footer: {
-                Text("聊天回复使用主用；其余后台任务使用副用，未设副用时使用主用。")
+                HelpNote("聊天回复使用主用；其余后台任务使用副用，未设副用时使用主用。")
             }
 
             if let problem {
@@ -99,7 +99,7 @@ struct PresetEditor: View {
             } header: {
                 Text("地址、密钥与模型")
             } footer: {
-                Text("地址留空时使用该格式的官方地址。密钥只保存在本机。")
+                HelpNote("地址留空时使用该格式的官方地址。密钥只保存在本机。")
             }
             Section {
                 TextField("站点链接", text: $siteUrl)
@@ -109,7 +109,7 @@ struct PresetEditor: View {
             } header: {
                 Text("站点与充值")
             } footer: {
-                Text("回复失败时，失败的那一条下方给出「打开站点」；余额不足时给出「去充值」。充值链接未填写时使用站点链接。")
+                HelpNote("回复失败时，失败的那一条下方给出「打开站点」；余额不足时给出「去充值」。充值链接未填写时使用站点链接。")
             }
             Section {
                 Button(testing ? "连接中" : "测试连接", action: test).disabled(testing)
@@ -117,7 +117,8 @@ struct PresetEditor: View {
                     Text(testResult).font(.footnote).foregroundStyle(testOk ? Theme.secondaryText : Theme.danger)
                 }
             } footer: {
-                Text("用当前填写的内容发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。")
+                Text("测试计入当天的请求次数。")
+                HelpNote("用当前填写的内容发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。", title: "测试连接")
             }
             Section {
                 Toggle("设为主用", isOn: $isMain)

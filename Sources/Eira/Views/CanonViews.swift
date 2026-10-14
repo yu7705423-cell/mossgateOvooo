@@ -57,7 +57,7 @@ struct MemoryCharsView: View {
             Section {
                 Toggle("角色读得到记忆", isOn: model.bool("memoryEnabled", true))
             } footer: {
-                Text("关闭后记忆不写进提示词，也不自动总结。手动「立即总结」不受影响。")
+                HelpNote("关闭后记忆不写进提示词，也不自动总结。手动「立即总结」不受影响。")
             }
             Section {
                 NumberRow(title: "每累计几轮角色回复", value: model.number("autoSummarizeInterval", 0), unit: "轮", placeholder: "不看")
@@ -66,13 +66,15 @@ struct MemoryCharsView: View {
             } header: {
                 Text("自动总结")
             } footer: {
-                Text("任一门槛到了就在后台总结一次，每次调用一次接口（走记忆接口，没单独配时走副用）。三项都填 0 时不自动总结，默认如此。失败的那一次也算试过，要再攒够一个间隔才重试。")
+                Text("每次自动总结调用一次接口。")
+                HelpNote("任一门槛到了就在后台总结一次，每次调用一次接口（走记忆接口，没单独配时走副用）。三项都填 0 时不自动总结，默认如此。失败的那一次也算试过，要再攒够一个间隔才重试。")
             }
             Section {
                 NumberRow(title: "一次总结的条数", value: model.number("memoryBatch", 200), unit: "条", placeholder: "全部")
                 NumberRow(title: "总结记忆的输出上限", value: model.number("memoryExtractMaxTokens", 0), unit: "token", placeholder: "不限")
             } footer: {
-                Text("一次总结最多拿最早的这么多条消息去拼请求，填 0 表示一次全拿；剩下的下次接着总结。输出上限偏小时会在半路截断，那一次照样计费。")
+                Text("输出上限偏小时会在半路截断，那一次照样计费。")
+                HelpNote("一次总结最多拿最早的这么多条消息去拼请求，填 0 表示一次全拿；剩下的下次接着总结。输出上限偏小时会在半路截断，那一次照样计费。")
             }
             ProblemSection(text: model.problem)
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
@@ -125,7 +127,7 @@ struct PresetListView: View {
                 }
                 Button("导入预设") { importing = true }
             } footer: {
-                Text("一套预设是发给模型的条目顺序：线上聊天、线下、群聊、通话各一份，可以调整先后、开关、添加自己的条目，另有每轮条数等参数。全局使用一套；每段对话可以在会话设置中另选一套。新建时复制全局使用中的那一套。")
+                HelpNote("一套预设是发给模型的条目顺序：线上聊天、线下、群聊、通话各一份，可以调整先后、开关、添加自己的条目，另有每轮条数等参数。全局使用一套；每段对话可以在会话设置中另选一套。新建时复制全局使用中的那一套。")
             }
             ProblemSection(text: model.problem)
         }
@@ -198,7 +200,7 @@ struct PresetEditView: View {
                     }
                     .pickerStyle(.segmented)
                 } footer: {
-                    Text("从上到下即发给模型的顺序。点右上角「排序」后拖动调整位置；关闭的一条不发送。标为「必需」的关系到回复能否被正确拆分，不能关闭；标为「跟随开关」的由各自功能的开关决定，在这里只调整位置。原生版目前只发送线上聊天这一份，其余三份照样保存，供网页版使用。")
+                    HelpNote("从上到下即发给模型的顺序。点右上角「排序」后拖动调整位置；关闭的一条不发送。标为「必需」的关系到回复能否被正确拆分，不能关闭；标为「跟随开关」的由各自功能的开关决定，在这里只调整位置。原生版目前只发送线上聊天这一份，其余三份照样保存，供网页版使用。")
                 }
                 Section("条目") {
                     ForEach(items) { it in itemRow(it) }
@@ -415,7 +417,7 @@ struct PresetEditView: View {
         } header: {
             Text("参数")
         } footer: {
-            Text("每轮条数：线上聊天与群聊每轮回复分几条发出。旁白每轮至少：开启旁白时生效，填 0 表示不要求。按需注入：开启时平时只给能力清单，某项能力最近用到时才注入完整说明；关闭后开启的能力每轮都注入完整说明。")
+            HelpNote("每轮条数：线上聊天与群聊每轮回复分几条发出。旁白每轮至少：开启旁白时生效，填 0 表示不要求。按需注入：开启时平时只给能力清单，某项能力最近用到时才注入完整说明；关闭后开启的能力每轮都注入完整说明。")
         }
         Section {
             Picker("历史范围", selection: Binding(get: { byTurn ? "turn" : "count" },
@@ -432,7 +434,8 @@ struct PresetEditView: View {
             NumberRow(title: "扫描窗口", value: num("scanWindow", 6), unit: "条", placeholder: "全部")
             NumberRow(title: "注入预算", value: num("contextBudget", 0), unit: "token", placeholder: "不限")
         } footer: {
-            Text("历史范围：每次请求附带最近多少条消息或多少轮，填 0 表示全部。条数越多，每次请求的用量越大。扫描窗口：世界书与记忆在最近若干条消息中匹配关键词，填 0 表示整段对话。注入预算：世界书、记忆与对话历史的 token 上限，填 0 表示不截断。")
+            Text("条数越多，每次请求的用量越大。")
+            HelpNote("历史范围：每次请求附带最近多少条消息或多少轮，填 0 表示全部。条数越多，每次请求的用量越大。扫描窗口：世界书与记忆在最近若干条消息中匹配关键词，填 0 表示整段对话。注入预算：世界书、记忆与对话历史的 token 上限，填 0 表示不截断。")
         }
     }
 
@@ -461,7 +464,7 @@ struct PresetEditView: View {
             } header: {
                 Text("以前修改过的内置提示词")
             } footer: {
-                Text("这些段落含有应用需要读取的格式，现已不开放修改。以前改过的版本继续生效；恢复默认后不能再改。")
+                HelpNote("这些段落含有应用需要读取的格式，现已不开放修改。以前改过的版本继续生效；恢复默认后不能再改。")
             }
         }
     }
@@ -490,7 +493,7 @@ struct PresetEditView: View {
                 Section {
                     Text(desc)
                 } footer: {
-                    Text("这一段含有应用需要读取的格式，由应用维护，不开放修改。需要补充要求时，可添加自己的条目并拖到它的前后。")
+                    HelpNote("这一段含有应用需要读取的格式，由应用维护，不开放修改。需要补充要求时，可添加自己的条目并拖到它的前后。", title: "锁定的内置段落")
                 }
             }
             .navigationTitle(title)
@@ -507,7 +510,8 @@ struct PresetEditView: View {
                         sheet = nil
                     }
                 } footer: {
-                    Text("恢复后这一段改用内置版本，并且不再能修改。")
+                    Text("恢复后不能再修改。")
+                    HelpNote("恢复后这一段改用内置版本，并且不再能修改。")
                 }
             }
             .navigationTitle(id)
@@ -550,7 +554,7 @@ struct CustomEntryEditor: View {
             } header: {
                 Text("内容")
             } footer: {
-                Text("按原文发送。{{charName}} 与 {{userName}} 填入角色名与用户名。")
+                HelpNote("按原文发送。{{charName}} 与 {{userName}} 填入角色名与用户名。")
             }
             Section { Button("删除这个条目", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
         }
@@ -595,9 +599,9 @@ struct GroupOrderView: View {
                     save()
                 }
             } footer: {
-                Text(group == "now"
+                HelpNote(group == "now"
                      ? "这几项每轮都会变化，放在聊天记录下面时不影响前面内容的缓存。拖动调整组内先后。"
-                     : "拖动调整组内先后。原生版尚未提供的功能也列在这里，没有内容时不发送。")
+                     : "拖动调整组内先后。原生版尚未提供的功能也列在这里，没有内容时不发送。", title: "提示词条目分组")
             }
         }
         .environment(\.editMode, .constant(ids.count > 1 ? .active : .inactive))
@@ -645,9 +649,9 @@ struct TemplateEditor: View {
             Section {
                 TextEditor(text: $draft).font(.footnote.monospaced()).frame(minHeight: 260)
             } footer: {
-                Text(required.isEmpty
+                HelpNote(required.isEmpty
                      ? "{{charName}} 与 {{userName}} 填入角色名与用户名，可删去。"
-                     : "\(required.joined(separator: " ")) 由应用填入，必须保留。{{charName}} 与 {{userName}} 填入角色名与用户名，可删去。")
+                     : "\(required.joined(separator: " ")) 由应用填入，必须保留。{{charName}} 与 {{userName}} 填入角色名与用户名，可删去。", title: "编辑提示词段落")
             }
             if !missing.isEmpty {
                 Section { Text("缺少 \(missing.joined(separator: " "))，无法保存。").foregroundStyle(Theme.danger) }
@@ -719,7 +723,7 @@ struct BanView: View {
             } header: {
                 Text("词句列表")
             } footer: {
-                Text("列出不希望角色使用的词句，每行一条。该列表对所有角色生效，默认为空。列出的内容会写入每一轮的提示词。星号代替中间最多十二个字，不跨行，例如「把*揉进骨血里」。")
+                HelpNote("列出不希望角色使用的词句，每行一条。该列表对所有角色生效，默认为空。列出的内容会写入每一轮的提示词。星号代替中间最多十二个字，不跨行，例如「把*揉进骨血里」。")
             }
             let broad = Ban.list(model.s).filter(Ban.tooBroad)
             if !broad.isEmpty {
@@ -784,7 +788,7 @@ struct CapsView: View {
                     }
                 }
             } footer: {
-                Text("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效。旁白的开关在会话设置中。网页版其余能力的开关原样保留，原生版提供这些功能后一并列出。")
+                HelpNote("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效。旁白的开关在会话设置中。网页版其余能力的开关原样保留，原生版提供这些功能后一并列出。", title: "能力开关")
             }
             ProblemSection(text: model.problem)
         }
@@ -835,7 +839,7 @@ struct RegexListView: View {
                     if model.problem == nil, let id = row["id"]?.string { opening = Target(id: id) }
                 }
             } footer: {
-                Text("把消息里的字词换成别的写法。每条规则可以只改屏幕上的显示、只改发给角色的聊天记录，或两边都改。存着的原文不变，关闭规则后立即恢复原样。规则按列表顺序依次套用，长按拖动调整先后。不调用接口。")
+                HelpNote("把消息里的字词换成别的写法。每条规则可以只改屏幕上的显示、只改发给角色的聊天记录，或两边都改。存着的原文不变，关闭规则后立即恢复原样。规则按列表顺序依次套用，长按拖动调整先后。不调用接口。", title: "正则替换")
             }
             ProblemSection(text: model.problem)
         }
@@ -909,7 +913,7 @@ struct RegexEditView: View {
                 } header: {
                     Text("适用的角色")
                 } footer: {
-                    Text("一个都不选表示全部角色。")
+                    HelpNote("一个都不选表示全部角色。")
                 }
                 Section {
                     TextField("输入一段文字试一试", text: $probe, axis: .vertical)

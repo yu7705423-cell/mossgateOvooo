@@ -49,7 +49,7 @@ struct StatusBarSettingsView: View {
             Section {
                 Toggle("状态栏", isOn: Binding(get: { cfg.on }, set: { cfg.on = $0; save() }))
             } footer: {
-                Text("开启后，角色每轮回复末尾一并写出状态栏的值，与回复同一次调用，不多调用接口。状态栏显示在这一轮的消息旁，不算作消息。")
+                HelpNote("开启后，角色每轮回复末尾一并写出状态栏的值，与回复同一次调用，不多调用接口。状态栏显示在这一轮的消息旁，不算作消息。")
             }
             if cfg.on {
                 Section {
@@ -58,7 +58,7 @@ struct StatusBarSettingsView: View {
                         ForEach(StatusBar.places, id: \.id) { Text($0.label).tag($0.id) }
                     }
                 } footer: {
-                    Text("带进下一轮开启时，上一轮的值作为当前状态交给角色；关闭时每轮给初始值。")
+                    HelpNote("带进下一轮开启时，上一轮的值作为当前状态交给角色；关闭时每轮给初始值。")
                 }
                 Section {
                     ForEach(cfg.items.filter(\.supported)) { it in
@@ -93,7 +93,7 @@ struct StatusBarSettingsView: View {
                 } header: {
                     HStack { Text("栏目"); Spacer(); EditButton().font(.footnote) }
                 } footer: {
-                    Text("时间读取这段会话的时间设置，不由角色填写；其余栏目每轮由角色填写。自定义栏目可写说明、初始值与变化规则，规则原样交给角色。")
+                    HelpNote("时间读取这段会话的时间设置，不由角色填写；其余栏目每轮由角色填写。自定义栏目可写说明、初始值与变化规则，规则原样交给角色。")
                 }
             }
         }
@@ -159,7 +159,7 @@ private struct CustomItemEditor: View {
                     }
                 }
             } footer: {
-                Text(item.show == "bar" ? "按最小值与最大值换算进度条的长度；角色写的不是数字时只显示文字。" : "")
+                HelpNote(item.show == "bar" ? "按最小值与最大值换算进度条的长度；角色写的不是数字时只显示文字。" : "")
             }
         }
         .navigationTitle(item.label.isEmpty ? "添加栏目" : item.label)

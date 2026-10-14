@@ -80,9 +80,9 @@ struct LorebookView: View {
                 }
             } footer: {
                 if book?.purpose == "chat" {
-                    Text("关闭时，只对在资料页挂上这本书的角色生效。")
+                    HelpNote("关闭时，只对在资料页挂上这本书的角色生效。")
                 } else {
-                    Text("这本书用于「\(LoreText.purposes[book?.purpose ?? ""] ?? "")」，原生版暂未使用。")
+                    HelpNote("这本书用于「\(LoreText.purposes[book?.purpose ?? ""] ?? "")」，原生版暂未使用。")
                 }
             }
             Section("条目") {
@@ -208,7 +208,7 @@ struct LoreEntryEditView: View {
             } header: {
                 Text("触发")
             } footer: {
-                Text("常驻的每轮都注入。其余的在最近几条消息里出现任一关键词时注入；填了次要关键词的，还要再出现其中一个。")
+                HelpNote("常驻的每轮都注入。其余的在最近几条消息里出现任一关键词时注入；填了次要关键词的，还要再出现其中一个。")
             }
             Section {
                 Picker("位置", selection: $part) {
@@ -221,7 +221,7 @@ struct LoreEntryEditView: View {
             } header: {
                 Text("位置")
             } footer: {
-                Text("优先级大的排在前面；优先级相同时按顺序从小到大。")
+                HelpNote("优先级大的排在前面；优先级相同时按顺序从小到大。")
             }
             Section { Button("删除这条设定", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
@@ -291,7 +291,7 @@ struct CharacterLoreView: View {
                     }
                 }
             } footer: {
-                Text("挂上的世界书在与该角色对话时按关键词注入。")
+                HelpNote("挂上的世界书在与该角色对话时按关键词注入。", title: "角色挂载的世界书")
             }
             Section { NavigationLink("管理全部世界书") { LorebookListView() } }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }

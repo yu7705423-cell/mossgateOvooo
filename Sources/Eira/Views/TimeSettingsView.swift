@@ -28,13 +28,13 @@ struct TimeSettingsView: View {
             Section {
                 Toggle("时间感知", isOn: settings.bool("injectTime", true))
             } footer: {
-                Text(on ? "向角色提供当前时间、双方时差与距上次对话的间隔。" : "关闭状态下，角色不知道当前日期与时间，也不知道距上次对话过去了多久。")
+                HelpNote(on ? "向角色提供当前时间、双方时差与距上次对话的间隔。" : "关闭状态下，角色不知道当前日期与时间，也不知道距上次对话过去了多久。")
             }
             if on {
                 Section {
                     Toggle("要求角色写出时间", isOn: settings.bool("timeStamp", true))
                 } footer: {
-                    Text("角色每条回复先输出一行当地时间，界面上过滤不显示。仅在设定中告知时间，模型往往不会真正参照；要求其输出一次，时间才会进入推理。")
+                    HelpNote("角色每条回复先输出一行当地时间，界面上过滤不显示。仅在设定中告知时间，模型往往不会真正参照；要求其输出一次，时间才会进入推理。")
                 }
                 Section {
                     Picker("时间来源", selection: Binding(get: { virtual ? "virtual" : "real" }, set: { setMode($0) })) {
@@ -52,7 +52,7 @@ struct TimeSettingsView: View {
                         Toggle("固定时刻", isOn: settings.bool("timeFrozen", false))
                     }
                 } footer: {
-                    Text(virtual ? "自设定的时刻起继续推进，而非固定在该时刻。开启「固定时刻」后时间不再推进，始终停留在设定的时刻。" : "采用本设备的系统时间。")
+                    HelpNote(virtual ? "自设定的时刻起继续推进，而非固定在该时刻。开启「固定时刻」后时间不再推进，始终停留在设定的时刻。" : "采用本设备的系统时间。")
                 }
                 Section {
                     Picker("本人所在时区", selection: Binding(get: { uz }, set: { settings.set("timeZoneUser", .string($0)) })) {
@@ -75,7 +75,7 @@ struct TimeSettingsView: View {
                     } header: {
                         Text("角色所在时区")
                     } footer: {
-                        Text("与角色卡中的同一项是同一份。未单独设置的角色，视为与本人处于同一时区。")
+                        HelpNote("与角色卡中的同一项是同一份。未单独设置的角色，视为与本人处于同一时区。")
                     }
                 }
                 Section {

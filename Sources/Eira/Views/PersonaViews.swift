@@ -39,7 +39,7 @@ struct PersonaListView: View {
                 Button("新建大号") { create(parent: nil) }
                 if let root = rootOfActive { Button("为「\(root.name)」新建小号") { create(parent: root.id) } }
             } footer: {
-                Text("小号与大号共用记忆；用小号找同一个角色，开的是另一段会话。")
+                HelpNote("小号与大号共用记忆；用小号找同一个角色，开的是另一段会话。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
@@ -122,7 +122,7 @@ struct PersonaEditView: View {
             } header: {
                 Text("基本介绍")
             } footer: {
-                Text("角色在对话中看到的「你是谁」。")
+                HelpNote("角色在对话中看到的「你是谁」。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }

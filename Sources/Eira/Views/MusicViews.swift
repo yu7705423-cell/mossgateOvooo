@@ -155,7 +155,7 @@ struct MusicFrontView: View {
                     HStack { Text("本机曲库"); Spacer(); Text("已收 \(librarySize) 首").foregroundStyle(Theme.secondaryText) }
                 }
             } footer: {
-                Text("本页的数据来自你登录的网易云账号，读取时直接连网易云，不经过模型接口。")
+                HelpNote("本页的数据来自你登录的网易云账号，读取时直接连网易云，不经过模型接口。")
             }
         }
         .task {
@@ -327,7 +327,7 @@ struct LibraryView: View {
                 Button("全部播放") { player.play(songs, at: 0) }.disabled(songs.isEmpty)
                 Button("导入本机音频") { importing = true }
             } footer: {
-                Text("网易云收入的曲目只保存标识，播放地址在每次播放时重新获取。导入的音频文件存在本机。")
+                HelpNote("网易云收入的曲目只保存标识，播放地址在每次播放时重新获取。导入的音频文件存在本机。")
             }
             Section("歌曲 · \(songs.count)") {
                 ForEach(Array(songs.enumerated()), id: \.offset) { i, s in
@@ -495,7 +495,7 @@ struct NeLoginView: View {
             } header: {
                 Text("扫码登录")
             } footer: {
-                Text("用网易云音乐 App 扫码并确认。本机只保存登录后的 cookie，不收密码。可截图后在网易云 App 里识别相册中的二维码。")
+                HelpNote("用网易云音乐 App 扫码并确认。本机只保存登录后的 cookie，不收密码。可截图后在网易云 App 里识别相册中的二维码。")
             }
             Section {
                 TextField("MUSIC_U=...", text: $cookie, axis: .vertical).lineLimit(2...6)
@@ -575,12 +575,12 @@ struct MusicSettingsView: View {
             } header: {
                 Text("我的网易云账号")
             } footer: {
-                Text("原生版直接连接网易云，不需要另外部署接口服务器。登录后可读最近播放与歌单，在本机播放的歌曲会记入该账号的听歌记录。")
+                HelpNote("原生版直接连接网易云，不需要另外部署接口服务器。登录后可读最近播放与歌单，在本机播放的歌曲会记入该账号的听歌记录。")
             }
             Section {
                 TextField("来源地址 realIP（可不填）", text: realIPBinding).keyboardType(.numbersAndPunctuation)
             } footer: {
-                Text("网易云按出口 IP 风控（提示 -462）时，填一个中国大陆 IP 后重试。未填写时用本机随机生成的一个国内 IP。")
+                HelpNote("网易云按出口 IP 风控（提示 -462）时，填一个中国大陆 IP 后重试。未填写时用本机随机生成的一个国内 IP。")
             }
             Section {
                 NumberRow(title: "角色的听歌记录多久读一次", value: gapBinding, unit: "分钟", placeholder: "只手动读")
@@ -591,7 +591,7 @@ struct MusicSettingsView: View {
             } header: {
                 Text("角色在听什么")
             } footer: {
-                Text("角色的网易云账号在与该角色的会话设置里登录。登录后，请求回复之前按上面的间隔读一次它的最近播放，写进这一轮的上下文；只调网易云，不调用模型接口。")
+                HelpNote("角色的网易云账号在与该角色的会话设置里登录。登录后，请求回复之前按上面的间隔读一次它的最近播放，写进这一轮的上下文；只调网易云，不调用模型接口。")
             }
         }
         .navigationTitle("音乐服务")
@@ -637,7 +637,7 @@ struct MusicCharSection: View {
         } header: {
             Text("音乐")
         } footer: {
-            Text("一起听：角色可以邀请你一起听、点歌、分享歌曲、整理自己的歌单，不调用额外接口。角色登录网易云后，它的最近播放会写进对话的上下文；一起听时播放的歌也记入它的账号。")
+            HelpNote("一起听：角色可以邀请你一起听、点歌、分享歌曲、整理自己的歌单，不调用额外接口。角色登录网易云后，它的最近播放会写进对话的上下文；一起听时播放的歌也记入它的账号。")
         }
         .sheet(isPresented: $login, onDismiss: load) { NavigationStack { NeLoginView(charId: charId) { login = false } } }
         .onAppear(perform: load)

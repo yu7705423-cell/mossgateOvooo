@@ -82,7 +82,7 @@ struct ForwardPickView: View {
                         .eiraRow()
                 }
             } footer: {
-                Text("转发后在对方的会话中显示为一条聊天记录，对方在下一次回复时读到它。不会立即调用接口。")
+                HelpNote("转发后在对方的会话中显示为一条聊天记录，对方在下一次回复时读到它。不会立即调用接口。")
             }
         }
         .listStyle(.insetGrouped)

@@ -42,7 +42,7 @@ struct ChatLookView: View {
             } header: {
                 Text("背景")
             } footer: {
-                Text("背景铺满整个会话页，只对这段会话生效。遮罩使背景朝当前主题的底色变淡，数值越大，气泡外的文字越清晰。")
+                HelpNote("背景铺满整个会话页，只对这段会话生效。遮罩使背景朝当前主题的底色变淡，数值越大，气泡外的文字越清晰。")
             }
 
             Section {
@@ -50,13 +50,13 @@ struct ChatLookView: View {
             } header: {
                 Text("旁白文字颜色")
             } footer: {
-                Text("旁白是消息之间居中的那一行小字。选「跟随主题」为默认的灰色；背景较深或较花时，可以换成更醒目的颜色。")
+                HelpNote("旁白是消息之间居中的那一行小字。选「跟随主题」为默认的灰色；背景较深或较花时，可以换成更醒目的颜色。")
             }
 
             Section {
                 Toggle("上下栏分开设置", isOn: Binding(get: { look.split }, set: { apply(["split": .bool($0)]) }))
             } footer: {
-                Text(look.split ? "顶栏与输入栏各自设置。" : "顶栏与输入栏使用同一套样式。")
+                HelpNote(look.split ? "顶栏与输入栏各自设置。" : "顶栏与输入栏使用同一套样式。")
             }
             if look.split {
                 barSection("顶栏", look.top, key: "top")
@@ -71,7 +71,7 @@ struct ChatLookView: View {
                     Button("恢复默认", role: .destructive) { confirmReset = true }
                 }
             } footer: {
-                Text("实色为应用默认样式。半透明与毛玻璃时，消息从栏下经过。输入栏包括其上方的引用条与展开的面板。")
+                HelpNote("实色为应用默认样式。半透明与毛玻璃时，消息从栏下经过。输入栏包括其上方的引用条与展开的面板。")
             }
         }
         .navigationTitle("聊天背景")

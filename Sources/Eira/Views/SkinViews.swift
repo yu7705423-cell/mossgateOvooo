@@ -44,7 +44,7 @@ struct SkinPageView: View {
                     }
                     Button { run { try Skins.attach(chatId, "") } } label: { Text("从这段会话取下").foregroundStyle(Theme.text) }
                 } header: { Text("这段会话") } footer: {
-                    Text("取下后美化本身保留，其他会话不受影响。")
+                    HelpNote("取下后美化本身保留，其他会话不受影响。")
                 }
                 Section {
                     Picker("头像形状", selection: Binding(get: { cur.string("shape") }, set: { v in
@@ -58,7 +58,7 @@ struct SkinPageView: View {
                         ForEach(Skins.faceShow, id: \.id) { Text($0.label).tag($0.id) }
                     }
                 } footer: {
-                    Text("不显示的那一边连位置一起收起，气泡贴着屏幕边缘。隐藏角色头像后，点头像查看心声随之不可用。")
+                    HelpNote("不显示的那一边连位置一起收起，气泡贴着屏幕边缘。隐藏角色头像后，点头像查看心声随之不可用。")
                 }
                 let skipped = Skins.skipped(cur)
                 if !skipped.isEmpty {
@@ -89,7 +89,7 @@ struct SkinPageView: View {
                 }
                 Button { newName = ""; naming = true } label: { Label("新建一份", systemImage: "plus") }
             } header: { Text(cur == nil ? "挂一份现成的" : "换一份") } footer: {
-                Text("美化按会话生效：挂上之后只在这段会话中起作用。网页版导出的备份中的美化随备份导入；自定义 CSS 与头像框在原生版中不显示。")
+                HelpNote("美化按会话生效：挂上之后只在这段会话中起作用。网页版导出的备份中的美化随备份导入；自定义 CSS 与头像框在原生版中不显示。")
             }
         }
         .navigationTitle("美化")
@@ -135,12 +135,12 @@ struct SkinEditView: View {
                     TextField("名称", text: $name)
                         .onSubmit { run { try Skins.update(id) { $0["name"] = .string(name.trimmingCharacters(in: .whitespacesAndNewlines)) } } }
                 } header: { Text("名称") } footer: {
-                    Text("改动对挂着这一份的每段会话生效。")
+                    HelpNote("改动对挂着这一份的每段会话生效。")
                 }
                 Section {
                     ForEach(Skins.tokens, id: \.id) { t in tokenRow(row, t) }
                 } header: { Text("尺寸") } footer: {
-                    Text("未设置的一项沿用默认值。")
+                    HelpNote("未设置的一项沿用默认值。")
                 }
                 bubbleSection(row)
                 avatarSection(row)
@@ -183,7 +183,7 @@ struct SkinEditView: View {
             colorRow("底色", r, "bg")
             colorRow("文字颜色", r, "fg")
         } header: { Text("气泡颜色") } footer: {
-            Text("选定一边之后，底色与文字颜色只作用于这一边。未设置时沿用主题。")
+            HelpNote("选定一边之后，底色与文字颜色只作用于这一边。未设置时沿用主题。")
         }
     }
 

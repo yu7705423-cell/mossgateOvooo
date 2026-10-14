@@ -15,7 +15,7 @@ struct ExportView: View {
             Section {
                 Toggle("包含图片与文件", isOn: $media)
             } footer: {
-                Text(media ? "导出为 ZIP，网页版恢复后图片与文件齐全。" : "只导出数据，为一份 JSON 文件；网页版恢复后图片与文件缺失。")
+                HelpNote(media ? "导出为 ZIP，网页版恢复后图片与文件齐全。" : "只导出数据，为一份 JSON 文件；网页版恢复后图片与文件缺失。")
             }
             Section {
                 Toggle("包含接口与密钥", isOn: $keys)
@@ -26,13 +26,15 @@ struct ExportView: View {
             Section {
                 SecureField("备份口令（可留空）", text: $password)
             } footer: {
-                Text("填写后整份加密，恢复时须输入同一口令。口令丢失则无法解开，没有其他办法找回。")
+                Text("口令丢失则无法解开。")
+                HelpNote("填写后整份加密，恢复时须输入同一口令。口令丢失则无法解开，没有其他办法找回。", title: "加密口令")
             }
             Section {
                 Button(running ? "正在导出" : "导出", action: start).disabled(running)
                 if running { ProgressView(value: progress) }
             } footer: {
-                Text("在网页版「设置 - 存储」中恢复这份文件。恢复会替换网页版里现有的全部数据。")
+                Text("恢复会替换网页版里现有的全部数据。")
+                HelpNote("在网页版「设置 - 存储」中恢复这份文件。恢复会替换网页版里现有的全部数据。", title: "导出")
             }
             if let result {
                 Section("导出完成") {
