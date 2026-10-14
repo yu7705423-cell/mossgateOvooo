@@ -1118,6 +1118,7 @@ struct InteractSheet: View {
     @State private var b = ""
     @State private var amount = ""
     @State private var sub = "self"
+    @ObservedObject private var settingsModel = SettingsModel.shared
 
     private var amountValue: Double? {
         let t = amount.trimmingCharacters(in: .whitespaces)
@@ -1159,7 +1160,15 @@ struct InteractSheet: View {
                     TextField("礼物名称", text: $a)
                     TextField("里面是什么（可不填）", text: $b)
                 } footer: {
-                    Text(Interact.giftBlind() ? "对方拆开之前只看得到礼物名称。里面不填时与名称相同。" : "里面不填时与名称相同。")
+                    Text("里面不填时与名称相同。")
+                }
+                Section {
+                    Toggle("拆开前保密", isOn: SettingsModel.shared.bool("giftBlind", true))
+                } footer: {
+                    Text((SettingsModel.shared.s.raw["giftBlind"]?.bool != false
+                          ? "角色拆开之前不知道里面装的是什么，拆开后才会知道。"
+                          : "已关闭。角色收到时就知道里面是什么。")
+                         + "此设置对所有对话生效。对方送来的礼物不受影响，你始终是拆开后才看到内容。")
                 }
             case .takeout:
                 Section {
