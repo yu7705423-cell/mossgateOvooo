@@ -40,7 +40,7 @@ final class InnerVoiceTests: StoreTestCase {
 
     func testApartIsOneMoreRequest() async throws {
         try setMode("apart")
-        XCTAssertEqual(ExtraCalls.active(.load()).map(\.id), ["inner"])
+        XCTAssertEqual(ExtraCalls.switchedOn(.load()).map(\.id), ["inner"])
         MockNet.reset { _, n in .init(status: 200, body: MockNet.anthropicStream(n == 1 ? "好啊\n走吧" : "想多待一会儿")) }
         try await ChatEngine.reply(chatId: "chat_a") { _ in }
         XCTAssertEqual(MockNet.count, 2)
@@ -61,7 +61,7 @@ final class InnerVoiceTests: StoreTestCase {
     func testOffByDefault() throws {
         let chat = try XCTUnwrap(Repo.chat("chat_a"))
         XCTAssertEqual(InnerVoice.mode(chat), "off")
-        XCTAssertTrue(ExtraCalls.active(.load()).isEmpty)
+        XCTAssertTrue(ExtraCalls.switchedOn(.load()).isEmpty)
     }
 
     /// 翻译（随回复一起）：设了目标语言才写进提示词；译文挂在那一条上，不多调接口。

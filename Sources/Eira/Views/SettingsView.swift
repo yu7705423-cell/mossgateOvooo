@@ -90,10 +90,17 @@ struct ServicesView: View {
                 NavigationLink { ImageSettingsView() } label: {
                     status("生图", model.s.activeImage.map { "\($0.name) · \($0.model.isEmpty ? "未填模型" : $0.model)" }, model.s.imageReady ? "" : "未配置")
                 }
+                NavigationLink { VoiceSettingsView() } label: {
+                    status("语音合成", model.s.voiceEnabled ? model.s.activeVoice?.name : nil,
+                           !model.s.voiceEnabled ? "关闭" : model.s.voiceReady ? "" : "未填全")
+                }
             }
             Section("识别你发送的内容") {
                 NavigationLink { VisionSettingsView() } label: {
                     status("识图", model.s.visionMode == "api" ? model.s.visionPreset?.model : nil, visionValue)
+                }
+                NavigationLink { AsrSettingsView() } label: {
+                    status("语音识别", model.s.asrReady ? model.s.asrConfig["model"]?.string : nil, model.s.asrReady ? "" : "系统识别")
                 }
             }
         }
@@ -135,10 +142,15 @@ struct ServiceConnSection: View {
     @State private var resultIsError = false
 
     let preset: () -> ChatPreset?
+    /// 测试连接发的是一条对话请求。不是对话端点的（语音识别）不给这个按钮
+    var showTest = true
+    var endpointNote = "OpenAI 兼容的 chat/completions 端点。地址留空时使用 https://api.openai.com/v1，中转站填写至 /v1 为止。"
 
-    init(name: String, modelHint: String, preset: @escaping () -> ChatPreset?) {
+    init(name: String, modelHint: String, showTest: Bool = true, endpointNote: String? = nil, preset: @escaping () -> ChatPreset?) {
         self.name = name
         self.modelHint = modelHint
+        self.showTest = showTest
+        if let endpointNote { self.endpointNote = endpointNote }
         self.preset = preset
     }
 
@@ -162,8 +174,9 @@ struct ServiceConnSection: View {
         } header: {
             Text("接口")
         } footer: {
-            Text("OpenAI 兼容的 chat/completions 端点。地址留空时使用 https://api.openai.com/v1，中转站填写至 /v1 为止。选择已有的接口时，地址与密钥从那一套读取，模型仍在这里填写。\(modelHint)")
+            Text("\(endpointNote)选择已有的接口时，地址与密钥从那一套读取，模型仍在这里填写。\(modelHint)")
         }
+        if showTest {
         Section {
             Button(testing ? "连接中" : "测试连接", action: test).disabled(testing)
             if let result {
@@ -171,6 +184,7 @@ struct ServiceConnSection: View {
             }
         } footer: {
             Text("发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。")
+        }
         }
     }
 

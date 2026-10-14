@@ -2,7 +2,7 @@ import Foundation
 
 /// 一轮回复从头到尾：拼请求 → 发一次 → 切成几条 → 一条一条落库。照网页版 Conversation.js 的 generate 与 reply.js 的 renderTurn。
 ///
-/// 一轮只调一次接口（网页版第 15 条）。角色写的图片在配了生图接口时每张画一次（ImageGen）；语音、视频原生版还不能生成，
+/// 一轮只调一次接口（网页版第 15 条）。角色写的图片、语音在配了接口时每条生成一次（ImageGen、VoiceGen）；视频原生版还不能生成，
 /// 照网页版「没配接口」的样子落成 media 为 off 的消息，界面上显示文字描述，不另外调接口。
 enum ChatEngine {
     /// 每落一条调一次，界面据此刷新。
@@ -30,6 +30,11 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
+        // 关系底色：开着且 S 级记忆变过时重压一次。不等它：这一轮用旧的，下一轮是新的（默认关）
+        if !chat.isGroup && settings.raw["bondAuto"]?.bool == true {
+            let cid = char.id, pid = chat.personaId
+            Task.detached { await Bond.autoRun(charId: cid, personaId: pid) }
+        }
         let built: ChatPrompt.Built
         if chat.isGroup {
             // 一个能说话的都没有：不调接口。调了写出来的也一句都发不出去
@@ -161,8 +166,8 @@ enum ChatEngine {
         let parts = steps.map(\.part)
         var created: [Message] = []
         var sawSilence = false
-        // 角色写的 [图片：…] 在后台一张一张画，不挡着这一轮结束。中途停下也照样交出去：落库时已经占住了
-        defer { ImageGen.launch(created, onRow: onRow) }
+        // 角色写的 [图片：…]、[语音：…] 在后台一条一条生成，不挡着这一轮结束。中途停下也照样交出去：落库时已经占住了
+        defer { MediaJobs.launch(created, onRow: onRow) }
 
         for (i, step) in steps.enumerated() {
             let part = step.part
@@ -275,8 +280,11 @@ enum ChatEngine {
             m = make("voice", "[语音：\(p.text)]")
             m.row["voiceText"] = .string(p.text)
             m.row["audioId"] = .null
-            m.row["media"] = .string("off")
-            m.row["mediaError"] = .string("还没有配置语音接口")
+            let s = AppSettings.load()
+            let speak = VoiceGen.canSpeak(char, s)
+            m.row["media"] = .string(speak && draw ? "pending" : "off")
+            m.row["mediaError"] = .string(!s.voiceReady ? "还没有配置语音接口" : !speak ? "这个角色在当前语音接口上还没有配音色" : draw ? "" : "切换版本后未自动合成")
+            if speak && draw { _ = MediaJobs.claim(m.id) }
         case .sticker:
             let found = sticker(named: p.text)
             m = make("sticker", "[表情：\(found?.string("name") ?? p.text)]")

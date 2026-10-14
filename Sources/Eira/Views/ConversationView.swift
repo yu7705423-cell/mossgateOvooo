@@ -30,6 +30,8 @@ struct ConversationView: View {
     @State private var showSettings = false
     @State private var showStickers = false
     @State private var composing: InteractSheet.Kind?
+    @State private var recordingVoice = false
+    @State private var calling: Character?
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -37,11 +39,6 @@ struct ConversationView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if chat?.isGroup == true {
-                Text("原生版暂不支持群聊，消息只供查看。")
-                    .font(.footnote).foregroundStyle(Theme.secondaryText)
-                    .padding(Theme.gap)
-            }
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(spacing: Theme.gap) {
@@ -100,6 +97,13 @@ struct ConversationView: View {
         .navigationTitle(chat?.isGroup == true ? GroupChat.title(chat!, members: chat!.characterIds.compactMap { members[$0] }) : (char?.displayName ?? chat?.title ?? ""))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { calling = char } label: { Image(systemName: "phone") }
+                        .accessibilityLabel("语音通话")
+                        .disabled(busy)
+                }
+            }
             ToolbarItem(placement: .primaryAction) {
                 Button { showSettings = true } label: { Image(systemName: "ellipsis") }.accessibilityLabel("会话设置")
             }
@@ -136,6 +140,17 @@ struct ConversationView: View {
                     composing = nil
                 }
             }
+        }
+        .fullScreenCover(item: $calling) { c in
+            CallView(chatId: chatId, char: c) { reload() }
+        }
+        .sheet(isPresented: $recordingVoice) {
+            VoiceComposeView(chatId: chatId, quote: quoting) { m in
+                quoting = nil
+                if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } else { messages.append(m) }
+                turn = nil
+            }
+            .presentationDetents([.medium])
         }
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
@@ -183,6 +198,7 @@ struct ConversationView: View {
                 .accessibilityLabel("发送图片")
                 .disabled(busy)
                 Menu {
+                    Button { recordingVoice = true } label: { Label("语音", systemImage: "mic") }
                     Button { composing = .transfer } label: { Label("转账", systemImage: "yensign.circle") }
                     Button { composing = .gift } label: { Label("礼物", systemImage: "gift") }
                     Button { composing = .takeout } label: { Label("外卖", systemImage: "takeoutbag.and.cup.and.straw") }
@@ -311,6 +327,16 @@ struct ConversationView: View {
         case .react(let e):
             do { try Interact.toggleReaction(m.id, emoji: e, by: "me"); reload() }
             catch { problem = "回应未能保存：\(error.localizedDescription)" }
+        case .revoice:
+            var pending = m
+            pending.row["media"] = .string("pending")
+            pending.row["mediaError"] = .string("")
+            replace(pending)
+            Task {
+                do { _ = try await VoiceGen.regenerate(messageId: m.id) }
+                catch { await MainActor.run { problem = "重新合成失败：\(error.localizedDescription)" } }
+                await MainActor.run { reload() }
+            }
         case .redraw:
             // 用户点的，手动的一次：改回生成中再画
             var pending = m
@@ -581,7 +607,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice }
 
     let message: Message
     let char: Character?
@@ -615,7 +641,7 @@ struct MessageRow: View {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
@@ -710,8 +736,10 @@ struct MessageRow: View {
             imageCard
         case "clip":
             card(icon: "video", text: message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt"))
+        case "call":
+            CallCard(message: message)
         case "voice":
-            card(icon: "waveform", text: message.row.string("voiceText").isEmpty ? message.content : message.row.string("voiceText"))
+            VoiceBubble(message: message, mine: mine) { onAction?(.revoice) }
         case "location":
             card(icon: "mappin.and.ellipse", text: [message.row.string("place"), message.row.string("address")].filter { !$0.isEmpty }.joined(separator: " "))
         case "dice":

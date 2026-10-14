@@ -18,8 +18,12 @@ enum ChatPrompt {
     }
 
     /// excludeTurn：重新生成时去掉的那一轮，拿同样的前文重写一遍（网页版 streamReply 的 excludeTurn）。
-    static func build(chat: Chat, char: Character, settings s: AppSettings, now: Date = Date(),
-                      excludeTurn: String? = nil) throws -> Built {
+    /// call：通话时的两段规则（通话规则、语音台本）。给了就按「通话」那一份条目顺序拼，聊天记录后面不挂此刻的状态与召回。
+    static func build(chat chat0: Chat, char: Character, settings s: AppSettings, now: Date = Date(),
+                      excludeTurn: String? = nil, call: (rule: String, script: String)? = nil) throws -> Built {
+        var chat = chat0
+        // 通话里不让模型在台词后面夹译文：拼提示词时把这段对话的翻译摘掉（网页版 call.js 的 plain）
+        if call != nil { chat.row["translateTo"] = .string("") }
         let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
@@ -64,12 +68,16 @@ enum ChatPrompt {
         P["ban"] = banPiece(s)
         P["genderTail"] = gender
         P["inner"] = InnerVoice.piece(chat, settings: s)
-        let arranged = Layout.arrange("chat", pieces: P, settings: s, names: names)
+        if let call {
+            P["call"] = call.rule
+            P["callScript"] = call.script
+        }
+        let arranged = Layout.arrange(call == nil ? "chat" : "call", pieces: P, settings: s, names: names)
 
-        // 放在历史末尾的那一段：条目里排在聊天记录下面的（默认是「此刻的状态」），再加本轮相关记忆
+        // 放在历史末尾的那一段：条目里排在聊天记录下面的（默认是「此刻的状态」），再加本轮相关记忆。通话里没有这一段
         var tailParts: [String] = []
         if !arranged.tail.isEmpty { tailParts.append(arranged.tail) }
-        if memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
+        if call == nil && memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
 
         let (messages, seen) = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
                                        tailDepth: max(1, memoryDepth), lore: lore.deep)
@@ -283,7 +291,7 @@ enum ChatPrompt {
     }
 
     /// 能力一节。原生版只开回复解析认得的那几项。
-    /// 顺序照网页版 CAPS 数组：图片、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
+    /// 顺序照网页版 CAPS 数组：图片、语音、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner"]
 
@@ -310,6 +318,10 @@ enum ChatPrompt {
             line: "Send an image: write a line on its own, [图片：a description of the image\(en ? ", in English" : "")]") {
             [Templates.get("skeleton.image", settings: s), ImageGen.styleAsk(s), en ? Templates.get("skeleton.image-en", settings: s) : ""]
                 .filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        cap("voice", on: VoiceGen.canSpeak(char, s), hot: used(#"^voice$|[\[【]语音"#),
+            line: "Send a voice message: write a line on its own, [语音：what you say]") {
+            Templates.get("skeleton.voice", settings: s)
         }
         let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
                                                                    used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))

@@ -71,13 +71,13 @@ final class MemorySummaryTests: StoreTestCase {
         let r = await MemorySummary.autoRun(chatId: "chat_a")
         XCTAssertNil(r)
         XCTAssertEqual(MockNet.count, 0)
-        XCTAssertTrue(ExtraCalls.active(.load()).isEmpty)
+        XCTAssertTrue(ExtraCalls.switchedOn(.load()).isEmpty)
     }
 
     /// 接口一直失败：门槛到了只打一次；没攒够下一个间隔之前不再打；攒够了再打一次。
     func testAutoFailingOncePerInterval() async throws {
         try setSettings(["autoSummarizeInterval": .number(1)])
-        XCTAssertEqual(ExtraCalls.active(.load()).map(\.id), ["autoSummarize"])
+        XCTAssertEqual(ExtraCalls.switchedOn(.load()).map(\.id), ["autoSummarize"])
         MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
         _ = await MemorySummary.autoRun(chatId: "chat_a")
         XCTAssertEqual(MockNet.count, 1)

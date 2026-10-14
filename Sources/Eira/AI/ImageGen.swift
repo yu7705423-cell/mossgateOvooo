@@ -451,15 +451,6 @@ enum ImageGen {
         return await fill(messageId: messageId)
     }
 
-    /// 一轮里落下的几张，按顺序一张一张画，在后台跑，不挡着聊天。
-    static func launch(_ created: [Message], onRow: @escaping ChatEngine.OnRow) {
-        let ids = created.filter { $0.kind == "image" && $0.row.string("media") == "pending" }.map(\.id)
-        guard !ids.isEmpty else { return }
-        Task.detached {
-            for id in ids { if let m = await ImageGen.fill(messageId: id, queued: true) { onRow(m) } }
-        }
-    }
-
     private static func update(_ id: String, _ change: (inout Row) -> Void) throws -> Message? {
         guard var row = try Database.shared.get(Collections.messages, id: id) else { return nil }
         change(&row)
@@ -490,6 +481,20 @@ final class MediaJobs: @unchecked Sendable {
     static func isRunning(_ id: String) -> Bool {
         shared.lock.lock(); defer { shared.lock.unlock() }
         return shared.running.contains(id)
+    }
+
+    /// 一轮里落下的图与语音，按顺序一条一条生成，在后台跑，不挡着聊天。
+    static func launch(_ created: [Message], onRow: @escaping ChatEngine.OnRow) {
+        let jobs = created.filter { ($0.kind == "image" || $0.kind == "voice") && $0.row.string("media") == "pending" }
+            .map { (id: $0.id, kind: $0.kind) }
+        guard !jobs.isEmpty else { return }
+        Task.detached {
+            for job in jobs {
+                let m = job.kind == "image" ? await ImageGen.fill(messageId: job.id, queued: true)
+                                            : await VoiceGen.fill(messageId: job.id, queued: true)
+                if let m { onRow(m) }
+            }
+        }
     }
 }
 

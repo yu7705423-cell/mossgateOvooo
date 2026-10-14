@@ -35,7 +35,7 @@ final class ImageGenTests: StoreTestCase {
     /// 等后台那几张画完：不再有 pending。
     private func settle(_ chatId: String = "chat_a") async throws {
         for _ in 0..<100 {
-            let pending = try Repo.messages(chatId: chatId).contains { $0.kind == "image" && $0.row.string("media") == "pending" }
+            let pending = try Repo.messages(chatId: chatId).contains { MediaJobs.isRunning($0.id) }
             if !pending { return }
             try await Task.sleep(nanoseconds: 50_000_000)
         }
@@ -108,7 +108,7 @@ final class ImageGenTests: StoreTestCase {
         XCTAssertEqual(body["prompt"]?.string, "窗外的雨")
         XCTAssertNil(body["response_format"])
         XCTAssertNil(body["negative_prompt"])
-        let rows = try Repo.messages(chatId: "chat_a").filter { $0.kind == "image" && $0.role == .char }
+        let rows = try Repo.messages(chatId: "chat_a").filter { $0.kind == "image" && ["窗外的雨", "桌上的猫"].contains($0.row.string("prompt")) }
         XCTAssertEqual(rows.count, 2)
         for m in rows {
             XCTAssertEqual(m.row.string("media"), "done")
@@ -153,7 +153,7 @@ final class ImageGenTests: StoreTestCase {
     func testTranslateBeforeImage() async throws {
         try configure(image: ["kind": .string("openai"), "baseUrl": .string("https://img.test"), "apiKey": .string("k"),
                               "model": .string("m"), "promptLang": .string("translate")])
-        XCTAssertTrue(ExtraCalls.active(.load()).contains { $0.id == "imageTranslate" })
+        XCTAssertTrue(ExtraCalls.switchedOn(.load()).contains { $0.id == "imageTranslate" })
         MockNet.reset { r, _ in
             if r.url?.host == "img.test" { return .init(status: 200, body: #"{"data":[{"b64_json":"\#(Self.png)"}]}"#) }
             return .init(status: 500, body: "{}")

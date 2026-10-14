@@ -43,6 +43,21 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
+                NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
+            } header: {
+                Text("通话")
+            } footer: {
+                Text("通话每说一轮调用一次接口。总结默认开启：每通接通过、有对白的电话挂断时多调用一次（走副用接口），关闭后可在通话记录上手动生成。回复上限填 0 表示不限。")
+            }
+
+            Section {
+                Toggle("自动重压关系底色", isOn: model.bool("bondAuto", false))
+            } footer: {
+                Text("关系转折级记忆有增删改之后，下一次请求回复时把这些记忆重新压成「你们之间」的几句现状，多调用一次接口（走记忆接口，未单独配置时走副用）。失败当次记为已尝试，记忆再有变动才会再压。关闭后底色保持上一次的结果。")
+            }
+
+            Section {
                 Toggle("接口失败时自动换下一套", isOn: model.bool("chatFallback", false))
                 if s.chatFallback {
                     Stepper(s.failoverMax == 0 ? "最多再换：全部" : "最多再换：\(s.failoverMax) 套",
@@ -115,6 +130,15 @@ struct UsageLimitsView: View {
             "card.core": "生成核心设定",
             "vision": "识图",
             "api.test": "测试连接",
+            "image": "生图",
+            "image.translate": "生图提示词翻译",
+            "tts": "语音合成",
+            "asr": "语音识别",
+            "memory.bond": "压缩关系底色",
+            "memory.extract": "总结记忆",
+            "inner.voice": "心声单独生成",
+            "chat.call": "通话",
+            "call.summary": "通话总结",
         ][task] ?? task
     }
 }

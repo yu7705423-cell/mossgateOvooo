@@ -8,6 +8,8 @@ struct ExtraCall: Identifiable, Sendable {
     let label: String
     let isOn: @Sendable (AppSettings) -> Bool
     let when: @Sendable (AppSettings) -> String
+    /// 用户明确要求默认开着的例外（网页版 check-calls.mjs 的 ALLOW_ON）。其余一律默认关
+    var allowOn = false
 }
 
 enum ExtraCalls {
@@ -15,6 +17,9 @@ enum ExtraCalls {
         ExtraCall(id: "chatFallback", label: "接口失败时自动换下一套",
                   isOn: { $0.chatFallback && usableCount($0) > 1 },
                   when: { s in "当前这一套报错时改用下一套，最多再换 \(swapCount(s)) 套" }),
+        ExtraCall(id: "bondAuto", label: "自动重压关系底色",
+                  isOn: { $0.raw["bondAuto"]?.bool == true },
+                  when: { _ in "关系转折级记忆有增删改之后的第一条消息（走记忆接口，没单独配时走副用）" }),
         ExtraCall(id: "autoSummarize", label: "自动总结记忆",
                   isOn: { s in (s.raw["memoryEnabled"]?.bool ?? true)
                       && ["autoSummarizeInterval", "autoSummarizeMessages", "autoSummarizeChars"].contains { (s.raw[$0]?.number ?? 0) > 0 } },
@@ -33,12 +38,19 @@ enum ExtraCalls {
         ExtraCall(id: "imageTranslate", label: "生图提示词译成英文",
                   isOn: { $0.imageReady && $0.activeImage?.promptLang == "translate" },
                   when: { _ in "选了「生图前翻译」的生图接口，每张含中文的图在生成之前一次（走副用接口）" }),
+        // 默认开着：网页版用户明确要求的例外（每通接通过的电话挂断时一次）
+        ExtraCall(id: "callSummary", label: "通话结束后写总结",
+                  isOn: { $0.raw["callSummary"]?.bool != false },
+                  when: { _ in "每通接通过、有对白的电话挂断时一次（走副用接口）" }, allowOn: true),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),
     ]
 
     static func active(_ s: AppSettings) -> [ExtraCall] { all.filter { $0.isOn(s) } }
+
+    /// 开着的里面，不是「默认就开着」的那几项。
+    static func switchedOn(_ s: AppSettings) -> [ExtraCall] { active(s).filter { !$0.allowOn } }
 
     /// 填全了密钥与模型的对话接口有几套。
     static func usableCount(_ s: AppSettings) -> Int { s.chatPresets.filter(\.usable).count }

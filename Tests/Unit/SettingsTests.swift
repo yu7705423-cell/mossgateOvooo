@@ -168,7 +168,7 @@ final class SettingsTests: StoreTestCase {
     /// 登记的每一项，在默认设置下都是关着的（网页版 check-calls 的同一条）。
     func testExtraCallsOffByDefault() {
         let fresh = AppSettings(raw: [:])
-        XCTAssertTrue(ExtraCalls.active(fresh).isEmpty)
+        XCTAssertTrue(ExtraCalls.switchedOn(fresh).isEmpty)
         XCTAssertEqual(ExtraCalls.attemptsPerCall(fresh), 1)
     }
 
@@ -178,7 +178,7 @@ final class SettingsTests: StoreTestCase {
         let s = AppSettings.load()
         XCTAssertEqual(ExtraCalls.swapCount(s), 1)
         XCTAssertEqual(ExtraCalls.attemptsPerCall(s), 6)
-        XCTAssertEqual(ExtraCalls.active(s).count, 2)
+        XCTAssertEqual(ExtraCalls.switchedOn(s).count, 2)
     }
 
     // MARK: - 主题
