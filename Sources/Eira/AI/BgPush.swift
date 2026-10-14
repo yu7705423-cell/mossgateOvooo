@@ -290,6 +290,8 @@ final class BgPush: ObservableObject {
         let holds = holdsProactive
         Task.detached {
             await Proactive.tick(holds: holds)
+            // 角色每天写日记（默认关）：到点先占住当天再发，不挂在发消息前面
+            for c in (try? Repo.characters()) ?? [] where Diary.isAuto(c) { await Diary.ensureToday(c.id) }
             await MainActor.run { BgPush.shared.ticking = false }
         }
     }

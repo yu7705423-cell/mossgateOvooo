@@ -30,7 +30,10 @@ struct ChatSettingsView: View {
                 Toggle("置顶", isOn: $pinned)
                 Toggle("免打扰", isOn: $muted)
             }
-            if let c = chat, !c.isGroup, let charId = c.characterIds.first { ProactiveSection(charId: charId) }
+            if let c = chat, !c.isGroup, let charId = c.characterIds.first {
+                ProactiveSection(charId: charId)
+                DiaryAutoSection(charId: charId)
+            }
             Section {
                 Toggle("旁白", isOn: $narration)
             } footer: {

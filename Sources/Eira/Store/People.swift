@@ -38,6 +38,7 @@ enum People {
             }
         }
         for collection in byCharacter { try Database.shared.deleteAll(collection, where: id) }
+        try Diary.dropCharacter(id)
         try Database.shared.delete(Collections.characters, id: id)
     }
 

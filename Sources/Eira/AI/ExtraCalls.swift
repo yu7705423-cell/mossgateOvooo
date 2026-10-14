@@ -46,6 +46,10 @@ enum ExtraCalls {
         ExtraCall(id: "proactive", label: "角色主动发起对话",
                   isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["proactive"]?.bool == true } },
                   when: { s in "每个开了的角色按设定的间隔一次" + (BgPush.isOn(s) ? "；应用不在前台时由后台消息服务器代发" : "；只在应用打开时发送") }),
+        // 挂在角色身上（会话设置里）
+        ExtraCall(id: "diaryAuto", label: "角色每天写日记",
+                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["diaryAuto"]?.bool == true } },
+                  when: { _ in "每个开了的角色，每天到了设定时刻之后一次（走副用接口）；当天已经有一篇时不写，失败当天不再自动试" }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

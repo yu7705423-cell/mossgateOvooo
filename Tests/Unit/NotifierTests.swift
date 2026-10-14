@@ -39,8 +39,10 @@ final class NotifierTests: StoreTestCase {
         let body = #"{"results":[{"id":"r1","status":"done","chatId":"chat_a","charId":"char_a","text":"早"},{"id":"r2","status":"failed","charId":"char_a"}]}"#
         MockNet.reset { _, _ in .init(status: 200, body: body) }
         let before = try Repo.messages(chatId: "chat_a").count
-        XCTAssertEqual(try await Notifier.peekResults(), 1)
-        XCTAssertEqual(try await Notifier.peekResults(), 0)
+        let first = try await Notifier.peekResults()
+        let second = try await Notifier.peekResults()
+        XCTAssertEqual(first, 1)
+        XCTAssertEqual(second, 0)
         XCTAssertEqual(MockNet.requests.map { $0.url?.path ?? "" }, ["/results", "/results"])
         // 不落库：打开应用时照常取回
         XCTAssertEqual(try Repo.messages(chatId: "chat_a").count, before)

@@ -52,6 +52,7 @@ enum ChatPrompt {
             "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
             "time": timeBlock(char: char, msgs: all, settings: s, now: now),
             "recent": recentBlock(recent, now: now),
+            "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }

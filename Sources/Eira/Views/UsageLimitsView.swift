@@ -43,6 +43,12 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "日记带最近几天", value: model.number("diaryDays", 2), unit: "天", placeholder: "全部")
+            } footer: {
+                Text("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
+            }
+
+            Section {
                 NumberRow(title: "未读达到几条暂停主动发起对话", value: model.number("proactiveMaxUnread", 3), unit: "条", placeholder: "不限")
             } footer: {
                 Text("开了「主动发起对话」的角色，未读消息堆到这个条数后不再主动发，看过之后恢复。填 0 表示一直发。每个角色的开关在各自的会话设置里。")
@@ -146,6 +152,7 @@ struct UsageLimitsView: View {
             "chat.call": "通话",
             "call.summary": "通话总结",
             "chat.proactive": "主动发起对话",
+            "diary.write": "角色写日记",
         ][task] ?? task
     }
 }
