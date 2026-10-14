@@ -1,0 +1,39 @@
+import Foundation
+
+/// 会让「发一条消息」多打出去请求的那几项，只在这里登记（网页版 cost.js 的 EXTRA_CALLS，CLAUDE.md 第 15 条）。
+/// 「用量与上限」据此把账摆出来。原生版做到哪一项就登记哪一项，每一项在 AppSettings 里的默认值都必须是关着的
+/// （CostTests 核对）。
+struct ExtraCall: Identifiable, Sendable {
+    let id: String
+    let label: String
+    let isOn: @Sendable (AppSettings) -> Bool
+    let when: @Sendable (AppSettings) -> String
+}
+
+enum ExtraCalls {
+    static let all: [ExtraCall] = [
+        ExtraCall(id: "chatFallback", label: "接口失败时自动换下一套",
+                  isOn: { $0.chatFallback && usableCount($0) > 1 },
+                  when: { s in "当前这一套报错时改用下一套，最多再换 \(swapCount(s)) 套" }),
+        ExtraCall(id: "retryMax", label: "自动重试",
+                  isOn: { $0.retryMax > 0 },
+                  when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),
+    ]
+
+    static func active(_ s: AppSettings) -> [ExtraCall] { all.filter { $0.isOn(s) } }
+
+    /// 填全了密钥与模型的对话接口有几套。
+    static func usableCount(_ s: AppSettings) -> Int { s.chatPresets.filter(\.usable).count }
+
+    /// 开着换接口时最多再换几套。
+    static func swapCount(_ s: AppSettings) -> Int {
+        guard s.chatFallback else { return 0 }
+        let others = max(0, usableCount(s) - 1)
+        return s.failoverMax == 0 ? others : min(others, s.failoverMax)
+    }
+
+    /// 失败时一次调用最多变成几个请求：重试与换接口是相乘的。
+    static func attemptsPerCall(_ s: AppSettings) -> Int {
+        (s.retryMax + 1) * (swapCount(s) + 1)
+    }
+}

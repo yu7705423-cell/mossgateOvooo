@@ -41,7 +41,7 @@ struct ApiSettingsView: View {
             }
         }
         .navigationTitle("接口")
-        .sheet(item: $editing, onDismiss: { settings = AppSettings.load() }) { target in
+        .sheet(item: $editing, onDismiss: { settings = AppSettings.load(); SettingsModel.shared.reload() }) { target in
             NavigationStack {
                 PresetEditor(presetId: target.id, isNew: target.isNew)
             }
@@ -74,6 +74,9 @@ struct PresetEditor: View {
     @State private var isFallback = false
     @State private var confirmDelete = false
     @State private var problem: String?
+    @State private var testing = false
+    @State private var testResult: String?
+    @State private var testOk = false
 
     var body: some View {
         Form {
@@ -95,6 +98,14 @@ struct PresetEditor: View {
                 Text("地址、密钥与模型")
             } footer: {
                 Text("地址留空时使用该格式的官方地址。密钥只保存在本机。")
+            }
+            Section {
+                Button(testing ? "连接中" : "测试连接", action: test).disabled(testing)
+                if let testResult {
+                    Text(testResult).font(.footnote).foregroundStyle(testOk ? Theme.secondaryText : Theme.danger)
+                }
+            } footer: {
+                Text("用当前填写的内容发送一次极短的请求，确认地址、密钥与模型可用。计入当天的请求次数。")
             }
             Section {
                 Toggle("设为主用", isOn: $isMain)
@@ -121,6 +132,22 @@ struct PresetEditor: View {
         .onAppear(perform: load)
     }
 
+    private func test() {
+        let p = ChatPreset(json: [
+            "id": .string(presetId), "name": .string(name), "provider": .string(provider),
+            "baseUrl": .string(baseUrl.trimmingCharacters(in: .whitespaces)),
+            "apiKey": .string(apiKey.trimmingCharacters(in: .whitespacesAndNewlines)),
+            "model": .string(model.trimmingCharacters(in: .whitespaces)),
+        ])
+        guard p.usable else { testResult = "密钥或模型未填写。"; testOk = false; return }
+        testing = true
+        testResult = nil
+        Task {
+            let (text, ok) = await ConnTest.run(p)
+            await MainActor.run { testResult = text; testOk = ok; testing = false }
+        }
+    }
+
     private var chatJSON: [String: JSONValue] {
         AppSettings.load().raw["services"]?.object?["chat"]?.object ?? [:]
     }
@@ -134,7 +161,7 @@ struct PresetEditor: View {
     }
 
     private func save() {
-        var s = AppSettings.load()
+        guard var s = try? AppSettings.loadForWrite() else { problem = "设置读取失败，未保存。"; return }
         var services = s.raw["services"]?.object ?? [:]
         var chat = services["chat"]?.object ?? [:]
         var list = chat["presets"]?.array ?? []
@@ -167,7 +194,7 @@ struct PresetEditor: View {
     }
 
     private func remove() {
-        var s = AppSettings.load()
+        guard var s = try? AppSettings.loadForWrite() else { problem = "设置读取失败，未删除。"; return }
         var services = s.raw["services"]?.object ?? [:]
         var chat = chatJSON
         chat["presets"] = .array((chat["presets"]?.array ?? []).filter { $0["id"]?.string != presetId })

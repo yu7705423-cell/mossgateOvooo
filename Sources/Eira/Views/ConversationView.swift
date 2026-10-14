@@ -292,6 +292,7 @@ struct ConversationView: View {
                     let imageId = try Images.save(data)
                     let m = try ChatEngine.sendImage(imageId: imageId, chatId: id)
                     await MainActor.run { messages.append(m); turn = nil }
+                    if m.row.string("vision") == "pending" { describe(m.id) }
                 } catch {
                     failed += 1
                     lastError = error.localizedDescription
@@ -299,6 +300,18 @@ struct ConversationView: View {
             }
             let summary = failed > 0 ? "有 \(failed) 张图片未能发送：\(lastError)" : nil
             await MainActor.run { problem = summary }
+        }
+    }
+
+    /// 识图选了单独的接口时，发出去的图在后台读成描述。读不出来照样是一张图，只是角色不知道图上有什么，在屏幕上写明。
+    private func describe(_ messageId: String) {
+        Task {
+            do {
+                guard let m = try await Vision.describe(messageId: messageId) else { return }
+                await MainActor.run { if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } }
+            } catch {
+                await MainActor.run { problem = "识图失败，角色看不到这张图的内容：\(error.localizedDescription)" }
+            }
         }
     }
 

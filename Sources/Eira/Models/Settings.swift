@@ -45,6 +45,12 @@ struct AppSettings: Sendable {
         AppSettings(raw: (try? Database.shared.kv(KVKey.settings))?.object ?? [:])
     }
 
+    /// 要改了再写回去的地方用这个：读失败时抛出，而不是拿空的设置顶上 —— 拿空的写回去会把接口与密钥全部抹掉
+    /// （网页版第 20 条：开机不许拿读失败时的默认值回写）。
+    static func loadForWrite() throws -> AppSettings {
+        AppSettings(raw: try Database.shared.kv(KVKey.settings)?.object ?? [:])
+    }
+
     func save() throws {
         try Database.shared.setKV(KVKey.settings, .object(raw))
     }
@@ -72,9 +78,47 @@ struct AppSettings: Sendable {
         return chatPresets.first { $0.id == id }
     }
 
+    /// 自建的接口来源与聊天预设共用一个 id 空间：服务记着 endpointId 时，地址与密钥从那一条上取，模型仍是服务自己的
+    /// （网页版 services.js 的 resolved / sourceOf）。指向的那条删掉了就用服务自己填的。
+    func service(_ name: String) -> [String: JSONValue] {
+        var cfg = services[name]?.object ?? [:]
+        guard let id = cfg["endpointId"]?.string, !id.isEmpty else { return cfg }
+        let own = services["endpoints"]?.array?.first { $0["id"]?.string == id }?.object
+        let src = own ?? (chat["presets"]?.array?.first { $0["id"]?.string == id }?.object)
+        if let src {
+            cfg["baseUrl"] = src["baseUrl"] ?? .string("")
+            cfg["apiKey"] = src["apiKey"] ?? .string("")
+        }
+        return cfg
+    }
+
+    /// 改 services 里的一项，只动给出的几个字段。
+    mutating func setService(_ name: String, _ patch: [String: JSONValue]) {
+        var all = services
+        var cfg = all[name]?.object ?? [:]
+        cfg.merge(patch) { _, new in new }
+        all[name] = .object(cfg)
+        raw["services"] = .object(all)
+    }
+
+    struct Source: Identifiable, Sendable {
+        let id: String
+        let name: String
+    }
+
+    /// 可以指过去的来源：自建的接口在前，聊天预设在后。
+    var endpointSources: [Source] {
+        let own = (services["endpoints"]?.array ?? []).compactMap { e -> Source? in
+            guard let id = e["id"]?.string else { return nil }
+            return Source(id: id, name: e["name"]?.string ?? "未命名")
+        }
+        return own + chatPresets.map { Source(id: $0.id, name: $0.name.isEmpty ? "未命名接口" : $0.name) }
+    }
+
     /// 记忆接口：mode 是 'api' 且填全了才用，否则跟副用。
     var memoryPreset: ChatPreset? {
-        guard let m = services["memory"]?.object, m["mode"]?.string == "api" else { return nil }
+        let m = service("memory")
+        guard m["mode"]?.string == "api" else { return nil }
         var json = m
         json["id"] = .string("memory")
         json["name"] = .string("记忆接口")
@@ -97,10 +141,30 @@ struct AppSettings: Sendable {
     }
 
     /// 识图：'chat' 是把图原样交给聊天模型，'api' 是另一套识图接口，其余是关（网页版 services.js 的 visionMode）。
-    /// 原生版还没有单独的识图接口，'api' 按关处理。
     var visionMode: String {
-        services["vision"]?.object?["mode"]?.string == "chat" ? "chat" : "off"
+        let m = services["vision"]?.object?["mode"]?.string
+        return m == "chat" || m == "api" ? m! : "off"
     }
+
+    /// 单独的识图接口。OpenAI 兼容，填全了密钥与模型才有。
+    var visionPreset: ChatPreset? {
+        var json = service("vision")
+        json["id"] = .string("vision")
+        json["name"] = .string("识图接口")
+        json["provider"] = .string("openai")
+        json["temperature"] = .null
+        let p = ChatPreset(json: json)
+        return p.usable ? p : nil
+    }
+
+    /// 图片到底能不能被看见。
+    var visionActive: Bool { visionMode == "chat" || (visionMode == "api" && visionPreset != nil) }
+
+    /// 深色或浅色（网页版 settings.theme，light | dark）。
+    var theme: String { raw["theme"]?.string == "dark" ? "dark" : "light" }
+    /// 跟随系统是原生版自己的一项，另存一个键，不往 theme 里写网页版不认得的值。
+    /// 没存过 theme 的（新装、从空白开始）默认跟随系统；导入的备份里有 theme 就照它。
+    var themeFollowsSystem: Bool { raw["themeFollowSystem"]?.bool ?? (raw["theme"] == nil) }
 
     // MARK: - 预设（网页版 presets.js）
 

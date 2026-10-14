@@ -181,6 +181,30 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 登记过的图片与文件一共多大，字节。
+    func mediaBytes() throws -> Int {
+        try queue.sync {
+            try query("SELECT COALESCE(SUM(bytes), 0) FROM media", []) { Int(sqlite3_column_int64($0, 0)) }.first ?? 0
+        }
+    }
+
+    /// 清空全部数据（网页版 backup.js 的 wipeAll）：全部记录、图片与文件的登记、我的人设与主屏布局。
+    /// 设置（接口配置与密钥）留着。图片与文件本身由调用方在这之后删掉。
+    func wipe() throws {
+        try queue.sync {
+            try exec("BEGIN IMMEDIATE")
+            do {
+                try exec("DELETE FROM records")
+                try exec("DELETE FROM media")
+                try run("DELETE FROM kv WHERE k IN (?, ?)", [KVKey.persona, KVKey.layout])
+                try exec("COMMIT")
+            } catch {
+                try? exec("ROLLBACK")
+                throw error
+            }
+        }
+    }
+
     // MARK: - kv
 
     func kv(_ key: String) throws -> JSONValue? {

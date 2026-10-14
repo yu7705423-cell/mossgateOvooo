@@ -29,13 +29,14 @@ actor AIService {
 
     /// - Parameters:
     ///   - task: 任务名，和网页版一致（chat.reply、memory.extract……），记账和挑接口都看它
-    ///   - group: 任务组（settings.taskRoutes 的键），没有就传 nil
+    ///   - group: 任务组（settings.taskRoutes 的键）。不传时按任务名在 RouteGroup 里找
+    ///   - preset: 指定只用这一套（识图接口、测试连接）。给了就不挑、也不换
     ///   - retries: 这件事最多值得重试几次。实际次数还要和用户的 retryMax 取小
-    func send(task: String, group: String? = nil, system: String, messages: [AIMessage],
+    func send(task: String, group: String? = nil, preset only: ChatPreset? = nil, system: String, messages: [AIMessage],
               maxTokens: Int = 0, retries: Int = 0,
               onDelta: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Result {
         let settings = AppSettings.load()
-        let chain = Self.chain(task: task, group: group, settings: settings)
+        let chain = only.map { $0.usable ? [$0] : [] } ?? Self.chain(task: task, group: group ?? RouteGroup.of(task: task), settings: settings)
         guard !chain.isEmpty else {
             Diagnostics.shared.record("request-skipped", ["task": task, "reason": "没有可用的接口"])
             throw AIError(status: nil, message: "没有可用的接口。请在「设置 - 接口」中填写密钥与模型。")

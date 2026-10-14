@@ -266,11 +266,12 @@ enum ChatEngine {
     }
 
     /// 用户发一张图（已经由 Images.save 存好）。content 写 `[图片]`，和网页版存的一样；
-    /// 识图交给聊天模型时标成待看，下一次请求带上原图。
+    /// 识图交给聊天模型时标成待看，下一次请求带上原图；选了单独的识图接口时标成 pending，由 Vision.describe 读成描述。
     static func sendImage(imageId: String, chatId: String) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[图片]", kind: "image")
         m.row["imageId"] = .string(imageId)
-        m.row["vision"] = .string(AppSettings.load().visionMode == "chat" ? "chat" : "off")
+        let s = AppSettings.load()
+        m.row["vision"] = .string(s.visionMode == "chat" ? "chat" : (s.visionMode == "api" && s.visionPreset != nil) ? "pending" : "off")
         m = try Repo.append(m)
         if var c = try Repo.chat(chatId) {
             c.row["lastMessageAt"] = .number(Date().millis)

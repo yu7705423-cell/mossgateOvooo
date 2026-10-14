@@ -38,7 +38,7 @@ enum BackupExporter {
         ]
         if let persona = try db.kv(KVKey.persona) { data["persona"] = persona.any }
         if let layout = try db.kv(KVKey.layout) { data["layout"] = layout.any }
-        data["settings"] = JSONValue.object(sanitizedSettings(keys: o.keys)).any
+        data["settings"] = JSONValue.object(try sanitizedSettings(keys: o.keys)).any
 
         var rows = 0
         let collections = try db.collections()
@@ -87,8 +87,8 @@ enum BackupExporter {
 
     /// 不含密钥时：去掉接口与密钥；GitHub 备份的令牌与口令、后台消息的通知通道一律清空（网页版 build 的同一段）。
     /// 含密钥时：GitHub 备份的口令照样不进文件。
-    static func sanitizedSettings(keys: Bool) -> [String: JSONValue] {
-        var s = AppSettings.load().raw
+    static func sanitizedSettings(keys: Bool) throws -> [String: JSONValue] {
+        var s = try AppSettings.loadForWrite().raw
         if case .object(var gh)? = s["githubBackup"] {
             gh["password"] = .string("")
             if !keys { gh["token"] = .string("") }

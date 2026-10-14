@@ -91,7 +91,7 @@ enum People {
     }
 
     static func setActivePersona(_ id: String) throws {
-        var s = AppSettings.load()
+        var s = try AppSettings.loadForWrite()
         s.raw["activePersonaId"] = .string(id)
         try s.save()
     }

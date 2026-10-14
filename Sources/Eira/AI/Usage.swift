@@ -10,7 +10,10 @@ actor Usage {
     private static let keepDays = 60
 
     func note(task: String) {
-        var all = (try? Database.shared.kv(Self.key))?.object ?? [:]
+        // 读不出来就不写：拿空的写回去会把前几天的账一起抹掉（网页版第 20 条）
+        var all: [String: JSONValue]
+        do { all = (try Database.shared.kv(Self.key))?.object ?? [:] }
+        catch { Problems.report("用量记录读取失败，这一次未计入：\(error.localizedDescription)"); return }
         let day = Self.today()
         var counts = all[day]?.object ?? [:]
         counts[task] = .number((counts[task]?.number ?? 0) + 1)
@@ -26,6 +29,12 @@ actor Usage {
         let counts = (try? Database.shared.kv(Self.key))?[Self.today()]?.object ?? [:]
         if let task { return Int(counts[task]?.number ?? 0) }
         return Int(counts.values.compactMap(\.number).reduce(0, +))
+    }
+
+    /// 今天每个任务各几次。
+    func todayByTask() -> [String: Int] {
+        let counts = (try? Database.shared.kv(Self.key))?[Self.today()]?.object ?? [:]
+        return counts.compactMapValues { $0.number.map { Int($0) } }
     }
 
     static func today() -> String {
