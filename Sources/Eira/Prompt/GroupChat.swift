@@ -43,8 +43,106 @@ enum GroupChat {
         return chat.row.bool("muteAll") && role(chat, id) == "member"
     }
 
+    /// 这一刻说得了话的成员。封存的角色在群里也不再发言（网页版 4.557）
     static func speaking(_ chat: Chat, members: [Character]) -> [Character] {
-        members.filter { !isMuted(chat, $0.id) }
+        members.filter { !isMuted(chat, $0.id) && !$0.archived }
+    }
+
+    // MARK: - 你来管（网页版 setAdmin / setNick / mute / unmute / setMuteAll；你是群主）
+
+    static let roleLabel = ["owner": "群主", "admin": "管理员", "member": ""]
+    /// 禁言时长档（分钟），0 为一直禁到解除
+    static let muteSteps: [(minutes: Int, label: String)] = [(10, "10 分钟"), (60, "1 小时"), (720, "12 小时"), (1440, "1 天"), (0, "一直禁言")]
+
+    static func durationText(_ m: Int) -> String {
+        if m == 0 { return "" }
+        if m % 1440 == 0 { return "\(m / 1440) 天" }
+        if m % 60 == 0 { return "\(m / 60) 小时" }
+        return "\(m) 分钟"
+    }
+
+    private static func meName(_ chat: Chat) -> String {
+        let n = nick(chat, me)
+        if !n.isEmpty { return n }
+        let personas = (try? Repo.personas()) ?? []
+        return personas.first(where: { $0.id == chat.personaId })?.name ?? ((try? Repo.activePersona())?.name ?? "我")
+    }
+
+    private static func nameOf(_ chat: Chat, _ id: String) -> String {
+        if id == me { return meName(chat) }
+        guard let c = try? Repo.character(id) else { return "某人" }
+        return nameIn(chat, c)
+    }
+
+    /// 改一处，落一行提示（你点的，记在你名下）
+    private static func change(_ chatId: String, _ note: (Chat) -> String, _ edit: (inout Row) -> Void) throws {
+        guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
+        let text = note(chat)
+        var c = chat
+        edit(&c.row)
+        c.row.touch()
+        try Repo.save(c)
+        if !text.isEmpty {
+            _ = try Repo.append(Message.new(chatId: chatId, role: .user, authorId: me, content: "[\(text)]", kind: "notice"))
+        }
+        NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+    }
+
+    static func setAdmin(_ chatId: String, _ id: String, _ on: Bool) throws {
+        try change(chatId, { c in on ? "\(meName(c))将\(nameOf(c, id))设为管理员" : "\(meName(c))取消了\(nameOf(c, id))的管理员身份" }) { r in
+            var list = (r["admins"]?.array ?? []).filter { $0.string != id }
+            if on { list.append(.string(id)) }
+            r["admins"] = .array(list)
+        }
+    }
+
+    /// 改群昵称，空串是清掉。你的自己的也在这里改（id 为 me）
+    static func setNick(_ chatId: String, _ id: String, _ value: String) throws {
+        let v = String(value.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(20))
+        guard let chat = try Repo.chat(chatId), v != nick(chat, id) else { return }
+        try change(chatId, { c in
+            let who = meName(c)
+            if id == me { return v.isEmpty ? "\(who)清除了自己的群昵称" : "\(who)将群昵称改为「\(v)」" }
+            return v.isEmpty ? "\(who)清除了\(nameOf(c, id))的群昵称" : "\(who)将\(nameOf(c, id))的群昵称改为「\(v)」"
+        }) { r in
+            var nicks = r["nicks"]?.object ?? [:]
+            if v.isEmpty { nicks.removeValue(forKey: id) } else { nicks[id] = .string(v) }
+            r["nicks"] = .object(nicks)
+        }
+    }
+
+    static func mute(_ chatId: String, _ id: String, minutes: Int) throws {
+        let m = max(0, minutes)
+        try change(chatId, { c in "\(meName(c))将\(nameOf(c, id))禁言" + (m > 0 ? " " + durationText(m) : "") }) { r in
+            var mutes = r["mutes"]?.object ?? [:]
+            mutes[id] = .number(m > 0 ? Date().millis + Double(m) * 60_000 : 0)
+            r["mutes"] = .object(mutes)
+        }
+    }
+
+    static func unmute(_ chatId: String, _ id: String) throws {
+        guard let chat = try Repo.chat(chatId), chat.row["mutes"]?[id] != nil else { return }
+        try change(chatId, { c in "\(meName(c))解除了\(nameOf(c, id))的禁言" }) { r in
+            var mutes = r["mutes"]?.object ?? [:]
+            mutes.removeValue(forKey: id)
+            r["mutes"] = .object(mutes)
+        }
+    }
+
+    static func setMuteAll(_ chatId: String, _ on: Bool) throws {
+        guard let chat = try Repo.chat(chatId), chat.row.bool("muteAll") != on else { return }
+        try change(chatId, { c in "\(meName(c))\(on ? "开启" : "关闭")了全员禁言" }) { $0["muteAll"] = .bool(on) }
+    }
+
+    /// 还要禁多久的说明：没禁言为空
+    static func muteText(_ chat: Chat, _ id: String, now: Double = Date().millis) -> String {
+        guard let until = chat.row["mutes"]?[id]?.number else {
+            return chat.row.bool("muteAll") && role(chat, id) == "member" ? "全员禁言中" : ""
+        }
+        if until == 0 { return "禁言中" }
+        guard until > now else { return "" }
+        let mins = Int(((until - now) / 60_000).rounded(.up))
+        return "禁言中，还有 " + (mins >= 60 ? "\(mins / 60) 小时" : "\(mins) 分钟")
     }
 
     // MARK: - @

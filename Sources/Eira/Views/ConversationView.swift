@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import UniformTypeIdentifiers
 
 /// 一段一对一会话。
 ///
@@ -46,6 +47,9 @@ struct ConversationView: View {
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
     @State private var dicing = false
+    /// 加号面板的分享音乐、发文件
+    @State private var songPicking = false
+    @State private var filePicking = false
     @State private var typingPhoto = false
     @State private var bindingSticker: Message?
     @State private var innerCardFor: String?
@@ -259,6 +263,14 @@ struct ConversationView: View {
 
     private func withEditors<V: View>(_ base: V) -> some View {
         base
+        .sheet(isPresented: $songPicking) {
+            NavigationStack { SongPickView(chatId: chatId) { songPicking = false; reload() } }
+        }
+        .documentPicker(isPresented: $filePicking, types: ChatFiles.exts.compactMap { UTType(filenameExtension: $0) }) { urls in
+            guard let url = urls.first else { return }
+            do { try ChatFiles.send(url, chatId: chatId); reload() }
+            catch { problem = "文件未能发送：\(error.localizedDescription)" }
+        }
         .sheet(item: $editing) { m in
             NavigationStack {
                 EditMessageView(message: m) { saved in
@@ -533,6 +545,7 @@ struct ConversationView: View {
             .disabled(isBusy)
             panelButton("mic", "语音") { recordingVoice = true }
             panelButton("grid", "骰子") { dicing = true }
+            panelButton("music", "分享音乐") { songPicking = true }
             // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
             if chat?.isGroup == false {
                 panelButton("headphone", "一起听") {
@@ -543,6 +556,7 @@ struct ConversationView: View {
                 panelButton("bag", "外卖") { composing = .takeout }
                 panelButton("map", "位置") { composing = .location }
                 panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
+                panelButton("folder", "文件") { filePicking = true }
             }
             if let chat, chat.isGroup {
                 Menu {
@@ -1022,6 +1036,9 @@ struct ConversationView: View {
             deleting = m
         case .copySong:
             UIPasteboard.general.string = m.row.string("songQuery").isEmpty ? m.content : m.row.string("songQuery")
+        case .saveAlbum:
+            let who = m.role == .user ? "我" : (speaker(of: m)?.displayName ?? "")
+            do { try Album.saveFrom(m, name: who); notice = "已存入相册" } catch { problem = error.localizedDescription }
         case .remember:
             guard let chat else { return }
             do {
@@ -1420,7 +1437,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum }
 
     let message: Message
     let char: Character?
@@ -1465,6 +1482,9 @@ struct MessageRow: View {
     @State private var tick = false
     /// 撤回的那一条点一下看原文
     @State private var reveal = false
+    /// 点开的那张特殊消息卡（看全文）
+    @State private var cardBody: SpecialCards.Face?
+    @Environment(\.openURL) private var openURL
     /// 这一张图此刻正在画（应用这次打开以来发出去的）
     @State private var drawing = true
     /// 心声默认藏着，点角色头像才展开（同一轮任意一条的头像都行）
@@ -1501,6 +1521,10 @@ struct MessageRow: View {
                         centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复")
                     case "notice":
                         centered(Self.unbracket(message.content))
+                    case "side":
+                        sideLine(SpecialCards.sideLabel(message) ?? "")
+                    case let k where SpecialCards.kinds.contains(k):
+                        bubbleRow
                     default:
                         centered(message.content)
                     }
@@ -1579,6 +1603,10 @@ struct MessageRow: View {
         }
         if !mine && message.kind == "image" && SettingsModel.shared.s.imageReady && !message.row.string("prompt").isEmpty {
             Button { onAction?(.redraw) } label: { Label("重画图片", systemImage: "arrow.clockwise") }
+        }
+        // 存相册（网页版 MsgMenu 的 keep）：存的是同一张图，不另压一份
+        if (message.kind == "image" && !message.imageId.isEmpty) || (message.kind == "sticker" && !message.row.string("stickerId").isEmpty) {
+            Button { onAction?(.saveAlbum) } label: { Label("存相册", systemImage: "photo.on.rectangle") }
         }
         if !MessageActions.bodyText(message).isEmpty {
             Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
@@ -1744,6 +1772,8 @@ struct MessageRow: View {
         case "forward":
             ForwardCard(message: message)
                 .onTapGesture { onAction?(.openForward) }
+        case let k where SpecialCards.kinds.contains(k):
+            if let face = SpecialCards.face(message) { specialCard(face) } else { bubble(message.content) }
         default:
             // 正则替换里「屏幕上显示」的那一份；只显示译文时正文位置换成译文。按空行拆成几个气泡（网页版 splitBubbles）
             let shown = swapTrans ? translation : RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s)
@@ -1797,6 +1827,59 @@ struct MessageRow: View {
             .foregroundStyle(b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText))
             .background(b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), in: RoundedRectangle(cornerRadius: b.radius, style: .continuous))
             .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
+    }
+
+    /// 原生版还没有对应 app 的消息（约定、信、申请、出行、商城、纸条……）：一张只读的卡，点开看全文
+    private func specialCard(_ f: SpecialCards.Face) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top, spacing: Theme.gap) {
+                Image(systemName: f.icon).foregroundStyle(Theme.secondaryText).frame(width: 20)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(f.title).font(.system(size: Theme.bubbleFont, weight: .medium)).foregroundStyle(Theme.bubbleTheirsText)
+                    if !f.detail.isEmpty {
+                        Text(f.detail).font(.system(size: 13)).foregroundStyle(Theme.text2).lineLimit(3)
+                    }
+                }
+            }
+            if !f.foot.isEmpty {
+                Text(f.foot).font(.system(size: 11)).foregroundStyle(Theme.text3)
+            }
+        }
+        .frame(minWidth: 160, maxWidth: 260, alignment: .leading)
+        .padding(Theme.pad)
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !f.body.isEmpty else { return }
+            if f.body.hasPrefix("http"), let url = URL(string: f.body) { openURL(url) } else { cardBody = f }
+        }
+        .sheet(item: Binding(get: { cardBody.map { CardBody(face: $0) } }, set: { cardBody = $0?.face })) { b in
+            NavigationStack {
+                ScrollView {
+                    Text(b.face.body).font(.body).foregroundStyle(Theme.text).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(Theme.pad)
+                }
+                .navigationTitle(b.face.title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { cardBody = nil } } }
+            }
+        }
+    }
+
+    private struct CardBody: Identifiable {
+        let face: SpecialCards.Face
+        var id: String { face.title + face.body }
+    }
+
+    /// 线上与线下之间的分界线
+    private func sideLine(_ text: String) -> some View {
+        HStack(spacing: Theme.sp2) {
+            Rectangle().fill(Theme.text3.opacity(0.4)).frame(height: 1)
+            Text(text).font(.system(size: 12)).foregroundStyle(Theme.text3).fixedSize()
+            Rectangle().fill(Theme.text3.opacity(0.4)).frame(height: 1)
+        }
+        .padding(.horizontal, Theme.pad * 2).padding(.vertical, Theme.sp2)
     }
 
     /// 骰子：点数，加一行「骰子」或「N 面骰」

@@ -715,3 +715,51 @@ struct ListenBar: View {
         .background(Theme.groupedBackground)
     }
 }
+
+/// 会话加号面板的「分享音乐」（网页版 SongCard.js 的 SongPicker）：搜一首，点一下就发进这段会话
+struct SongPickView: View {
+    let chatId: String
+    var done: () -> Void
+    @State private var key = ""
+    @State private var results: [NeTrack] = []
+    @State private var searching = false
+    @State private var problem: String?
+
+    var body: some View {
+        List {
+            TextField("搜索歌曲、歌手", text: $key).submitLabel(.search).onSubmit(run)
+            if searching { ProgressView() }
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+            ForEach(Array(results.enumerated()), id: \.offset) { _, t in
+                Button {
+                    do {
+                        let song = try MusicLibrary.fromNetease(t)
+                        _ = try MusicListen.share(song, chatId: chatId)
+                        NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+                        done()
+                    } catch { problem = "未能分享：\(error.localizedDescription)" }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(t.title).foregroundStyle(Theme.text)
+                        Text([t.artist, t.album].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.text3)
+                    }
+                }
+            }
+        }
+        .navigationTitle("分享音乐")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", action: done) } }
+    }
+
+    private func run() {
+        let k = key.trimmingCharacters(in: .whitespaces)
+        guard !k.isEmpty else { return }
+        searching = true
+        problem = nil
+        Task {
+            do { results = try await Netease.search(k); if results.isEmpty { problem = "没有匹配的歌曲" } }
+            catch { problem = "搜索失败：\(error.localizedDescription)" }
+            searching = false
+        }
+    }
+}

@@ -86,6 +86,7 @@ struct AppHost: View {
         case "diary": NavigationStack { DiaryHomeView() }
         case "daily": NavigationStack { DailyHomeView() }
         case "music": NavigationStack { MusicHomeView() }
+        case "album": NavigationStack { AlbumHomeView() }
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }

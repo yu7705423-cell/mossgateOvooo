@@ -130,12 +130,15 @@ enum ChatPrompt {
 
         var out: [AIMessage] = []
         var prev: Message?
+        let lastFile = ChatFiles.lastWithText(window)
         for raw in window {
             // 正则替换里「发给角色的」那一份（存着的原文不动）
             let m = RegexRules.promptMessage(raw, chat: chat, settings: s)
             var text = (stampOn ? timeLine(m, prev) : "") + withQuote(m, byId)
             // 分享的歌带上歌词（「用量与上限」里可以关、可以只带前几句）
             if m.kind == "song" { text += songLyric(m, s) }
+            // 文件：只有最近一份带正文，更早的只带文件名（网页版 4.271）
+            if m.id == lastFile && !m.isRecalled { text += "\n" + ChatFiles.body(m, s) }
             if m.isRecalled && m.role == .user {
                 let seen = m.row["recalled"]?["seen"]?.bool ?? false
                 text = seen ? "[撤回了一条消息：\(m.content)]" : "[撤回了一条消息]"

@@ -49,7 +49,7 @@ struct ChatListView: View {
                                             .font(.system(size: 11)).foregroundStyle(Theme.text3)
                                     }
                                     HStack(spacing: Theme.sp2) {
-                                        Text(item.preview).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1)
+                                        Text((item.chat.muted ? "[免打扰] " : "") + item.preview).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1)
                                         Spacer(minLength: 0)
                                         if item.chat.unread > 0 {
                                             Text(item.chat.unread > 99 ? "99+" : "\(item.chat.unread)")
@@ -66,6 +66,28 @@ struct ChatListView: View {
                             .frame(minHeight: 62 - 2 * Theme.sp3)
                         }
                         .eiraRow()
+                        // 长按（网页版 MessagesTab 的 PopMenu）：置顶、已读未读、免打扰、取下美化、删除
+                        .contextMenu {
+                            Button { togglePin(item.chat) } label: {
+                                Label(item.chat.pinned ? "取消置顶" : "置顶", systemImage: item.chat.pinned ? "pin.slash" : "pin")
+                            }
+                            Button { patch(item.chat, ["unread": .number(item.chat.unread > 0 ? 0 : 1)]) } label: {
+                                Label(item.chat.unread > 0 ? "标为已读" : "标为未读", systemImage: item.chat.unread > 0 ? "envelope.open" : "envelope.badge")
+                            }
+                            Button { patch(item.chat, ["muted": .bool(!item.chat.muted)]) } label: {
+                                Label(item.chat.muted ? "取消免打扰" : "免打扰", systemImage: item.chat.muted ? "bell" : "bell.slash")
+                            }
+                            if !item.chat.row.string("skinId").isEmpty {
+                                Button { patch(item.chat, ["skinId": .string("")]) } label: { Label("取下美化", systemImage: "paintbrush") }
+                            }
+                            Button(role: .destructive) { deleting = item.chat } label: { Label("删除", systemImage: "trash") }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button { patch(item.chat, ["unread": .number(item.chat.unread > 0 ? 0 : 1)]) } label: {
+                                Label(item.chat.unread > 0 ? "标为已读" : "标为未读", systemImage: item.chat.unread > 0 ? "envelope.open" : "envelope.badge")
+                            }
+                            .tint(Theme.accent)
+                        }
                         .swipeActions(edge: .trailing) {
                             Button(role: .destructive) { deleting = item.chat } label: { Label("删除", systemImage: "trash") }
                             Button { togglePin(item.chat) } label: {
@@ -91,7 +113,7 @@ struct ChatListView: View {
             .onAppear(perform: reload)
             .refreshable { reload() }
             .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
-            .confirmationDialog("删除这段会话及其全部消息，无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+            .confirmationDialog("删除这段会话及其全部消息，角色的记忆保留。无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { chat in
                 Button("删除", role: .destructive) {
                     do { try People.deleteChat(chat.id); reload() } catch { loadError = "删除失败：\(error.localizedDescription)" }
@@ -115,15 +137,34 @@ struct ChatListView: View {
                     ? (chat.title.isEmpty ? chat.characterIds.compactMap { chars[$0]?.displayName }.joined(separator: "、") : chat.title)
                     : (first?.displayName ?? "已删除的角色")
                 let last = try Repo.messages(chatId: chat.id, limit: 1).last
+                // 群里的预览带上是谁说的（网页版 Row 的 who）
+                var preview = last.map(previewText) ?? ""
+                if chat.isGroup, let last, last.role == .char, !last.isRecalled, let who = chars[last.authorId] {
+                    preview = "\(GroupChat.nameIn(chat, who))：\(preview)"
+                } else if chat.isGroup, let last, last.role == .user, last.kind != "notice" {
+                    preview = "我：\(preview)"
+                }
                 return Item(chat: chat, title: title,
                             avatar: chat.isGroup ? chat.avatar : first.map { ChatFaces.of(chat, key: $0.id, fallback: $0.avatar) } ?? "",
-                            preview: last.map(previewText) ?? "",
+                            preview: preview,
                             tag: AutoReply.listTag(chat))
             }
             loadError = nil
         } catch {
             loadError = error.localizedDescription
         }
+    }
+
+    private func patch(_ chat: Chat, _ fields: [String: JSONValue]) {
+        var row = chat.row
+        for (k, v) in fields { row[k] = v }
+        row.touch()
+        do {
+            try Database.shared.put(Collections.chats, row)
+            NotificationCenter.default.post(name: .eiraChatChanged, object: chat.id)
+            if fields["skinId"] != nil { NotificationCenter.default.post(name: .eiraSkinChanged, object: chat.id) }
+            reload()
+        } catch { loadError = "未能保存：\(error.localizedDescription)" }
     }
 
     private func togglePin(_ chat: Chat) {
@@ -134,12 +175,7 @@ struct ChatListView: View {
         catch { loadError = "置顶失败：\(error.localizedDescription)" }
     }
 
-    private func previewText(_ m: Message) -> String {
-        if m.isRecalled { return "撤回了一条消息" }
-        if m.isError { return "回复失败" }
-        if m.kind == Forward.kind { return "[聊天记录]" }
-        return m.content
-    }
+    private func previewText(_ m: Message) -> String { MsgPreview.text(m) }
 }
 
 /// 列表上的时间：今天显示时分，今年显示月日，更早显示年月日。
