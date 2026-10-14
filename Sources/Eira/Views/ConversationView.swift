@@ -311,6 +311,17 @@ struct ConversationView: View {
         case .react(let e):
             do { try Interact.toggleReaction(m.id, emoji: e, by: "me"); reload() }
             catch { problem = "回应未能保存：\(error.localizedDescription)" }
+        case .redraw:
+            // 用户点的，手动的一次：改回生成中再画
+            var pending = m
+            pending.row["media"] = .string("pending")
+            pending.row["mediaError"] = .string("")
+            replace(pending)
+            Task {
+                do { _ = try await ImageGen.regenerate(messageId: m.id) }
+                catch { await MainActor.run { problem = "重新生成失败：\(error.localizedDescription)" } }
+                await MainActor.run { reload() }
+            }
         }
     }
 
@@ -570,7 +581,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String) }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw }
 
     let message: Message
     let char: Character?
@@ -584,6 +595,8 @@ struct MessageRow: View {
     @State private var tick = false
     /// 撤回的那一条点一下看原文
     @State private var reveal = false
+    /// 这一张图此刻正在画（应用这次打开以来发出去的）
+    @State private var drawing = true
 
     private var mine: Bool { message.role == .user }
 
@@ -693,8 +706,10 @@ struct MessageRow: View {
                 .onTapGesture { onOpenImage?(message.imageId) }
                 .accessibilityLabel("图片")
                 .accessibilityAddTraits(.isButton)
-        case "image", "clip":
-            card(icon: message.kind == "image" ? "photo" : "video", text: message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt"))
+        case "image":
+            imageCard
+        case "clip":
+            card(icon: "video", text: message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt"))
         case "voice":
             card(icon: "waveform", text: message.row.string("voiceText").isEmpty ? message.content : message.row.string("voiceText"))
         case "location":
@@ -710,6 +725,35 @@ struct MessageRow: View {
         default:
             // 正则替换里「屏幕上显示」的那一份
             bubble(RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s))
+        }
+    }
+
+    /// 角色发的图还没有画出来：描述，加上生成中、中断或失败的原因。能重新生成时给一个按钮。
+    private var imageCard: some View {
+        let media = message.row.string("media")
+        let err = message.row.string("mediaError")
+        let prompt = message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt")
+        let canRedraw = !mine && SettingsModel.shared.s.imageReady && !(media == "pending" && drawing)
+        return VStack(alignment: .leading, spacing: 6) {
+            card(icon: "photo", text: prompt)
+            if media == "pending" {
+                if drawing {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("正在生成图片").font(.caption).foregroundStyle(Theme.secondaryText)
+                    }
+                } else {
+                    Text("生成已中断").font(.caption).foregroundStyle(Theme.secondaryText)
+                }
+            } else if !err.isEmpty {
+                Text(err).font(.caption).foregroundStyle(media == "error" ? Theme.danger : Theme.secondaryText)
+            }
+            if canRedraw && media != "done" {
+                Button("重新生成") { onAction?(.redraw) }.font(.footnote).buttonStyle(.bordered)
+            }
+        }
+        .task(id: "\(message.id)|\(media)") {
+            drawing = media == "pending" && MediaJobs.isRunning(message.id)
         }
     }
 

@@ -29,6 +29,10 @@ enum ExtraCalls {
         ExtraCall(id: "inner", label: "心声单独生成",
                   isOn: { _ in ((try? Repo.chats()) ?? []).contains { $0.row.string("innerMode") == "apart" } },
                   when: { _ in "开了这一档的对话，每一轮在整轮说完之后再一次" }),
+        // 挂在生图接口上（那一套选了「生图前翻译」），不是全局设置
+        ExtraCall(id: "imageTranslate", label: "生图提示词译成英文",
+                  isOn: { $0.imageReady && $0.activeImage?.promptLang == "translate" },
+                  when: { _ in "选了「生图前翻译」的生图接口，每张含中文的图在生成之前一次（走副用接口）" }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

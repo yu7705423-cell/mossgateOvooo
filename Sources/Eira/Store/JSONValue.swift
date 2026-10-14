@@ -27,6 +27,11 @@ extension JSONValue {
         return nil
     }
 
+    subscript(index: Int) -> JSONValue? {
+        if case .array(let a) = self, a.indices.contains(index) { return a[index] }
+        return nil
+    }
+
     /// JSONSerialization 读出来的东西转过来。NSNumber 里的布尔要单独认，否则 true 会变成 1。
     init(any value: Any) {
         switch value {

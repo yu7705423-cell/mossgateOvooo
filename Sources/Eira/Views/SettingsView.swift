@@ -86,6 +86,11 @@ struct ServicesView: View {
                     status("任务用哪套接口", nil, routedCount == 0 ? "全部默认" : "已指定 \(routedCount) 项")
                 }
             }
+            Section("角色发送的内容") {
+                NavigationLink { ImageSettingsView() } label: {
+                    status("生图", model.s.activeImage.map { "\($0.name) · \($0.model.isEmpty ? "未填模型" : $0.model)" }, model.s.imageReady ? "" : "未配置")
+                }
+            }
             Section("识别你发送的内容") {
                 NavigationLink { VisionSettingsView() } label: {
                     status("识图", model.s.visionMode == "api" ? model.s.visionPreset?.model : nil, visionValue)

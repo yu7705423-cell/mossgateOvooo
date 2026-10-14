@@ -46,6 +46,12 @@ final class SettingsModel: ObservableObject {
                 set: { self.set(key, .number($0)) })
     }
 
+    /// 文字。
+    func textBinding(_ key: String) -> Binding<String> {
+        Binding(get: { self.s.raw[key]?.string ?? "" },
+                set: { self.set(key, .string($0)) })
+    }
+
     /// services 里某一项的一个字段。
     func service(_ name: String, _ field: String) -> Binding<String> {
         Binding(get: { self.s.raw["services"]?.object?[name]?.object?[field]?.string ?? "" },

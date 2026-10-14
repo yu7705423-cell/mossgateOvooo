@@ -283,7 +283,7 @@ enum ChatPrompt {
     }
 
     /// 能力一节。原生版只开回复解析认得的那几项。
-    /// 顺序照网页版 CAPS 数组：表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
+    /// 顺序照网页版 CAPS 数组：图片、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner"]
 
@@ -303,6 +303,14 @@ enum ChatPrompt {
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
         }
 
+        // 发图片：配好了生图接口、角色卡没关掉才有（网页版 CAPS 的 image）
+        let img = s.activeImage
+        let en = img?.promptLang == "en"
+        cap("image", on: s.imageReady && char.row["canSendImage"]?.bool != false, hot: used(#"^image$|[\[【](图片|照片)"#),
+            line: "Send an image: write a line on its own, [图片：a description of the image\(en ? ", in English" : "")]") {
+            [Templates.get("skeleton.image", settings: s), ImageGen.styleAsk(s), en ? Templates.get("skeleton.image-en", settings: s) : ""]
+                .filter { !$0.isEmpty }.joined(separator: "\n")
+        }
         let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
                                                                    used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))
         cap("sticker", on: !stickers.isEmpty, hot: true, line: nil) {

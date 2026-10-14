@@ -2,8 +2,8 @@ import Foundation
 
 /// 一轮回复从头到尾：拼请求 → 发一次 → 切成几条 → 一条一条落库。照网页版 Conversation.js 的 generate 与 reply.js 的 renderTurn。
 ///
-/// 一轮只调一次接口（网页版第 15 条）。图片、语音、视频原生版还不能生成，照网页版「没配接口」的样子落成
-/// media 为 off 的消息，界面上显示文字描述，不另外调接口。
+/// 一轮只调一次接口（网页版第 15 条）。角色写的图片在配了生图接口时每张画一次（ImageGen）；语音、视频原生版还不能生成，
+/// 照网页版「没配接口」的样子落成 media 为 off 的消息，界面上显示文字描述，不另外调接口。
 enum ChatEngine {
     /// 每落一条调一次，界面据此刷新。
     typealias OnRow = @Sendable (Message) -> Void
@@ -161,6 +161,8 @@ enum ChatEngine {
         let parts = steps.map(\.part)
         var created: [Message] = []
         var sawSilence = false
+        // 角色写的 [图片：…] 在后台一张一张画，不挡着这一轮结束。中途停下也照样交出去：落库时已经占住了
+        defer { ImageGen.launch(created, onRow: onRow) }
 
         for (i, step) in steps.enumerated() {
             let part = step.part
@@ -168,7 +170,7 @@ enum ChatEngine {
             if part.type == .silence { sawSilence = true; continue }
             // 被禁言的成员这一轮写的一概不落。每一条都现查
             if chat.isGroup, let now = try Repo.chat(chat.id), GroupChat.isMuted(now, who.id) { continue }
-            let built = try effect(part, chat: chat, char: who, turnId: turnId) ?? row(for: part, chat: chat, char: who, turnId: turnId)
+            let built = try effect(part, chat: chat, char: who, turnId: turnId) ?? row(for: part, chat: chat, char: who, turnId: turnId, draw: !instant)
             guard var m = built else { continue }
             if created.isEmpty {
                 head(&m)
@@ -241,7 +243,8 @@ enum ChatEngine {
     }
 
     /// 一段落成一条消息。content 一律是协议里的那种写法，和网页版存的一字不差。
-    private static func row(for p: ReplyParser.Part, chat: Chat, char: Character, turnId: String) -> Message? {
+    /// draw 为假（切换版本时重新落一遍）：图片不进生成队列，留一句原因，要画由用户点「重新生成」。切一次版本不能多画一张。
+    private static func row(for p: ReplyParser.Part, chat: Chat, char: Character, turnId: String, draw: Bool = true) -> Message? {
         func make(_ kind: String, _ content: String) -> Message {
             Message.new(chatId: chat.id, role: .char, authorId: char.id, content: content, kind: kind, turnId: turnId)
         }
@@ -256,8 +259,11 @@ enum ChatEngine {
             m = make("image", "[图片：\(p.text)]")
             m.row["prompt"] = .string(p.text)
             m.row["imageId"] = .null
-            m.row["media"] = .string("off")
-            m.row["mediaError"] = .string("还没有配置生图接口")
+            let ready = AppSettings.load().imageReady
+            m.row["media"] = .string(ready && draw ? "pending" : "off")
+            // 落库这一刻就占住：界面不会先看到「中断」，用户也点不出第二张
+            if ready && draw { _ = MediaJobs.claim(m.id) }
+            m.row["mediaError"] = .string(!ready ? "还没有配置生图接口" : draw ? "" : "切换版本后未自动生成")
         case .clip:
             m = make("clip", "[视频：\(p.text)]")
             m.row["prompt"] = .string(p.text)
