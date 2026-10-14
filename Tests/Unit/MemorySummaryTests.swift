@@ -94,6 +94,7 @@ final class MemorySummaryTests: StoreTestCase {
     }
 
     func testMarkCaughtUp() throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("{}")) }
         XCTAssertEqual(try MemorySummary.markCaughtUp(chatId: "chat_a"), 3)
         XCTAssertEqual(try MemorySummary.pending(chatId: "chat_a").count, 0)
         XCTAssertEqual(MockNet.count, 0)
