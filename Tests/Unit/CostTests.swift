@@ -197,9 +197,12 @@ extension CostTests {
         XCTAssertEqual(MockNet.count, 1)
         XCTAssertNil(try Repo.messages(chatId: "chat_a").first { $0.id == m.id }?.row["translation"])
 
-        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"lines":["晚安"]}"#)) }
+        // 不是聊天回复，走副用（OpenAI 格式那一套）
+        let j = #"{"lines":["晚安"]}"#
+        MockNet.reset { r, _ in .init(status: 200, body: r.url?.host == "spare.test" ? MockNet.openaiStream(j) : MockNet.anthropicStream(j)) }
         let out = try await TranslateOne.run(m, chat: chat)
         XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(hosts(), ["spare.test"])
         XCTAssertEqual(out.row.string("translation"), "晚安")
 
         MockNet.reset { _, _ in .init(status: 500, body: "{}") }
