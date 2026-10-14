@@ -109,4 +109,30 @@ final class ReplyParserTests: XCTestCase {
         // 两条以上的回复不再切
         XCTAssertEqual(parts(long + "\n嗯").count, 2)
     }
+
+    /// 标记名写成繁体也认；正文里的繁体不动
+    func testTraditionalMarkNames() {
+        let r = ReplyParser.split("[圖片：一隻貓]\n當然")
+        XCTAssertEqual(r.parts.map(\.type), [.image, .text])
+        XCTAssertEqual(r.parts[0].text, "一隻貓")
+        XCTAssertEqual(r.parts[1].text, "當然")
+    }
+
+    /// 原生版还没有的那几件事：认出来就不落气泡
+    func testUnsupportedActionLinesDropped() {
+        let r = ReplyParser.split("好\n[去电]\n[批准]\n[暂停]\n[同行]\n[全员禁言]\n[存图：海边]\n[視頻去電]\n嗯")
+        XCTAssertEqual(r.parts.map(\.text), ["好", "嗯"])
+    }
+
+    func testDmAndRecallPost() {
+        let r = ReplyParser.split("[私信：只告诉你]\n[撤回動態]")
+        XCTAssertEqual(r.parts.map(\.type), [.dm, .recallPost])
+        XCTAssertEqual(r.parts[0].text, "只告诉你")
+    }
+
+    func testAutoSplitCanBeOff() {
+        let long = String(repeating: "今天天气很好。", count: 12)
+        XCTAssertGreaterThan(ReplyParser.split(long).parts.count, 1)
+        XCTAssertEqual(ReplyParser.split(long, autoSplitAt: 0).parts.count, 1)
+    }
 }

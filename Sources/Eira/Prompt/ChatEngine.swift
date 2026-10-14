@@ -124,6 +124,14 @@ enum ChatEngine {
     private static func removeRows(_ rows: [Message], turnId: String, chatId: String) throws {
         for m in rows { try Interact.drop(m) }
         try Interact.undoReactions(chatId: chatId, turnId: turnId)
+        // 群里这一轮发进私聊的私信一起撤掉（网页版 clearTurn）
+        if let chat = try Repo.chat(chatId), chat.isGroup {
+            for c in try Repo.chats() where !c.isGroup {
+                for m in try Repo.messages(chatId: c.id, limit: 40) where m.turnId == turnId && m.row.string("fromGroup") == chatId {
+                    try Database.shared.delete(Collections.messages, id: m.id)
+                }
+            }
+        }
     }
 
     typealias Plan = [(part: ReplyParser.Part, char: Character)]
@@ -131,7 +139,7 @@ enum ChatEngine {
     /// 一次回复切成「谁说了什么」。一对一时全是同一个人；群聊时先按名字拆回各人，再各自切（网页版 renderGroupTurn）。
     static func plan(raw: String, chat: Chat, char: Character) -> (plan: Plan, think: String, stamp: String?) {
         guard chat.isGroup else {
-            let parsed = ReplyParser.split(raw)
+            let parsed = ReplyParser.split(raw, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             return (parsed.parts.map { (part: $0, char: char) }, parsed.think, parsed.stamp)
         }
         let members = GroupChat.members(chat)
@@ -144,7 +152,7 @@ enum ChatEngine {
         for (i, seg) in GroupChat.splitSpeakers(raw, members: members, chat: chat, userName: me?.name ?? "",
                                                 fallback: GroupChat.pendingMentions(msgs).first ?? "").enumerated() {
             guard let who = byId[seg.charId] else { continue }
-            let parsed = ReplyParser.split(seg.text)
+            let parsed = ReplyParser.split(seg.text, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             if i == 0 { stamp = parsed.stamp }
             out += parsed.parts.map { (part: $0, char: who) }
         }
@@ -235,6 +243,34 @@ enum ChatEngine {
             return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
         case .listen, .pick, .newlist:
             return try MusicListen.effect(p, chat: chat, char: char, turnId: turnId)
+        case .dm:
+            // 群里的成员单独发给你的一句：落进他与你的私聊（没有就建一段），群里不显示。
+            // 私聊里写了这个标记就当普通的一句；群里关了「成员可以给你发私信」就不落（网页版 reply.js 的 dm）
+            guard chat.isGroup else {
+                var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: p.text, kind: "text", turnId: turnId)
+                m.row["status"] = .string("done")
+                return m
+            }
+            guard chat.row["groupDM"]?.bool != false else { return nil }
+            let pc = try People.chatFor(charId: char.id, personaId: chat.personaId)
+            var dm = Message.new(chatId: pc.id, role: .char, authorId: char.id, content: p.text, kind: "text", turnId: turnId)
+            dm.row["status"] = .string("done")
+            dm.row["fromGroup"] = .string(chat.id)
+            dm = try Repo.append(dm)
+            if var c = try Repo.chat(pc.id) {
+                c.row["lastMessageAt"] = .number(Date().millis)
+                c.row["unread"] = .number(Double(c.unread + 1))
+                c.row.touch()
+                try Repo.save(c)
+            }
+            NotificationCenter.default.post(name: .eiraChatChanged, object: pc.id)
+            return nil
+        case .recallPost:
+            // 撤回自己最近一条还挂着的动态（网页版 recall.js 的 recallMoment），不占气泡
+            guard char.row["canRecall"]?.bool != false,
+                  let mo = Moments.by(char.id).first(where: { !$0.recalled }) else { return nil }
+            try Moments.update(mo.id, ["recalled": .number(Date().millis)])
+            return nil
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -330,7 +366,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

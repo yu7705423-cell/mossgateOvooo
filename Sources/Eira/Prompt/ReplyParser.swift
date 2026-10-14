@@ -15,6 +15,8 @@ enum ReplyParser {
         case agenda
         // 音乐：一起听（整行 [一起听]）、点歌、分享歌曲、建歌单 / 加入歌单（extra 是用 ；隔开的几首）
         case listen, pick, song, newlist
+        // 群里单独发给你的一句（落进私聊）；撤回自己最近一条动态
+        case dm, recallPost
     }
 
     struct Part: Equatable, Sendable {
@@ -57,6 +59,26 @@ enum ReplyParser {
         regex(#"^(?:\d+\s*[.、)）]\s*)?[\[【(（]\s*(?:"# + words + #")\s*(?:[:：][^\]】)）]*)?\s*[\]】)）]\s*[。．.!！~～]?$"#, [.caseInsensitive])
     }
     private static let recallLine = lineMark("撤回|撤回消息|撤回上一条")
+    // 「撤回动态」要先认：两个都以「撤回」开头
+    private static let recallPostLine = lineMark("撤回动态|删除动态")
+    // 原生版还没有的那几件事（来电、一起看、出行、情侣账户、群管理、千丝万缕、存图）：标记认出来就不落气泡，
+    // 从前原样变成一条文字（网页版 reply.js 里各自是一件事，不占气泡）
+    private static let unsupportedLines: [NSRegularExpression] = [
+        lineMark("(视频)?(?:去电|来电|打电话|拨打|通话|call)"),
+        regex(#"^[\[【(（]\s*(?:暂停|暂停一下)\s*[\]】)）]$"#, []),
+        regex(#"^[\[【(（]\s*(?:继续|继续播放|接着看)\s*[\]】)）]$"#, []),
+        regex(#"^[\[【(（]\s*(?:倒回|回到|快进)\s*[:：]\s*([\d:：.]+)\s*[\]】)）]$"#, []),
+        regex(#"^[\[【(（]\s*(?:同行|一起去|去)\s*[\]】)）]$"#, []),
+        regex(#"^[\[【(（]\s*(?:不去|去不了|算了)\s*[\]】)）]$"#, []),
+        lineMark("开设情侣账户|开情侣账户|开通情侣账户|开通共同账户|开共同账户"),
+        lineMark("批准|同意|通过"),
+        lineMark("驳回|拒绝|不同意"),
+        lineMark("全员禁言|开启全员禁言"),
+        lineMark("解除全员禁言|关闭全员禁言"),
+        lineMark("不覆盖"),
+        lineMark("覆盖"),
+        regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive]),
+    ]
     private static let silenceLine = lineMark("不回复|已读不回|不回")
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
     private static let patLine = lineMark("拍一拍|拍拍|戳一戳")
@@ -84,9 +106,10 @@ enum ReplyParser {
 
     // MARK: - 入口
 
-    static func split(_ raw: String) -> Result {
+    /// autoSplitAt：整轮只有一条很长的纯文字时按句子再切的字数（网页版 settings.autoSplitAt，默认 40，0 为不切）
+    static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
-        let (text, stamp) = stripStamps(body.trimmingCharacters(in: .whitespacesAndNewlines))
+        let (text, stamp) = stripStamps(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines)))
         var state = State()
 
         let ns = text as NSString
@@ -103,8 +126,8 @@ enum ReplyParser {
 
         var parts = state.parts
         // 整轮只有一条不带引用的文字，且长于 autoSplitAt：按句子再切（网页版 autoSplit）
-        if parts.count == 1, parts[0].type == .text, parts[0].quote == nil {
-            let pieces = autoSplit(parts[0].text, limit: 40)
+        if autoSplitAt > 0, parts.count == 1, parts[0].type == .text, parts[0].quote == nil {
+            let pieces = autoSplit(parts[0].text, limit: autoSplitAt)
             if pieces.count > 1 {
                 var first = parts[0]
                 first.text = pieces[0]
@@ -156,7 +179,7 @@ enum ReplyParser {
                 let (t, tr) = ReplyParser.splitVoiceText(body)
                 attachInner(t, tr)
             case "私信":
-                push(Part(type: .text, text: body))
+                push(Part(type: .dm, text: body))
             case "转账", "transfer":
                 // 金额读不出来就整条丢掉。凭空造一笔金额不明的转账比少发一条更糟
                 if let m = ReplyParser.match(ReplyParser.amountRe, body), let a = Double(m[1]) {
@@ -265,6 +288,8 @@ enum ReplyParser {
             if ReplyParser.matches(ReplyParser.refuseLine, t) { push(Part(type: .unwrap, text: "")); return }
             if ReplyParser.matches(ReplyParser.takeLine, t) { var p = Part(type: .meal, text: ""); p.flag = true; push(p); return }
             if ReplyParser.matches(ReplyParser.nopeLine, t) { push(Part(type: .meal, text: "")); return }
+            if ReplyParser.matches(ReplyParser.recallPostLine, t) { push(Part(type: .recallPost, text: "")); return }
+            if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))
                 return

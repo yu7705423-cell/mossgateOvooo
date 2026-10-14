@@ -93,4 +93,30 @@ final class GroupTests: StoreTestCase {
         do { try await ChatEngine.reply(chatId: group.id) { _ in }; XCTFail("应当不调用") } catch {}
         XCTAssertEqual(MockNet.count, 0)
     }
+
+    /// 群里的 [私信：…] 落进那位成员与你的私聊，群里不显示；重新生成时一起撤掉
+    func testDmGoesToPrivateChat() async throws {
+        _ = try ChatEngine.send(text: "大家好", chatId: group.id)
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("小周：[私信：只告诉你]\n林：大家好")) }
+        try await ChatEngine.reply(chatId: group.id) { _ in }
+        XCTAssertFalse(try Repo.messages(chatId: group.id).contains { $0.content.contains("只告诉你") })
+        let pc = try People.chatFor(charId: zhou.id, personaId: group.personaId)
+        let dm = try XCTUnwrap(Repo.messages(chatId: pc.id).last)
+        XCTAssertEqual(dm.content, "只告诉你")
+        XCTAssertEqual(dm.row.string("fromGroup"), group.id)
+        XCTAssertEqual(try Repo.chat(pc.id)?.unread, 1)
+
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("林：重来")) }
+        try await ChatEngine.reply(chatId: group.id, regenerate: true) { _ in }
+        XCTAssertFalse(try Repo.messages(chatId: pc.id).contains { $0.content == "只告诉你" })
+
+        // 群里关了私信：不落
+        var g = try XCTUnwrap(Repo.chat(group.id))
+        g.row["groupDM"] = .bool(false)
+        try Repo.save(g)
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("小周：[私信：再说一次]\n林：嗯")) }
+        try await ChatEngine.reply(chatId: group.id, regenerate: true) { _ in }
+        XCTAssertFalse(try Repo.messages(chatId: pc.id).contains { $0.content == "再说一次" })
+        XCTAssertFalse(try Repo.messages(chatId: group.id).contains { $0.content.contains("再说一次") })
+    }
 }

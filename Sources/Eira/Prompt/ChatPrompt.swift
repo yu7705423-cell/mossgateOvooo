@@ -39,13 +39,14 @@ enum ChatPrompt {
         let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
         let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
         let recalled = memoryOn ? recall(memories, scanText: scanText, skip: Set(recent.map(\.id)),
-                                         topK: Int(s.num("memoryTopK", 6)), now: now) : []
+                                         topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s)) : []
 
         // 各段先算出来，先后与开关交给预设的条目顺序（Layout，网页版 4.387）。默认顺序与从前一字不差
         let memoryDepth = Int(s.num("memoryDepth", 1))
         var blocks: [String: String] = [
             "lorebook": loreBlock(lore.before),
             "bond": bondBlock(char: char, rootId: rootId),
+            "state": stateBlock(char: char, rootId: rootId, memories: memories, settings: s, now: now),
             "character": characterBlock(char),
             "loreAfter": loreBlock(lore.after),
             "user": userBlock(me: me, char: char),
@@ -82,6 +83,7 @@ enum ChatPrompt {
         var tailParts: [String] = []
         if !arranged.tail.isEmpty { tailParts.append(arranged.tail) }
         if call == nil && memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
+        if let t = translateTail(chat, settings: s) { tailParts.append(t) }
 
         let (messages, seen) = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
                                        tailDepth: max(1, memoryDepth), lore: lore.deep)
@@ -138,7 +140,9 @@ enum ChatPrompt {
                 out.append(AIMessage(role: .assistant, content: "\(group[m.authorId] ?? "某人")：\(text)\(tr.isEmpty ? "" : " [译文：\(tr)]")"))
             } else if m.role == .char && m.authorId == char.id {
                 if m.isRecalled { text += "\n[撤回]" }
-                out.append(AIMessage(role: .assistant, content: text))
+                // 角色从前那几条带着译文读回去（网页版 engine.js）：历史里没有译文，模型接着就不写了
+                let tr = chat.row.string("translateTo").isEmpty ? "" : m.row.string("translation").trimmingCharacters(in: .whitespacesAndNewlines)
+                out.append(AIMessage(role: .assistant, content: tr.isEmpty ? text : "\(text) [译文：\(tr)]"))
             } else {
                 out.append(AIMessage(role: .user, content: text, images: m.role == .user ? imagesOf(m) : []))
             }
@@ -416,10 +420,14 @@ enum ChatPrompt {
         let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
         cap("translate", on: !lang.isEmpty, hot: true, line: nil) {
             var marks: [String] = []
+            let voiceOn = VoiceGen.canSpeak(char, s) && !off.contains("voice") && !(chat.isGroup && !groupCaps.contains("voice"))
+            if voiceOn { marks.append("[语音：…]") }
             if chat.row.bool("narration") { marks.append("[旁白：…]") }
             if InnerVoice.mode(chat) == "inline" { marks.append("[心声：…]") }
             let list = marks.count > 1 ? marks.dropLast().joined(separator: ", ") + " and " + marks.last! : (marks.first ?? "")
-            let marked = list.isEmpty ? "" : Templates.render("skeleton.translate-marked", ["list": list], settings: s)
+            let marked = [voiceOn ? Templates.get("skeleton.translate-voice", settings: s) : "",
+                          list.isEmpty ? "" : Templates.render("skeleton.translate-marked", ["list": list], settings: s)]
+                .filter { !$0.isEmpty }.joined(separator: " ")
             return Templates.render("skeleton.translate", ["lang": lang, "marked": marked.isEmpty ? "" : " " + marked], settings: s)
         }
 
@@ -540,7 +548,69 @@ enum ChatPrompt {
         }
     }
 
-    private static func isLiveOpen(_ m: Memory) -> Bool { m.kind == .open && m.status == "open" }
+    /// 译文提醒：格式要求开头说一遍、末尾再说一遍，长对话里才不会丢（网页版 skeleton.translate-tail）
+    static func translateTail(_ chat: Chat, settings s: AppSettings) -> String? {
+        let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+        guard !lang.isEmpty else { return nil }
+        return Templates.render("skeleton.translate-tail", ["lang": lang], settings: s)
+    }
+
+    // MARK: 进行中的事与「现状」（网页版 context/memory.js 的 isOpen、isLive、stateLines、buildState）
+
+    /// 挂的那个日子，按当天结束算（「周三」那天当天不算过期）。没有日子为 0
+    static func dueTime(_ m: Memory) -> Double {
+        let d = m.row.string("dueAt")
+        let p = d.split(separator: "-").compactMap { Int($0) }
+        guard d.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil, p.count == 3,
+              let t = Calendar.current.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 23, minute: 59, second: 59))
+        else { return 0 }
+        return t.millis
+    }
+
+    /// 还没了结：过了挂的日子三天之后不算
+    static func isOpen(_ m: Memory, now: Date) -> Bool {
+        guard m.kind == .open, m.status == "open", m.supersededBy.isEmpty else { return false }
+        let due = dueTime(m)
+        return due == 0 || now.millis <= due + 3 * 86_400_000
+    }
+
+    /// 还常驻在现状块里的：没挂日子的，记下之后超过 openStaleDays 天（默认 3，0 为一直）就不再常驻，交给召回
+    static func isLive(_ m: Memory, now: Date, days: Int) -> Bool {
+        guard isOpen(m, now: now) else { return false }
+        if dueTime(m) > 0 || days == 0 { return true }
+        return now.millis - m.at <= Double(days) * 86_400_000
+    }
+
+    private static func staleDays(_ s: AppSettings) -> Int { max(0, Int(s.num("openStaleDays", 3))) }
+
+    static func stateLines(_ all: [Memory], settings s: AppSettings, now: Date) -> [String] {
+        let max = Swift.max(0, Int(s.num("openMax", 10)))
+        let live = all.filter { isLive($0, now: now, days: staleDays(s)) }.sorted { $0.at < $1.at }
+        let keep = max > 0 && live.count > max ? Array(live.suffix(max)) : live
+        return keep.map { m in
+            let day = m.at > 0 ? Self.day(Date(timeIntervalSince1970: m.at / 1000)) + " " : ""
+            let due = m.row.string("dueAt")
+            return "- \(day)\(about[m.row.string("about")] ?? "")\(m.content)\(due.isEmpty ? "" : " (due \(due))")"
+        }
+    }
+
+    /// [现状]：关于你、关于自己、最近（总结记忆时整块改写），以及进行中的事。记忆总开关关着时不给
+    static func stateBlock(char: Character, rootId: String, memories: [Memory], settings s: AppSettings, now: Date) -> String {
+        guard s.raw["memoryEnabled"]?.bool ?? true else { return "" }
+        let key = rootId.isEmpty ? "root" : rootId
+        let cur = char.row["states"]?[key]
+        func text(_ id: String) -> String { (cur?["blocks"]?[id]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let open = stateLines(memories, settings: s, now: now)
+        var parts: [String] = []
+        if !text("user").isEmpty { parts.append("About the user:\n\(text("user"))") }
+        if !text("self").isEmpty { parts.append("About yourself:\n\(text("self"))") }
+        if !text("recent").isEmpty { parts.append("Lately:\n\(text("recent"))") }
+        if !open.isEmpty { parts.append("Ongoing, not yet settled:\n\(open.joined(separator: "\n"))") }
+        guard !parts.isEmpty else { return "" }
+        let at = cur?["at"]?.number ?? 0
+        let asOf = at > 0 ? " (as of \(day(Date(timeIntervalSince1970: at / 1000))), \(ago(Date(timeIntervalSince1970: at / 1000), now: now)))" : ""
+        return "\n\n[现状]\(asOf)\n\(parts.joined(separator: "\n\n"))"
+    }
 
     private static func pinnedBlock(_ all: [Memory], max: Int) -> String {
         var list = all.filter { ($0.pinned || $0.taboo) && $0.supersededBy.isEmpty }
@@ -572,11 +642,11 @@ enum ChatPrompt {
 
     /// 不用向量的召回：关键词命中，或者字的两两组合在最近几条里出现得够多；再按近期、用过几次、权重加分。
     /// 网页版 context/memory.js 的 recall 的简化版：没有同一时段、最早几条、疲劳这几项，也不做去重换位。
-    private static func recall(_ all: [Memory], scanText: String, skip: Set<String>, topK: Int, now: Date) -> [Memory] {
+    private static func recall(_ all: [Memory], scanText: String, skip: Set<String>, topK: Int, now: Date, openDays: Int = 3) -> [Memory] {
         let scan = scanText.lowercased()
         let scanGrams = bigrams(scan)
         let pool = all.filter { m in
-            m.rank != "S" && m.supersededBy.isEmpty && !m.pinned && !m.taboo && !isLiveOpen(m) && !skip.contains(m.id)
+            m.rank != "S" && m.supersededBy.isEmpty && !m.pinned && !m.taboo && !isLive(m, now: now, days: openDays) && !skip.contains(m.id)
         }
         let scored: [(Memory, Double)] = pool.compactMap { m in
             let kw = m.keywords.contains { !$0.isEmpty && scan.contains($0.lowercased()) } ? 1.0 : 0
@@ -776,11 +846,12 @@ extension ChatPrompt {
             add("[核心设定]", c.core)
             let memories = try visibleMemories(char: c, chat: chat, rootId: rootId, personas: personas)
             let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
-            let body = [bondBlock(char: c, rootId: rootId), pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))), recentBlock(recent, now: now)]
+            let body = [bondBlock(char: c, rootId: rootId), stateBlock(char: c, rootId: rootId, memories: memories, settings: s, now: now),
+                        pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))), recentBlock(recent, now: now)]
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
             add(nil, body)
             if memoryOn {
-                let r = recall(memories, scanText: scanText, skip: Set(recent.map(\.id)), topK: Int(s.num("memoryTopK", 6)), now: now)
+                let r = recall(memories, scanText: scanText, skip: Set(recent.map(\.id)), topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s))
                 if !r.isEmpty { add(nil, recallText(r, now: now)); recalledIds += r.map(\.id) }
             }
             memberBlocks.append(lines.joined(separator: "\n\n"))
@@ -817,6 +888,7 @@ extension ChatPrompt {
         var tail: [String] = []
         if !arranged.tail.isEmpty { tail.append(arranged.tail) }
         if !called.isEmpty { tail.append(Templates.render("skeleton.group-mention", ["names": called.joined(separator: "、")], settings: s)) }
+        if let t = translateTail(chat, settings: s) { tail.append(t) }
 
         let (messages, seen) = history(all, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
                                        tailDepth: max(1, memoryDepth), lore: deep, group: display)

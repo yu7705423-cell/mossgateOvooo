@@ -99,4 +99,50 @@ final class ChatPromptTests: StoreTestCase {
         XCTAssertTrue(b.system.contains("[你们之间的关系]\nUS_TEXT"))
         XCTAssertFalse(b.system.contains("BOND_TEXT"))
     }
+
+    /// [现状]：总结记忆写下的几块，加上进行中的事；放久了的进行中的事不常驻
+    func testStateBlockWithOngoing() throws {
+        try importFixture("data.json")
+        var char = try XCTUnwrap(Repo.character("char_a"))
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let personas = try Repo.personas()
+        let me = try personas.first { $0.id == chat.personaId } ?? Repo.activePersona(.load())
+        let root = Repo.rootId(of: me?.id ?? "", in: personas)
+        let key = root.isEmpty ? "root" : root
+        char.row["states"] = .object([key: .object(["blocks": .object(["user": .string("USER_STATE"), "recent": .string("LATELY_STATE")]),
+                                                     "at": .number(Date().millis)])])
+        try Database.shared.put(Collections.characters, char.row)
+        let now = Date().millis
+        try Database.shared.put(Collections.memories, Row.new(prefix: "mem", [
+            "charId": .string("char_a"), "kind": .string("open"), "status": .string("open"), "about": .string("user"),
+            "content": .string("ONGOING_FRESH"), "at": .number(now - 86_400_000), "rank": .string("B")]))
+        try Database.shared.put(Collections.memories, Row.new(prefix: "mem", [
+            "charId": .string("char_a"), "kind": .string("open"), "status": .string("open"),
+            "content": .string("ONGOING_STALE"), "at": .number(now - 10 * 86_400_000), "rank": .string("B")]))
+        let b = try ChatPrompt.build(chat: chat, char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue(b.system.contains("[现状] (as of"))
+        XCTAssertTrue(b.system.contains("About the user:\nUSER_STATE"))
+        XCTAssertTrue(b.system.contains("Lately:\nLATELY_STATE"))
+        XCTAssertTrue(b.system.contains("Ongoing, not yet settled:"))
+        XCTAssertTrue(b.system.contains("(about the user) ONGOING_FRESH"))
+        XCTAssertFalse(b.system.contains("ONGOING_STALE"))
+        // 记忆总开关关着时不给
+        try setSettings(["memoryEnabled": .bool(false)])
+        let off = try ChatPrompt.build(chat: chat, char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertFalse(off.system.contains("[现状]"))
+    }
+
+    /// 单聊历史里角色从前那几条带着译文；末尾再提醒一次
+    func testHistoryKeepsTranslation() throws {
+        try importFixture("data.json")
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["translateTo"] = .string("English")
+        try Repo.save(chat)
+        var last = try XCTUnwrap(Repo.messages(chatId: "chat_a").last { $0.role == .char && !$0.isError })
+        last.row["translation"] = .string("TR_TEXT")
+        try Database.shared.put(Collections.messages, last.row)
+        let b = try ChatPrompt.build(chat: try XCTUnwrap(Repo.chat("chat_a")), char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue(b.messages.contains { $0.role == .assistant && $0.content.contains("[译文：TR_TEXT]") })
+        XCTAssertTrue(b.messages.contains { $0.content.contains("[译文提醒]") && $0.content.contains("English") })
+    }
 }
