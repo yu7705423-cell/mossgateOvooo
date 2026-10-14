@@ -168,6 +168,9 @@ struct UsageLimitsView: View {
             "day.plan": "当日日程",
             "event.batch": "生成随机事件",
             "recipe.batch": "生成食谱",
+            "moment.create": "角色发朋友圈",
+            "moment.comment": "朋友圈评论",
+            "moment.reply": "朋友圈回复",
         ][task] ?? task
     }
 }

@@ -74,7 +74,7 @@ struct AppHost: View {
 
     @ViewBuilder private var content: some View {
         switch appId {
-        case "chat": ChatListView()
+        case "chat": ChatAppView()
         case "contact": ContactsView()
         case "preset": CanonView()
         case "settings": SettingsView()

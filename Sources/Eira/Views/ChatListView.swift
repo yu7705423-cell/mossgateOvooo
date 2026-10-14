@@ -1,13 +1,13 @@
 import SwiftUI
 
-/// 消息列表：当前身份名下的会话，置顶的在前，其余按最后一条消息的时间倒排。
+/// 消息列表（聊天 app 的「消息」页签）：当前身份名下的会话，置顶的在前，其余按最后一条消息的时间倒排。
+/// 导航由外面的 ChatAppView 管：会话 id 推进 path 就打开那一段。
 struct ChatListView: View {
+    @Binding var path: NavigationPath
     @State private var rows: [Item] = []
     @State private var loadError: String?
     @State private var deleting: Chat?
     @State private var newGroup = false
-    @State private var path: [String] = []
-    @ObservedObject private var notifier = Notifier.shared
 
     struct Item: Identifiable {
         let chat: Chat
@@ -18,7 +18,7 @@ struct ChatListView: View {
     }
 
     var body: some View {
-        NavigationStack(path: $path) {
+        Group {
             List {
                 if let loadError {
                     Text(loadError).foregroundStyle(Theme.danger)
@@ -70,30 +70,17 @@ struct ChatListView: View {
                 }
             }
             .listStyle(.insetGrouped)
-            .navigationTitle("消息")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { newGroup = true } label: { Image(systemName: "person.3") }.accessibilityLabel("新建群聊")
+                    Button { newGroup = true } label: { SvgIcon(name: "users", size: 20, color: Theme.text) }.accessibilityLabel("发起群聊")
                 }
             }
             .sheet(isPresented: $newGroup) {
                 NavigationStack { NewGroupView { id in reload(); path.append(id) } }
             }
-            .navigationDestination(for: String.self) { id in
-                ConversationView(chatId: id)
-            }
-            .onAppear {
-                reload()
-                // 从主屏的会话或通知打开时，聊天 app 刚出现，那一段还挂在这里
-                if let id = notifier.openChat { notifier.openChat = nil; path = [id] }
-            }
+            .onAppear(perform: reload)
             .refreshable { reload() }
             .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
-            .onChange(of: notifier.openChat) { _, id in
-                guard let id else { return }
-                notifier.openChat = nil
-                path = [id]
-            }
             .confirmationDialog("删除这段会话及其全部消息，无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { chat in
                 Button("删除", role: .destructive) {
