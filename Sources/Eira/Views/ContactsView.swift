@@ -13,6 +13,7 @@ struct ContactsView: View {
         case edit(String)
         case chat(String)
         case personas
+        case cardImport
     }
 
     var body: some View {
@@ -41,7 +42,11 @@ struct ContactsView: View {
             .navigationTitle("联系")
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
-                    Button(action: create) { Image(systemName: "plus") }.accessibilityLabel("新建角色")
+                    Menu {
+                        Button("新建角色", action: create)
+                        Button("从资料读取角色卡") { path.append(Route.cardImport) }
+                    } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("新建角色")
                 }
             }
             .navigationDestination(for: Route.self) { route in
@@ -50,6 +55,10 @@ struct ContactsView: View {
                 case .edit(let id): CharacterEditView(charId: id, path: $path)
                 case .chat(let id): ConversationView(chatId: id)
                 case .personas: PersonaListView()
+                case .cardImport: CardImportView { id in
+                    path.removeLast()
+                    path.append(Route.profile(id))
+                }
                 }
             }
             .onAppear(perform: reload)
