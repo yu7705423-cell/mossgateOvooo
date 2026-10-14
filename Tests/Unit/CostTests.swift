@@ -184,3 +184,26 @@ extension CostTests {
         XCTAssertEqual(try Repo.messages(chatId: "chat_a").first { $0.kind == "image" && $0.role == .user }?.row.string("vision"), "done")
     }
 }
+
+extension CostTests {
+    /// 翻译这一条：点一次打一次；接口一直失败时也只打一次，译文不动。转发不调接口。
+    func testTranslateOneIsOneRequest() async throws {
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["translateTo"] = .string("中文")
+        try Repo.save(chat)
+        let m = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "Good night"))
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"boom"}}"#) }
+        do { _ = try await TranslateOne.run(m, chat: chat); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertNil(try Repo.messages(chatId: "chat_a").first { $0.id == m.id }?.row["translation"])
+
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"lines":["晚安"]}"#)) }
+        let out = try await TranslateOne.run(m, chat: chat)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(out.row.string("translation"), "晚安")
+
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        try Forward.send(from: "chat_a", to: "chat_a", list: [m])
+        XCTAssertEqual(MockNet.count, 0)
+    }
+}

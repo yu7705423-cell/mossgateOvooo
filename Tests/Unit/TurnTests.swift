@@ -103,8 +103,9 @@ final class TurnTests: StoreTestCase {
         let m = try XCTUnwrap(Repo.messages(chatId: "chat_a").first { $0.id == "msg_1" })
         _ = try MessageActions.edit(m, text: "改过的")
         XCTAssertEqual(try Repo.messages(chatId: "chat_a").first { $0.id == "msg_1" }?.content, "改过的")
-        // 图片消息不能编辑正文
-        XCTAssertFalse(MessageActions.canEdit(try XCTUnwrap(charRows().last)))
+        // 图片消息改的是描述（网页版同样），结构化的卡片不给改
+        XCTAssertTrue(MessageActions.canEdit(try XCTUnwrap(charRows().last)))
+        XCTAssertFalse(MessageActions.canEdit(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[转账]", kind: "transfer")))
     }
 
     /// 删掉一轮里带着各个版本的第一条：版本挪到同一轮的下一条上，还能接着重新生成与切换。

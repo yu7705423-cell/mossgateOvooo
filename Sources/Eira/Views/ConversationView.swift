@@ -41,6 +41,7 @@ struct ConversationView: View {
     @State private var flashId: String?
     @State private var forwarding = false
     @State private var openedForward: Message?
+    @State private var editingTrans: Message?
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -154,6 +155,18 @@ struct ConversationView: View {
                 EditMessageView(message: m) { saved in
                     replace(saved)
                     editing = nil
+                    // 角色的图与语音按描述生成：描述改了，重新生成一份（用户点的，手动的一次）
+                    if MessageActions.needsRegen(saved) && MessageActions.editableText(saved) != MessageActions.editableText(m) {
+                        act(saved.kind == "image" ? .redraw : .revoice, saved)
+                    }
+                }
+            }
+        }
+        .sheet(item: $editingTrans) { m in
+            NavigationStack {
+                EditMessageView(message: m, translation: true) { saved in
+                    replace(saved)
+                    editingTrans = nil
                 }
             }
         }
@@ -555,6 +568,7 @@ struct ConversationView: View {
                           read: read,
                           meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
                           latestTurn: ctx.latestTurn,
+                          translateLang: chat?.row.string("translateTo") ?? "",
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
                           onRetry: retry,
@@ -603,6 +617,18 @@ struct ConversationView: View {
         switch action {
         case .openForward:
             openedForward = m
+        case .editTrans:
+            editingTrans = m
+        case .translate:
+            guard let chat else { return }
+            Task {
+                do {
+                    let out = try await TranslateOne.run(m, chat: chat)
+                    await MainActor.run { replace(out) }
+                } catch {
+                    await MainActor.run { problem = "翻译失败：\(error.localizedDescription)" }
+                }
+            }
         case .copy:
             UIPasteboard.general.string = m.content
         case .quote:
@@ -901,6 +927,8 @@ struct InteractSheet: View {
 /// 编辑一条文字消息。
 struct EditMessageView: View {
     let message: Message
+    /// 改的是译文而不是正文
+    var translation = false
     var onSaved: (Message) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
@@ -909,34 +937,40 @@ struct EditMessageView: View {
     var body: some View {
         Form {
             Section {
-                TextField("内容", text: $text, axis: .vertical).lineLimit(3...20)
+                TextField(translation ? "译文" : "内容", text: $text, axis: .vertical).lineLimit(3...20)
             } footer: {
-                if message.role == .char {
+                if translation {
+                    Text("译文只在气泡下方显示。清空后保存即去掉译文。")
+                } else if MessageActions.needsRegen(message) {
+                    Text(message.kind == "image" ? "保存后按新的描述重新生成这张图片，调用一次生图接口。" : "保存后按新的文本重新生成这段语音，调用一次语音接口。")
+                } else if message.role == .user && (message.kind == "image" || message.kind == "voice") {
+                    Text("只改角色读到的文字，图片或录音本身不变。")
+                } else if message.role == .char {
                     Text("修改后，角色在之后的对话中看到的是修改后的内容。")
                 }
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
-        .navigationTitle("编辑消息")
+        .navigationTitle(translation ? "改译文" : MessageActions.editTitle(message))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
-                    do { onSaved(try MessageActions.edit(message, text: text)) }
+                    do { onSaved(try translation ? MessageActions.setTranslation(message, text) : MessageActions.edit(message, text: text)) }
                     catch { problem = "保存失败：\(error.localizedDescription)" }
                 }
-                .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!translation && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .onAppear { text = message.content }
+        .onAppear { text = translation ? (message.row["translation"]?.string ?? "") : MessageActions.editableText(message) }
     }
 }
 
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans }
 
     let message: Message
     let char: Character?
@@ -951,6 +985,8 @@ struct MessageRow: View {
     var meName = "我"
     /// 最新那一轮的 id：「下一轮收起」时，换了一轮就把点开的译文收回去
     var latestTurn = ""
+    /// 这段会话译成哪种语言（空为不翻译）：长按菜单里「翻译 / 改译文」看它
+    var translateLang = ""
     /// 多选模式：点一下选中或取消，长按菜单停用
     var picking = false
     var picked = false
@@ -1060,6 +1096,12 @@ struct MessageRow: View {
         }
         if MessageActions.canEdit(message) {
             Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
+        }
+        if TranslateOne.can(message, lang: translateLang) {
+            Button { onAction?(.translate) } label: { Label(translation.isEmpty ? "翻译" : "重新翻译", systemImage: "character.bubble") }
+        }
+        if !message.isRecalled && (TranslateOne.can(message, lang: translateLang) || !translation.isEmpty) {
+            Button { onAction?(.editTrans) } label: { Label("改译文", systemImage: "pencil.line") }
         }
         if MessageActions.canRecall(message) {
             Button { onAction?(.recall) } label: { Label("撤回", systemImage: "arrow.uturn.backward") }

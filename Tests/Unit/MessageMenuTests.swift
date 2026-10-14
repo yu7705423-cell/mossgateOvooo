@@ -40,3 +40,58 @@ final class MessageMenuTests: StoreTestCase {
         XCTAssertEqual(try MessageActions.servedText(bare), "这一条生成时尚未记录模型")
     }
 }
+
+/// 编辑图片描述、语音文字、旁白；改译文；单条翻译只送这一句
+final class MessageEditTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testEditImageAndVoice() throws {
+        var img = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[图片：海边]", kind: "image")
+        img.row["prompt"] = .string("海边")
+        img = try Repo.append(img)
+        XCTAssertEqual(MessageActions.editableText(img), "海边")
+        XCTAssertTrue(MessageActions.needsRegen(img))
+        let e = try MessageActions.edit(img, text: "雪山")
+        XCTAssertEqual(e.row.string("prompt"), "雪山")
+        XCTAssertEqual(e.content, "[图片：雪山]")
+
+        var mine = Message.new(chatId: "chat_a", role: .user, authorId: "", content: "[语音：你好]", kind: "voice")
+        mine.row["voiceText"] = .string("你好")
+        mine.row["tone"] = .string("很轻")
+        mine = try Repo.append(mine)
+        XCTAssertFalse(MessageActions.needsRegen(mine))
+        let v = try MessageActions.edit(mine, text: "晚安")
+        XCTAssertEqual(v.content, "[语音：晚安]（听起来很轻）")
+        XCTAssertEqual(v.row.string("asr"), "done")
+
+        let n = try MessageActions.edit(try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[旁白：风停了]", kind: "narration")), text: "雨停了]")
+        XCTAssertEqual(n.row.string("narration"), "雨停了")
+        XCTAssertEqual(n.content, "[旁白：雨停了]")
+        XCTAssertThrowsError(try MessageActions.edit(n, text: "  "))
+    }
+
+    func testSetTranslation() throws {
+        let m = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "Hello"))
+        XCTAssertEqual(try MessageActions.setTranslation(m, " 你好 ").row.string("translation"), "你好")
+        XCTAssertNil(try MessageActions.setTranslation(m, "").row["translation"])
+    }
+
+    func testTranslatePayloadAndRows() {
+        let s = AppSettings.load()
+        let p = TranslateOne.payload(["Hi\nthere"], lang: "中文", extra: "keep names", settings: s)
+        XCTAssertEqual(p.user, "1. Hi there")
+        XCTAssertTrue(p.system.contains("keep names"))
+        XCTAssertFalse(p.system.contains("{{"))
+        XCTAssertEqual(TranslateOne.rows(#"{"lines":["1. 你好"]}"#, want: 1), ["你好"])
+        XCTAssertEqual(TranslateOne.rows("你好", want: 1), ["你好"])
+        XCTAssertEqual(TranslateOne.rows(#"["a","b"]"#, want: 2), ["a", "b"])
+        let mine = Message.new(chatId: "chat_a", role: .user, authorId: "", content: "hi")
+        XCTAssertFalse(TranslateOne.can(mine, lang: "中文"))
+        let theirs = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "hi")
+        XCTAssertFalse(TranslateOne.can(theirs, lang: ""))
+        XCTAssertTrue(TranslateOne.can(theirs, lang: "中文"))
+    }
+}

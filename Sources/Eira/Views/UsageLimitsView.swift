@@ -177,6 +177,7 @@ struct UsageLimitsView: View {
             "moment.create": "角色发朋友圈",
             "moment.comment": "朋友圈评论",
             "moment.reply": "朋友圈回复",
+            "translate.lines": "翻译单条消息",
         ][task] ?? task
     }
 }

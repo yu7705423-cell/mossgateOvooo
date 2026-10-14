@@ -20,13 +20,83 @@ enum MessageActions {
         return out
     }
 
-    static func canEdit(_ m: Message) -> Bool { m.kind == "text" && !m.isError }
+    /// 能编辑的：文字、图片描述、语音文字、旁白（网页版 MsgMenu 的 editMessage）。结构化的卡片不给改
+    static func canEdit(_ m: Message) -> Bool {
+        ["text", "image", "voice", "narration"].contains(m.kind) && !m.isError && !m.isRecalled
+    }
 
-    /// 改一条文字消息的正文。
+    static func editTitle(_ m: Message) -> String {
+        let mine = m.role == .user
+        switch m.kind {
+        case "image": return mine ? "修改角色读到的图片描述" : "修改图片描述"
+        case "voice": return mine ? "修改语音转写" : "修改语音文本"
+        case "narration": return "编辑旁白"
+        default: return "编辑消息"
+        }
+    }
+
+    /// 编辑框里一开始的那段：图片是描述，语音是说的话，旁白是摘掉标记的那一句
+    static func editableText(_ m: Message) -> String {
+        switch m.kind {
+        case "image":
+            let v = m.role == .user ? m.row.string("imageDesc") : m.row.string("prompt")
+            if !v.isEmpty { return v }
+            return unmark(m.content, "图片")
+        case "voice", "narration": return bodyText(m)
+        default: return m.content
+        }
+    }
+
+    private static func unmark(_ s: String, _ tag: String) -> String {
+        guard let r = s.range(of: #"^[\[【]\s*"# + tag + #"\s*[:：]\s*"#, options: .regularExpression) else { return s }
+        return String(s[r.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: "]】 "))
+    }
+
+    /// 角色发的图与语音按描述生成，改了描述要重新生成一份；我发的只改角色读到的文字，媒体不动
+    static func needsRegen(_ m: Message) -> Bool { m.role != .user && (m.kind == "image" || m.kind == "voice") }
+
+    /// 改一条。正文里的标记跟着改（历史里角色读到的是正文）
     static func edit(_ m: Message, text: String) throws -> Message {
         guard canEdit(m) else { throw StoreError(message: "这条消息不能编辑") }
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { throw StoreError(message: "内容不能为空。如需移除请使用删除") }
         var out = m
-        out.row["content"] = .string(text)
+        switch m.kind {
+        case "image":
+            if m.role == .user {
+                out.row["imageDesc"] = .string(t)
+                out.row["vision"] = .string("done")
+            } else {
+                out.row["prompt"] = .string(t)
+            }
+            out.row["content"] = .string("[图片：\(t)]")
+        case "voice":
+            out.row["voiceText"] = .string(t)
+            if m.role == .user {
+                out.row["asr"] = .string("done")
+                let tone = m.row.string("tone").trimmingCharacters(in: .whitespaces)
+                out.row["content"] = .string("[语音：\(t)]" + (tone.isEmpty ? "" : "（听起来\(tone)）"))
+            } else {
+                out.row["content"] = .string("[语音：\(t)]")
+            }
+        case "narration":
+            let n = t.replacingOccurrences(of: "]", with: "").replacingOccurrences(of: "】", with: "").trimmingCharacters(in: .whitespaces)
+            guard !n.isEmpty else { throw StoreError(message: "内容不能为空。如需移除请使用删除") }
+            out.row["narration"] = .string(n)
+            out.row["content"] = .string("[旁白：\(n)]")
+        default:
+            out.row["content"] = .string(text)
+        }
+        out.row.touch()
+        try Repo.save(out)
+        return out
+    }
+
+    /// 改译文。清空即去掉译文
+    static func setTranslation(_ m: Message, _ text: String) throws -> Message {
+        var out = m
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        out.row["translation"] = t.isEmpty ? nil : .string(t)
         out.row.touch()
         try Repo.save(out)
         return out
