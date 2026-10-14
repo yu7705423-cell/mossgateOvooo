@@ -43,8 +43,8 @@ final class GroupTests: StoreTestCase {
     func testPromptShape() throws {
         _ = try ChatEngine.send(text: "大家好", chatId: group.id)
         let b = try ChatPrompt.buildGroup(chat: XCTUnwrap(Repo.chat(group.id)), members: members(), settings: .load())
-        XCTAssertTrue(b.system.contains("[成员：林]\nPERSONA_TEXT"))
-        XCTAssertTrue(b.system.contains("[成员：小周]\nZHOU_PERSONA"))
+        XCTAssertTrue(b.system.contains("[成员：林]\n\nPERSONA_TEXT"))
+        XCTAssertTrue(b.system.contains("[成员：小周]\n\nZHOU_PERSONA"))
         XCTAssertTrue(b.system.contains("[群聊规则]"))
         XCTAssertTrue(b.system.contains("The members are 林、小周"))
         // 一对一才有的能力不进群
