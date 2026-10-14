@@ -10,6 +10,8 @@ struct ChatSettingsView: View {
     var onSearch: (() -> Void)?
     /// 进入多选：回到会话页，逐条勾选后一并删除
     var onSelect: (() -> Void)?
+    /// 打开聊天背景：回到会话页，面板只占下半屏，每改一下都看得见
+    var onLook: (() -> Void)?
 
     @State private var chat: Chat?
     @State private var pinned = false
@@ -51,6 +53,9 @@ struct ChatSettingsView: View {
                     }
                     if let onSelect {
                         Button(action: onSelect) { Text("多选消息").foregroundStyle(Theme.text) }
+                    }
+                    if let onLook {
+                        Button(action: onLook) { Text("聊天背景").foregroundStyle(Theme.text) }
                     }
                 }
             }

@@ -51,6 +51,9 @@ struct ConversationView: View {
     @State private var innerCardFor: String?
     /// 展开了的那几叠图（按第一张的 id）
     @State private var openStacks: Set<String> = []
+    /// 这段会话的背景与上下栏（chat.look）
+    @State private var look = ChatLook.Look()
+    @State private var showLook = false
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
@@ -96,6 +99,8 @@ struct ConversationView: View {
             }
             if picking != nil { pickBar } else { composer }
         }
+        .background { ChatBackdrop(look: look) }
+        .modifier(TopBarLook(bar: look.top))
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(picking != nil)
@@ -134,7 +139,8 @@ struct ConversationView: View {
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
-                             onSelect: { showSettings = false; picking = [] })
+                             onSelect: { showSettings = false; picking = [] },
+                             onLook: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLook = true } })
         }
         .onAppear {
             Notifier.shared.visibleChat = chatId
@@ -145,6 +151,10 @@ struct ConversationView: View {
             markRead()
         }
         // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
+        .onReceive(NotificationCenter.default.publisher(for: .eiraChatLookChanged)) { note in
+            guard (note.object as? String) == chatId, let c = try? Repo.chat(chatId) else { return }
+            look = ChatLook.of(c)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
             guard (note.object as? String) == chatId, !isBusy else { return }
             reload()
@@ -225,6 +235,11 @@ struct ConversationView: View {
                 ForwardDetailView(message: m)
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { openedForward = nil } } }
             }
+        }
+        .sheet(isPresented: $showLook) {
+            NavigationStack { ChatLookView(chatId: chatId) }
+                .presentationDetents([.medium, .large])
+                .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
@@ -365,7 +380,7 @@ struct ConversationView: View {
                 StickerPanel { st in sendSticker(st) }
             }
         }
-        .background(Theme.bg)
+        .modifier(BottomBarLook(bar: look.bottom))
     }
 
     /// 「消息 旁白」切换：输入栏上方一行小字，开了「我也写旁白」才有（网页版 composer-tabs）
@@ -473,7 +488,6 @@ struct ConversationView: View {
         .padding(.horizontal, Theme.sp4)
         .padding(.top, Theme.sp3)
         .padding(.bottom, Theme.sp5)
-        .background(Theme.bg)
         .overlay(alignment: .top) { Theme.border.frame(height: 1) }
     }
 
@@ -560,7 +574,7 @@ struct ConversationView: View {
         }
         .padding(.horizontal, Theme.sp4)
         .padding(.vertical, Theme.sp2)
-        .background(Theme.bg)
+        .modifier(BottomBarLook(bar: look.bottom))
         .overlay(alignment: .top) { Theme.border.frame(height: 1) }
     }
 
@@ -789,6 +803,7 @@ struct ConversationView: View {
                           quoteName: quoteName(of: m),
                           speakerName: groupName(of: m),
                           innerCard: chat.map { InnerVoice.style($0) == "card" } ?? false,
+                          narrColor: look.narr,
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -1091,6 +1106,7 @@ struct ConversationView: View {
     private func reload() {
         do {
             chat = try Repo.chat(chatId)
+            look = chat.map(ChatLook.of) ?? ChatLook.Look()
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
             me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()
             if let chat, chat.isGroup {
@@ -1294,6 +1310,8 @@ struct MessageRow: View {
     var speakerName = ""
     /// 心声显示成一张卡：点头像打开那张卡，不在气泡下展开
     var innerCard = false
+    /// 旁白的文字颜色（聊天背景里设的，空为默认的灰）
+    var narrColor = ""
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1338,7 +1356,7 @@ struct MessageRow: View {
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
-                            .font(.footnote.italic()).foregroundStyle(Theme.secondaryText)
+                            .font(.footnote.italic()).foregroundStyle(Color(hex: narrColor) ?? Theme.secondaryText)
                             .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
                     case "silence":
                         centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复")
