@@ -72,6 +72,9 @@ struct ChatListView: View {
             .listStyle(.insetGrouped)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
+                    Button { path.append(ChatAppView.ChatRoute.search) } label: { NavIcon("search") }.accessibilityLabel("搜索聊天记录")
+                }
+                ToolbarItem(placement: .primaryAction) {
                     Button { newGroup = true } label: { SvgIcon(name: "users", size: 20, color: Theme.text) }.accessibilityLabel("发起群聊")
                 }
             }

@@ -588,7 +588,7 @@ enum ChatPrompt {
         let live = all.filter { isLive($0, now: now, days: staleDays(s)) }.sorted { $0.at < $1.at }
         let keep = max > 0 && live.count > max ? Array(live.suffix(max)) : live
         return keep.map { m in
-            let day = m.at > 0 ? Self.day(Date(timeIntervalSince1970: m.at / 1000)) + " " : ""
+            let day = m.at > 0 ? TimeText.day(Date(timeIntervalSince1970: m.at / 1000)) + " " : ""
             let due = m.row.string("dueAt")
             return "- \(day)\(about[m.row.string("about")] ?? "")\(m.content)\(due.isEmpty ? "" : " (due \(due))")"
         }
@@ -608,7 +608,7 @@ enum ChatPrompt {
         if !open.isEmpty { parts.append("Ongoing, not yet settled:\n\(open.joined(separator: "\n"))") }
         guard !parts.isEmpty else { return "" }
         let at = cur?["at"]?.number ?? 0
-        let asOf = at > 0 ? " (as of \(day(Date(timeIntervalSince1970: at / 1000))), \(ago(Date(timeIntervalSince1970: at / 1000), now: now)))" : ""
+        let asOf = at > 0 ? " (as of \(TimeText.day(Date(timeIntervalSince1970: at / 1000))), \(TimeText.ago(Date(timeIntervalSince1970: at / 1000), now: now)))" : ""
         return "\n\n[现状]\(asOf)\n\(parts.joined(separator: "\n\n"))"
     }
 

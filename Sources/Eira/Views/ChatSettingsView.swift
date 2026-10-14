@@ -4,6 +4,8 @@ import SwiftUI
 struct ChatSettingsView: View {
     let chatId: String
     var onDeleted: () -> Void = {}
+    /// 搜索这段会话的聊天记录：回到会话页打开搜索，选中一条后跳过去
+    var onSearch: (() -> Void)?
 
     @State private var chat: Chat?
     @State private var pinned = false
@@ -26,6 +28,17 @@ struct ChatSettingsView: View {
     var body: some View {
         Form {
             if chat?.isGroup == true { GroupMembersSection(chatId: chatId) }
+            if let onSearch {
+                Section {
+                    Button(action: onSearch) {
+                        HStack {
+                            Text("搜索聊天记录").foregroundStyle(Theme.text)
+                            Spacer()
+                            SvgIcon(name: "search", size: 16, color: Theme.text3)
+                        }
+                    }
+                }
+            }
             Section {
                 Toggle("置顶", isOn: $pinned)
                 Toggle("免打扰", isOn: $muted)

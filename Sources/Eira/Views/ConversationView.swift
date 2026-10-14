@@ -10,6 +10,8 @@ import UIKit
 /// 长按一条消息：复制、引用、编辑、撤回、删除。最后一轮下面有「重新生成」与版本切换。
 struct ConversationView: View {
     let chatId: String
+    /// 从搜索进来时要跳到的那一条
+    var focusId: String? = nil
 
     @State private var chat: Chat?
     @State private var char: Character?
@@ -33,6 +35,10 @@ struct ConversationView: View {
     @State private var editing: Message?
     @State private var deleting: Message?
     @State private var showSettings = false
+    @State private var showSearch = false
+    /// 要滚过去的那一条；滚到之后闪一下
+    @State private var jumpTo: String?
+    @State private var flashId: String?
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -86,36 +92,9 @@ struct ConversationView: View {
                             .padding(.horizontal, Theme.pad)
                         }
                         // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
-                        let st = SettingsModel.shared.s
-                        let stampMode = Receipt.stampMode(st)
-                        let readOn = Receipt.on(st)
-                        let upTo = Receipt.readUpTo(messages)
-                        let latestTurn = messages.last { $0.role == .char }?.turnId ?? ""
-                        let prevOf = Dictionary(zip(messages.dropFirst().map(\.id), messages.dropLast()), uniquingKeysWith: { a, _ in a })
+                        let ctx = rowContext()
                         ForEach(messages) { m in
-                            let prev = prevOf[m.id]
-                            let sep = stampMode == "gap" && Receipt.needSep(prev: prev, cur: m)
-                            VStack(spacing: 0) {
-                                if sep {
-                                    Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
-                                        .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
-                                }
-                                MessageRow(message: m, char: speaker(of: m),
-                                           showName: isGroup,
-                                           stamp: stampMode == "side" || stampMode == "below" ? Receipt.stampOf(m.createdAt) : "",
-                                           stampBelow: stampMode == "below",
-                                           read: Receipt.textOf(m, upTo: upTo, on: readOn),
-                                           meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
-                                           latestTurn: latestTurn,
-                                           picking: picking != nil, picked: picking?.contains(m.id) == true,
-                                           onPick: { togglePick(m.id) },
-                                           onRetry: m.isError ? { retry(m) } : nil,
-                                           onOpenImage: { viewing = ViewingImage(id: $0) },
-                                           onAction: { act($0, m) })
-                            }
-                            // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
-                            .padding(.top, prev == nil ? 0 : (!sep && Receipt.cont(prev: prev, cur: m) ? 5 : Theme.sp4))
-                            .id(m.id)
+                            messageCell(m, ctx)
                         }
                         Color.clear.frame(height: 1)
                             .onAppear { atBottom = true; unseen = 0 }
@@ -166,7 +145,18 @@ struct ConversationView: View {
                     }
                 }
                 .onAppear {
-                    if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                    if let focusId { jump(focusId) } else if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+                }
+                .onChange(of: jumpTo) { _, id in
+                    guard let id else { return }
+                    jumpTo = nil
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(id, anchor: .center)
+                        withAnimation(.easeOut(duration: 0.2)) { flashId = id }
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                            withAnimation(.easeOut(duration: 0.4)) { if flashId == id { flashId = nil } }
+                        }
+                    }
                 }
             }
             if let problem {
@@ -213,7 +203,14 @@ struct ConversationView: View {
             Button("好") { notice = nil }
         }
         .navigationDestination(isPresented: $showSettings) {
-            ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() })
+            ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
+                             onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } })
+        }
+        .sheet(isPresented: $showSearch) {
+            NavigationStack {
+                SearchChatView(chatId: chatId) { _, m in showSearch = false; jump(m) }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { showSearch = false } } }
+            }
         }
         .onAppear {
             Notifier.shared.visibleChat = chatId
@@ -463,6 +460,64 @@ struct ConversationView: View {
     private var isGroup: Bool { chat?.isGroup == true }
 
     /// 这一条是谁说的：群里按作者找成员，一对一就是这个角色。
+    /// 一行要用到的、整段会话共用的那几样，算一次传下去（ForEach 里写一长串，编译器推断不过来）
+    private struct RowContext {
+        var stampMode: String
+        var readOn: Bool
+        var upTo: Double
+        var latestTurn: String
+        var prevOf: [String: Message]
+    }
+
+    private func rowContext() -> RowContext {
+        let st = SettingsModel.shared.s
+        return RowContext(
+            stampMode: Receipt.stampMode(st),
+            readOn: Receipt.on(st),
+            upTo: Receipt.readUpTo(messages),
+            latestTurn: messages.last { $0.role == .char }?.turnId ?? "",
+            prevOf: Dictionary(zip(messages.dropFirst().map(\.id), messages.dropLast()), uniquingKeysWith: { a, _ in a }))
+    }
+
+    /// 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
+    @ViewBuilder
+    private func messageCell(_ m: Message, _ ctx: RowContext) -> some View {
+        let prev: Message? = ctx.prevOf[m.id]
+        let sep: Bool = ctx.stampMode == "gap" && Receipt.needSep(prev: prev, cur: m)
+        let tight: Bool = !sep && Receipt.cont(prev: prev, cur: m)
+        let top: CGFloat = prev == nil ? 0 : (tight ? 5 : Theme.sp4)
+        VStack(spacing: 0) {
+            if sep {
+                Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                    .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
+            }
+            messageRow(m, ctx)
+        }
+        // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
+        .padding(.top, top)
+        .background(flashId == m.id ? Theme.groupFill : Color.clear)
+        .id(m.id)
+    }
+
+    private func messageRow(_ m: Message, _ ctx: RowContext) -> MessageRow {
+        let perEach: Bool = ctx.stampMode == "side" || ctx.stampMode == "below"
+        let stamp: String = perEach ? Receipt.stampOf(m.createdAt) : ""
+        let read: String = Receipt.textOf(m, upTo: ctx.upTo, on: ctx.readOn)
+        let retry: (() -> Void)? = m.isError ? { self.retry(m) } : nil
+        return MessageRow(message: m, char: speaker(of: m),
+                          showName: isGroup,
+                          stamp: stamp,
+                          stampBelow: ctx.stampMode == "below",
+                          read: read,
+                          meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
+                          latestTurn: ctx.latestTurn,
+                          picking: picking != nil, picked: picking?.contains(m.id) == true,
+                          onPick: { togglePick(m.id) },
+                          onRetry: retry,
+                          onOpenImage: { viewing = ViewingImage(id: $0) },
+                          onAction: { act($0, m) })
+    }
+
     private func speaker(of m: Message) -> Character? {
         guard isGroup, let c = members[m.authorId] else { return char }
         return c
@@ -688,6 +743,19 @@ struct ConversationView: View {
         } catch {
             problem = error.localizedDescription
         }
+    }
+
+    /// 跳到某一条：还没画出来就把一次画的条数放大到能盖住它，再滚过去
+    private func jump(_ id: String) {
+        if !messages.contains(where: { $0.id == id }) {
+            guard let all = try? Repo.messages(chatId: chatId), let i = all.firstIndex(where: { $0.id == id }) else {
+                notice = "这条消息已不存在。"
+                return
+            }
+            pageSize = max(pageSize, all.count - i)
+            reload()
+        }
+        jumpTo = id
     }
 
     private func markRead() {

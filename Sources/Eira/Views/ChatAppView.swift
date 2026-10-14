@@ -14,6 +14,10 @@ struct ChatAppView: View {
         case moment(String)
         case editChar(String)
         case editPersona(String)
+        /// 在当前身份的全部会话里搜
+        case search
+        /// 打开会话并跳到那一条
+        case focus(chatId: String, messageId: String)
     }
 
     struct TabItem: Identifiable { var id: String; var label: String; var icon: String }
@@ -35,6 +39,9 @@ struct ChatAppView: View {
                     case .moment(let id): MomentDetailView(momentId: id, path: $path)
                     case .editChar(let id): CharacterEditView(charId: id, path: $path)
                     case .editPersona(let id): PersonaEditView(personaId: id)
+                    case .search:
+                        SearchChatView(chatId: nil) { c, m in path.append(ChatRoute.focus(chatId: c, messageId: m)) }
+                    case .focus(let c, let m): ConversationView(chatId: c, focusId: m)
                     }
                 }
         }
