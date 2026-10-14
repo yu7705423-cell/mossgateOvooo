@@ -57,6 +57,8 @@ enum ChatEngine {
             result = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages)
         } catch {
             if old != nil { throw error }
+            // 途中断开、已经收到一部分：照常落成气泡，最后一条标上「回复在此处中断」。那部分已经付过钱（网页版 keepPartial）
+            if let kept = try? await keepPartial(error, chat: chat, char: char, turnId: turnId, onRow: onRow), !kept.isEmpty { throw error }
             var row = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "", turnId: turnId)
             row.row["status"] = .string("error")
             row.row["error"] = .string(error.localizedDescription)
@@ -85,6 +87,22 @@ enum ChatEngine {
         let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
         // 心声「单独生成」那一档：整轮说完之后另调一次（默认关，在会话设置里开）
         if let m = await InnerVoice.attach(chat: chat, char: char, created: created) { onRow(m) }
+    }
+
+    /// 回复途中断开时收到的那一部分落成气泡。没有可留的回空数组，调用方照旧落一条失败提示
+    static func keepPartial(_ error: Error, chat: Chat, char: Character, turnId: String, onRow: @escaping OnRow) async throws -> [Message] {
+        guard let e = error as? AIError, !e.cancelled else { return [] }
+        let raw = e.partial.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty, !plan(raw: raw, chat: chat, char: char).plan.isEmpty else { return [] }
+        let versions = Versions(swipes: [raw], index: 0, served: [])
+        let created = try await write(raw: raw, chat: chat, char: char, turnId: turnId, versions: versions, instant: true, onRow: { _ in })
+        guard var last = created.last else { return created }
+        last.row["cutOff"] = .bool(true)
+        last.row["cutReason"] = .string(e.message)
+        try Repo.save(last)
+        for m in created.dropLast() { onRow(m) }
+        onRow(last)
+        return created
     }
 
     // MARK: - 轮与版本

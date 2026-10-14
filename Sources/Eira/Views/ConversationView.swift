@@ -1182,6 +1182,9 @@ struct MessageRow: View {
                     Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
                 }
                 reactions
+                if !mine && message.row.bool("cutOff") {
+                    Text("回复在此处中断").font(.caption).foregroundStyle(Theme.text3)
+                }
                 if !mine, let ban = message.row["ban"]?.array, !ban.isEmpty {
                     Text("命中禁写：\(ban.compactMap(\.string).joined(separator: "、"))").font(.caption).foregroundStyle(Theme.danger)
                 }

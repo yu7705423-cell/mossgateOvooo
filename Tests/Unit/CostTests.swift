@@ -207,3 +207,23 @@ extension CostTests {
         XCTAssertEqual(MockNet.count, 0)
     }
 }
+
+extension CostTests {
+    /// 回复途中断开：收到的那部分落成气泡，最后一条标上中断；不重试、不另落失败行。
+    func testPartialReplyIsKept() async throws {
+        try setSettings(["retryMax": .number(3)])
+        let piece = String(data: try JSONSerialization.data(withJSONObject: ["type": "content_block_delta",
+            "delta": ["type": "text_delta", "text": "先说这一句\n还有这一句"]]), encoding: .utf8)!
+        MockNet.reset { _, _ in
+            .init(status: 200, body: "data: \(piece)\n\ndata: {\"type\":\"error\",\"error\":{\"message\":\"overloaded\"}}\n\n")
+        }
+        let before = try Repo.messages(chatId: "chat_a").count
+        do { try await ChatEngine.reply(chatId: "chat_a") { _ in }; XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        let after = try Repo.messages(chatId: "chat_a")
+        XCTAssertEqual(after.count, before + 2)
+        XCTAssertEqual(after.suffix(2).map(\.content), ["先说这一句", "还有这一句"])
+        XCTAssertTrue(after.last?.row.bool("cutOff") == true)
+        XCTAssertFalse(after.contains { $0.isError && $0.createdAt > 0 && $0.content.isEmpty && $0.row.string("error").contains("overloaded") })
+    }
+}
