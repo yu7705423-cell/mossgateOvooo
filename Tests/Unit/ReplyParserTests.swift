@@ -91,8 +91,8 @@ final class ReplyParserTests: XCTestCase {
 
     /// 认得但原生版还没有对应功能的标记：吞掉，不留成文字。
     func testKnownButUnsupportedMarksAreConsumed() {
-        XCTAssertEqual(parts("给你\n[转账：100 拿着]").map(\.text), ["给你"])
-        XCTAssertTrue(parts("[礼物：花|一张卡片]").isEmpty)
+        XCTAssertEqual(parts("给你\n[点歌：晴天]").map(\.text), ["给你"])
+        XCTAssertTrue(parts("[约定：周末去看海]").isEmpty)
     }
 
     func testEmptyBodyProducesNothing() {
