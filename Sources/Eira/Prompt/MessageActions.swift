@@ -54,4 +54,72 @@ enum MessageActions {
             "quoteAuthorId": .string(q.authorId),
         ]
     }
+
+    /// 这一条的正文（记住这句、收进示例用）：文字原样，语音取说的话，旁白取旁白
+    static func bodyText(_ m: Message) -> String {
+        switch m.kind {
+        case "text": return m.content.trimmingCharacters(in: .whitespacesAndNewlines)
+        case "narration":
+            let n = m.row.string("narration")
+            return (n.isEmpty ? m.content : n).trimmingCharacters(in: .whitespacesAndNewlines)
+        case "voice":
+            var t = m.row.string("voiceText")
+            if t.isEmpty, let r = m.content.range(of: #"^[\[【]\s*语音\s*[:：]\s*"#, options: .regularExpression) {
+                t = String(m.content[r.upperBound...]).trimmingCharacters(in: CharacterSet(charactersIn: "]】 "))
+            }
+            return t.trimmingCharacters(in: .whitespacesAndNewlines)
+        default: return ""
+        }
+    }
+
+    /// 记住这句：存成这个角色的一条 A 级记忆，来源记成手写（网页版 MsgMenu 的 remember）。不调接口。返回新记忆的 id
+    static func remember(_ m: Message, chat: Chat, char: Character?) throws -> (memoryId: String, charId: String) {
+        let body = bodyText(m)
+        guard !body.isEmpty else { throw StoreError(message: "这一条没有可记的正文") }
+        let charId = m.role == .user ? (char?.id ?? "") : (m.authorId.isEmpty ? (char?.id ?? "") : m.authorId)
+        guard !charId.isEmpty else { throw StoreError(message: "这段对话还没有角色") }
+        let who = m.role == .user ? "我" : ((try? Repo.character(charId))?.name ?? char?.name ?? "对方")
+        let at = m.createdAt > 0 ? m.createdAt : Date().millis
+        let row = Row.new(prefix: "mem", [
+            "charId": .string(charId), "personaId": .string(chat.personaId),
+            "content": .string(String("\(who)说：\(body)".prefix(300))),
+            "category": .string("event"), "kind": .string("event"), "rank": .string("A"), "keywords": .array([]),
+            "source": .string("manual"), "at": .number(at), "updatedAt": .number(Date().millis),
+        ])
+        try Database.shared.put(Collections.memories, row)
+        return (row.id, charId)
+    }
+
+    /// 收进说话示例：把角色这句话接在角色卡的说话示例后面（网页版 addExample）。已有就不重复
+    @discardableResult
+    static func addExample(_ m: Message) throws -> Bool {
+        let body = bodyText(m)
+        guard m.role == .char, !body.isEmpty, var c = try Repo.character(m.authorId) else { throw StoreError(message: "这一条没有可收的正文") }
+        let cur = c.row.string("exampleDialogue").trimmingCharacters(in: .whitespacesAndNewlines)
+        if cur.contains(body) { return false }
+        c.row["exampleDialogue"] = .string((cur.isEmpty ? "" : cur + "\n") + "\(c.name)：\(body)")
+        c.row.touch()
+        try Database.shared.put(Collections.characters, c.row)
+        return true
+    }
+
+    /// 生成信息：这一轮当前那一版由哪套接口、哪个模型、什么时候写的（记在这一轮第一条的 served 上）
+    static func servedText(_ m: Message) throws -> String {
+        guard !m.turnId.isEmpty else { return "这一条生成时尚未记录模型" }
+        let rows = try Repo.messages(chatId: m.chatId).filter { $0.turnId == m.turnId }
+        guard let head = rows.first(where: { $0.row["served"] != nil }) ?? rows.first else { return "这一条生成时尚未记录模型" }
+        let list = head.row["served"]?.array ?? []
+        let i = Int(head.row.number("swipeIndex") ?? Double(list.count - 1))
+        guard list.indices.contains(i), let o = list[i].object else { return "这一条生成时尚未记录模型" }
+        let name = o["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "接口"
+        let model = o["model"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? "未知模型"
+        var when = ""
+        if let at = o["at"]?.number {
+            let f = DateFormatter()
+            f.locale = Locale(identifier: "zh_CN")
+            f.dateFormat = "yyyy/M/d HH:mm:ss"
+            when = "，" + f.string(from: Date(timeIntervalSince1970: at / 1000))
+        }
+        return "由「\(name)」的 \(model) 生成\(when)"
+    }
 }

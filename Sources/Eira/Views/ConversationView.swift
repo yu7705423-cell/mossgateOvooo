@@ -40,6 +40,12 @@ struct ConversationView: View {
     @State private var atBottom = true
     @State private var unseen = 0
     @State private var earlier = 0
+    /// 多选：nil 为没在选
+    @State private var picking: Set<String>?
+    @State private var confirmBatchDelete = false
+    @State private var notice: String?
+    @State private var rememberedMemory: RememberedMemory?
+    struct RememberedMemory: Identifiable { var id: String; var charId: String }
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
@@ -101,6 +107,8 @@ struct ConversationView: View {
                                            read: Receipt.textOf(m, upTo: upTo, on: readOn),
                                            meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
                                            latestTurn: latestTurn,
+                                           picking: picking != nil, picked: picking?.contains(m.id) == true,
+                                           onPick: { togglePick(m.id) },
                                            onRetry: m.isError ? { retry(m) } : nil,
                                            onOpenImage: { viewing = ViewingImage(id: $0) },
                                            onAction: { act($0, m) })
@@ -167,21 +175,42 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
-            composer
+            if picking != nil { pickBar } else { composer }
         }
         .navigationTitle(chat?.isGroup == true ? GroupChat.title(chat!, members: chat!.characterIds.compactMap { members[$0] }) : (char?.displayName ?? chat?.title ?? ""))
         .navigationBarTitleDisplayMode(.inline)
+        .navigationBarBackButtonHidden(picking != nil)
         .toolbar {
-            if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false {
+            if let picked = picking {
+                ToolbarItem(placement: .cancellationAction) { Button("取消") { picking = nil } }
+                ToolbarItem(placement: .principal) {
+                    Text("已选 \(picked.count) 条").font(.system(size: 17, weight: .semibold))
+                }
+                ToolbarItem(placement: .primaryAction) {
+                    Button("全选") { picking = Set(messages.map(\.id)) }
+                }
+            } else if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false {
                 ToolbarItem(placement: .primaryAction) {
                     Button { calling = char } label: { NavIcon("phone") }
                         .accessibilityLabel("语音通话")
                         .disabled(busy)
                 }
             }
-            ToolbarItem(placement: .primaryAction) {
-                Button { showSettings = true } label: { NavIcon("more") }.accessibilityLabel("会话设置")
+            if picking == nil {
+                ToolbarItem(placement: .primaryAction) {
+                    Button { showSettings = true } label: { NavIcon("more") }.accessibilityLabel("会话设置")
+                }
             }
+        }
+        .confirmationDialog("删除选中的 \(picking?.count ?? 0) 条消息。删除后无法恢复，也不再进入上下文。",
+                            isPresented: $confirmBatchDelete, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { removePicked() }
+        }
+        .sheet(item: $rememberedMemory) { r in
+            NavigationStack { MemoryEditView(memoryId: r.id, charId: r.charId) }
+        }
+        .alert(notice ?? "", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
+            Button("好") { notice = nil }
         }
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() })
@@ -391,6 +420,36 @@ struct ConversationView: View {
         }
     }
 
+    private func togglePick(_ id: String) {
+        guard var p = picking else { return }
+        if p.contains(id) { p.remove(id) } else { p.insert(id) }
+        picking = p
+    }
+
+    private func removePicked() {
+        guard let p = picking else { return }
+        do {
+            for m in messages where p.contains(m.id) { try MessageActions.delete(m) }
+            picking = nil
+            reload()
+        } catch { problem = "删除失败：\(error.localizedDescription)" }
+    }
+
+    /// 多选时底下那一条：取消、删除
+    private var pickBar: some View {
+        HStack {
+            Button("取消") { picking = nil }.buttonStyle(EiraButtonStyle(kind: .ghost))
+            Spacer()
+            Button("删除（\(picking?.count ?? 0)）") { confirmBatchDelete = true }
+                .buttonStyle(EiraButtonStyle(kind: .danger))
+                .disabled(picking?.isEmpty != false)
+        }
+        .padding(.horizontal, Theme.sp4)
+        .padding(.vertical, Theme.sp2)
+        .background(Theme.bg)
+        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
+    }
+
     private func post(_ make: () throws -> Message) {
         do {
             messages.append(try make())
@@ -453,6 +512,21 @@ struct ConversationView: View {
             catch { problem = "撤回失败：\(error.localizedDescription)" }
         case .delete:
             deleting = m
+        case .copySong:
+            UIPasteboard.general.string = m.row.string("songQuery").isEmpty ? m.content : m.row.string("songQuery")
+        case .remember:
+            guard let chat else { return }
+            do {
+                let r = try MessageActions.remember(m, chat: chat, char: char)
+                rememberedMemory = RememberedMemory(id: r.memoryId, charId: r.charId)
+            } catch { problem = error.localizedDescription }
+        case .example:
+            do { notice = try MessageActions.addExample(m) ? "已收进说话示例，可在编辑资料中修改" : "说话示例中已有这一句" }
+            catch { problem = error.localizedDescription }
+        case .served:
+            notice = (try? MessageActions.servedText(m)) ?? "这一条生成时尚未记录模型"
+        case .select:
+            picking = [m.id]
         case .settle(let yes):
             do {
                 let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
@@ -747,7 +821,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select }
 
     let message: Message
     let char: Character?
@@ -762,6 +836,10 @@ struct MessageRow: View {
     var meName = "我"
     /// 最新那一轮的 id：「下一轮收起」时，换了一轮就把点开的译文收回去
     var latestTurn = ""
+    /// 多选模式：点一下选中或取消，长按菜单停用
+    var picking = false
+    var picked = false
+    var onPick: (() -> Void)?
     var onRetry: (() -> Void)?
     var onOpenImage: ((String) -> Void)?
     var onAction: ((Action) -> Void)?
@@ -810,7 +888,21 @@ struct MessageRow: View {
                         centered(message.content)
                     }
                 }
-                .contextMenu { menu }
+                .contextMenu { if !picking { menu } }
+            }
+        }
+        .overlay {
+            if picking {
+                Color.clear.contentShape(Rectangle()).onTapGesture { onPick?() }
+            }
+        }
+        .overlay(alignment: .leading) {
+            if picking {
+                Image(systemName: picked ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20)).foregroundStyle(picked ? Theme.accent : Theme.text3)
+                    .padding(.leading, 2)
+                    .allowsHitTesting(false)
+                    .accessibilityLabel(picked ? "已选" : "未选")
             }
         }
         .task(id: message.id) {
@@ -845,14 +937,31 @@ struct MessageRow: View {
                 }
             }
         }
-        Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
         Button { onAction?(.quote) } label: { Label("引用", systemImage: "quote.bubble") }
+        if message.kind == "song" {
+            Button { onAction?(.copySong) } label: { Label("复制歌名", systemImage: "doc.on.doc") }
+        } else {
+            Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
+        }
         if MessageActions.canEdit(message) {
             Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
         }
         if MessageActions.canRecall(message) {
             Button { onAction?(.recall) } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
         }
+        if !mine && message.kind == "image" && SettingsModel.shared.s.imageReady && !message.row.string("prompt").isEmpty {
+            Button { onAction?(.redraw) } label: { Label("重画图片", systemImage: "arrow.clockwise") }
+        }
+        if !MessageActions.bodyText(message).isEmpty {
+            Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
+        }
+        if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {
+            Button { onAction?(.example) } label: { Label("收进示例", systemImage: "text.quote") }
+        }
+        if !mine && !message.turnId.isEmpty {
+            Button { onAction?(.served) } label: { Label("生成信息", systemImage: "info.circle") }
+        }
+        Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
         Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
     }
 
@@ -930,7 +1039,7 @@ struct MessageRow: View {
             DragGesture(minimumDistance: 12, coordinateSpace: .global)
                 .onChanged { v in
                     let w = UIScreen.main.bounds.width
-                    guard v.startLocation.x > 24, v.startLocation.x < w - 24,
+                    guard !picking, v.startLocation.x > 24, v.startLocation.x < w - 24,
                           abs(v.translation.width) > abs(v.translation.height) * 1.4 else { return }
                     swipeX = max(-64, min(64, v.translation.width * 0.6))
                 }
