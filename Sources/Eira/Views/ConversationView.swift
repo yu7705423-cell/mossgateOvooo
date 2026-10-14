@@ -529,6 +529,11 @@ struct ConversationView: View {
             }
         }
         .overlay(alignment: .bottomTrailing) { latestButton(proxy) }
+        // 面板展开、收起时，原本贴着底部的照样贴着底部
+        .onChange(of: showPanel || showStickers || typing) { _, _ in
+            guard atBottom, let id = messages.last?.id else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+        }
         .onAppear {
             if let focusId { jump(focusId) } else if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
         }
