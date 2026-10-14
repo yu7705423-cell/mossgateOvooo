@@ -355,6 +355,17 @@ enum ChatPrompt {
         }
         let stampOn = (s.raw["injectTime"]?.bool ?? true) && (s.raw["timeStamp"]?.bool ?? true)
         cap("time", on: stampOn, hot: true, line: nil) { Templates.get("skeleton.time", settings: s) }
+        // 译文：这段会话设了目标语言时，每条消息同一行跟一句 [译文：…]（随回复一起那一档，不多调接口）。
+        // 「这几种标记各跟一句译文」只列这段会话实际开着的那几样（网页版 4.373）
+        let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+        cap("translate", on: !lang.isEmpty, hot: true, line: nil) {
+            var marks: [String] = []
+            if chat.row.bool("narration") { marks.append("[旁白：…]") }
+            if InnerVoice.mode(chat) == "inline" { marks.append("[心声：…]") }
+            let list = marks.count > 1 ? marks.dropLast().joined(separator: ", ") + " and " + marks.last! : (marks.first ?? "")
+            let marked = list.isEmpty ? "" : Templates.render("skeleton.translate-marked", ["list": list], settings: s)
+            return Templates.render("skeleton.translate", ["lang": lang, "marked": marked.isEmpty ? "" : " " + marked], settings: s)
+        }
 
         var out = ""
         if !lines.isEmpty {

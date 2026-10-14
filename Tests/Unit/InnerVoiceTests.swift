@@ -63,4 +63,24 @@ final class InnerVoiceTests: StoreTestCase {
         XCTAssertEqual(InnerVoice.mode(chat), "off")
         XCTAssertTrue(ExtraCalls.active(.load()).isEmpty)
     }
+
+    /// 翻译（随回复一起）：设了目标语言才写进提示词；译文挂在那一条上，不多调接口。
+    func testInlineTranslate() async throws {
+        var c = try XCTUnwrap(Repo.chat("chat_a"))
+        let char = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertFalse(try ChatPrompt.build(chat: c, char: char, settings: .load()).system.contains("[顺带给出译文]"))
+        c.row["translateTo"] = .string("English")
+        c.row["innerMode"] = .string("inline")
+        try Repo.save(c)
+        let b = try ChatPrompt.build(chat: c, char: char, settings: .load())
+        XCTAssertTrue(b.system.contains("[顺带给出译文]"))
+        XCTAssertTrue(b.system.contains("into English"))
+        XCTAssertTrue(b.system.contains("[心声：…] lines are each followed"))
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("你好 [译文：Hello]")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let last = try XCTUnwrap(Repo.messages(chatId: "chat_a").last)
+        XCTAssertEqual(last.content, "你好")
+        XCTAssertEqual(last.row.string("translation"), "Hello")
+    }
 }

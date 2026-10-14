@@ -11,6 +11,7 @@ struct ChatSettingsView: View {
     @State private var narration = false
     @State private var innerMode = "off"
     @State private var innerWhat = ""
+    @State private var translateTo = ""
     @State private var presetId = ""
     @State private var summary = ""
     @State private var presets: [AppSettings.Preset] = []
@@ -47,6 +48,13 @@ struct ChatSettingsView: View {
                      ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
                      : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
                      : "开启后显示角色每轮话语背后的想法。")
+            }
+            Section {
+                TextField("译成哪种语言（留空为不翻译）", text: $translateTo)
+            } header: {
+                Text("翻译")
+            } footer: {
+                Text("填写后，角色每条消息在同一行附上译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。")
             }
             Section {
                 Picker("预设", selection: $presetId) {
@@ -136,6 +144,7 @@ struct ChatSettingsView: View {
             chat = c
             pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration")
             innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat")
+            translateTo = c.row.string("translateTo")
             presetId = c.presetId; summary = c.summary
             presets = AppSettings.load().presets
             loaded = true
@@ -154,6 +163,8 @@ struct ChatSettingsView: View {
         if presetId != c.presetId { f["presetId"] = .string(presetId) }
         if summary != c.summary { f["summary"] = .string(summary) }
         if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }
+        let lang = translateTo.trimmingCharacters(in: .whitespaces)
+        if lang != c.row.string("translateTo") { f["translateTo"] = .string(String(lang.prefix(40))) }
         if innerWhat != c.row.string("innerWhat") { f["innerWhat"] = .string(String(innerWhat.prefix(300))) }
         guard !f.isEmpty else { return }
         var row = c.row
