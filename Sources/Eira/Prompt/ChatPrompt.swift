@@ -334,8 +334,8 @@ enum ChatPrompt {
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
-    static let capIds = ["image", "voice", "ties", "listen", "agenda", "pact", "sticker", "quote", "transfer", "gift", "location", "takeout",
-                         "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
+    static let capIds = ["image", "voice", "ties", "listen", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
+                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -397,6 +397,11 @@ enum ChatPrompt {
         cap("sticker", on: !stickers.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.sticker", ["names": stickers], settings: s)
         }
+        // 往自己那台手机的相册里存一张。开关在「角色手机 - 相册」，默认关
+        cap("keepphoto", on: Theirs.keepOn(char.id), hot: used(#"[\[【]存图"#),
+            line: "Save a photo to your own phone: write a line on its own, [存图：what you are keeping]. A photo just sent to you is the one saved") {
+            Templates.get("skeleton.keepphoto", settings: s)
+        }
         cap("quote", on: msgs.count >= 2, hot: used(#"[\[【](引用|回复)"#),
             line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
             Templates.get("skeleton.quote", settings: s)
@@ -419,6 +424,13 @@ enum ChatPrompt {
         cap("takeout", on: char.row["canTakeout"]?.bool != false, hot: used(#"^takeout$|[\[【](外卖|请客|代付)"#) || pending("takeout"),
             line: "Order delivery: [外卖：item amount] for yourself, [请客：…] for them, [代付：…] paid by them; for an order they placed, write [要了] or [不要]") {
             Templates.get("skeleton.takeout", settings: s)
+        }
+        // 改自己手机的锁屏密码（网页版 4.222）：离上一次改不满设定的天数就不给，这一轮刚聊到密码时照样给。不告诉它现在的密码
+        cap("lockcode", on: char.row["canChangeLock"]?.bool != false && chat.characterIds.count <= 1
+                && (Theirs.lockCooled(char) || Theirs.askedLock(Array(msgs))),
+            hot: Theirs.askedLock(Array(msgs)) || used(#"[\[【]改密码"#),
+            line: "Change the passcode of your own phone: write a line on its own, [改密码：new digits｜what the digits are]") {
+            Templates.get("skeleton.lockcode", settings: s)
         }
         cap("pat", on: char.row["canPat"]?.bool != false, hot: used(#"拍了拍|[\[【]拍"#),
             line: "Nudge: write a line on its own, [拍一拍]") {

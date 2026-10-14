@@ -296,6 +296,11 @@ enum Interact {
 
     /// 「已收款」「已拆开」那一行删掉，就当这次处理没发生过，那一笔回到待处理（网页版 dropMessage）。
     static func unsettle(_ notice: Message) throws {
+        // 角色改锁屏密码的那一行：放回换之前那一份
+        if notice.kind == "notice", let u = notice.row["lockUndo"]?.object, let charId = u["charId"]?.string {
+            try Theirs.restoreLock(charId, u["prev"])
+            return
+        }
         guard notice.kind == "notice", case let id = notice.row.string("settledId"), !id.isEmpty,
               let row = try Database.shared.get(Collections.messages, id: id) else { return }
         if notice.row.string("settledKind") == "pact" {

@@ -123,8 +123,17 @@ final class ReplyParserTests: XCTestCase {
 
     /// 原生版还没有的那几件事：认出来就不落气泡
     func testUnsupportedActionLinesDropped() {
-        let r = ReplyParser.split("好\n[去电]\n[批准]\n[暂停]\n[同行]\n[全员禁言]\n[存图：海边]\n[視頻去電]\n嗯")
+        let r = ReplyParser.split("好\n[去电]\n[批准]\n[暂停]\n[同行]\n[全员禁言]\n[視頻去電]\n嗯")
         XCTAssertEqual(r.parts.map(\.text), ["好", "嗯"])
+    }
+
+    /// 角色手机的两个标记：存图（整行，可不带括号）、改密码（竖线后是这串数字是什么）
+    func testKeepAndLockcode() {
+        let r = ReplyParser.split("[存图：海边]\n[改密码：0520｜纪念日]\n嗯")
+        XCTAssertEqual(r.parts.map(\.type), [.keep, .lockcode, .text])
+        XCTAssertEqual(r.parts[0].text, "海边")
+        XCTAssertEqual(r.parts[1].text, "0520")
+        XCTAssertEqual(r.parts[1].extra, "纪念日")
     }
 
     func testDmAndRecallPost() {

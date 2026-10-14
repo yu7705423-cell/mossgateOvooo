@@ -26,9 +26,9 @@ const APPS = {
   'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'StatusBarViews.swift': '聊天',
   'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天',
   'DailyViews.swift': '日常', 'DiaryViews.swift': '日记', 'MusicViews.swift': '音乐', 'HomeEditViews.swift': '主屏',
-  'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康',
+  'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康', 'TheirsViews.swift': '角色手机',
 };
-const ORDER = ['聊天', '联系', '设定集', '日常', '日记', '音乐', '相册', '情侣空间', '健康', '主屏', '设置'];
+const ORDER = ['聊天', '联系', '设定集', '日常', '日记', '音乐', '相册', '情侣空间', '健康', '角色手机', '主屏', '设置'];
 
 /** 从 i（指向开引号）读一个字符串字面量，返回 [文字, 结束位置] */
 function literal(s, i) {

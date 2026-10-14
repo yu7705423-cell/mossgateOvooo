@@ -386,6 +386,25 @@ enum ChatEngine {
         case .letter:
             guard !chat.isGroup else { return nil }
             return try Space.letterMessage(chatId: chat.id, role: .char, authorId: char.id, title: p.extra ?? "", body: p.text, turnId: turnId)
+        case .lockcode:
+            // 角色改自己手机的锁屏密码（网页版 4.222）。离上一次不满设定的天数、这一轮又没聊到密码，就当没写过。
+            // 落一行提示（不写数字），提示上存着换之前那一份，删掉这一行（重新生成）时放回去
+            guard char.row["canChangeLock"]?.bool != false, !chat.isGroup else { return nil }
+            let recent = (try? Repo.messages(chatId: chat.id, limit: 20)) ?? []
+            guard Theirs.lockCooled(char) || Theirs.askedLock(recent),
+                  let prev = try Theirs.changeLock(char.id, code: p.text, why: p.extra ?? "") else { return nil }
+            var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[\(char.name)改了手机的锁屏密码]", kind: "notice", turnId: turnId)
+            m.row["lockUndo"] = .object(["charId": .string(char.id), "prev": prev])
+            return m
+        case .keep:
+            // 往自己那台手机的相册存一张。你刚发过来的那张图就是它要存的那张（同一个 id，不另拷一份）
+            guard !p.text.isEmpty else { return nil }
+            let imageId = Theirs.justSent(chat.id, turnId: turnId)
+            var row: [String: JSONValue] = ["note": .string(p.text), "from": .string(imageId == nil ? "" : "you")]
+            if let imageId { row["imageId"] = .string(imageId) }
+            guard try Theirs.addPhotos(char.id, [.object(row)]) > 0 else { return nil }
+            return Message.new(chatId: chat.id, role: .char, authorId: char.id,
+                               content: "[\(char.name)\(imageId == nil ? "存了一张照片" : "把这张照片存了下来")]", kind: "notice", turnId: turnId)
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -481,7 +500,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

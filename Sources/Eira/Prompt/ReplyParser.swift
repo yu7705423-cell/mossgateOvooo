@@ -21,6 +21,8 @@ enum ReplyParser {
         case tie
         // 情侣空间：约定、约定完成（text 是那件事）、信（extra 是信封上的标题）
         case pact, pactDone, letter
+        // 角色手机：存图（text 是角色给这张写的一句）、改密码（text 是数字，extra 是这串数字是什么）
+        case keep, lockcode
     }
 
     struct Part: Equatable, Sendable {
@@ -65,7 +67,7 @@ enum ReplyParser {
     private static let recallLine = lineMark("撤回|撤回消息|撤回上一条")
     // 「撤回动态」要先认：两个都以「撤回」开头
     private static let recallPostLine = lineMark("撤回动态|删除动态")
-    // 原生版还没有的那几件事（来电、一起看、出行、情侣账户、群管理、千丝万缕、存图）：标记认出来就不落气泡，
+    // 原生版还没有的那几件事（来电、一起看、出行、情侣账户、群管理、千丝万缕）：标记认出来就不落气泡，
     // 从前原样变成一条文字（网页版 reply.js 里各自是一件事，不占气泡）
     private static let unsupportedLines: [NSRegularExpression] = [
         lineMark("(视频)?(?:去电|来电|打电话|拨打|通话|call)"),
@@ -81,8 +83,8 @@ enum ReplyParser {
         lineMark("解除全员禁言|关闭全员禁言"),
         lineMark("不覆盖"),
         lineMark("覆盖"),
-        regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive]),
     ]
+    private static let keepLine = regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive])
     private static let silenceLine = lineMark("不回复|已读不回|不回")
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
     private static let patLine = lineMark("拍一拍|拍拍|戳一戳")
@@ -239,6 +241,11 @@ enum ReplyParser {
                     p.extra = title
                     push(p)
                 }
+            case "改密码":
+                let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                var p = Part(type: .lockcode, text: (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces))
+                p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
+                push(p)
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"
@@ -312,6 +319,10 @@ enum ReplyParser {
             if ReplyParser.matches(ReplyParser.takeLine, t) { var p = Part(type: .meal, text: ""); p.flag = true; push(p); return }
             if ReplyParser.matches(ReplyParser.nopeLine, t) { push(Part(type: .meal, text: "")); return }
             if ReplyParser.matches(ReplyParser.recallPostLine, t) { push(Part(type: .recallPost, text: "")); return }
+            if let m = ReplyParser.match(ReplyParser.keepLine, t) {
+                push(Part(type: .keep, text: m[1].trimmingCharacters(in: .whitespaces)))
+                return
+            }
             if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))

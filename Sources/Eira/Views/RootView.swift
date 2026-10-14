@@ -91,6 +91,7 @@ struct AppHost: View {
         case "album": NavigationStack { AlbumHomeView() }
         case "space": NavigationStack { SpaceHomeView() }
         case "health": NavigationStack { HealthHomeView() }
+        case "theirs": NavigationStack { TheirsPickView() }
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }
