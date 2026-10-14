@@ -9,6 +9,7 @@ final class ProactiveTests: StoreTestCase {
         UserDefaults.standard.removeObject(forKey: "phone.proactive.next")
         BgPush.setDevice(nil)
         URLProtocol.registerClass(MockNet.self)
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
         try importFixture("data.json")
         try setSettings(["services": .object(["chat": .object([
             "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
