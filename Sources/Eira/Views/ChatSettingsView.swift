@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// 一段会话的设置。从会话右上角进来（网页版第 5 条：这段对话的事放在这段对话里）。
@@ -22,6 +23,10 @@ struct ChatSettingsView: View {
     /// 在这里打开角色卡（编辑资料）：一张自带导航的页，从「聊天」与「联系」进来的会话都打得开
     @State private var editingChar: String?
     @State private var cardPath = NavigationPath()
+    /// 只在这段会话里换头像：换谁（角色 id 或 me），选好图后写进 chat.faces
+    @State private var faceKey = ""
+    @State private var pickingFace = false
+    @State private var facePhoto: PhotosPickerItem?
     @State private var innerMode = "off"
     @State private var innerWhat = ""
     @State private var translateTo = ""
@@ -42,6 +47,7 @@ struct ChatSettingsView: View {
     var body: some View {
         Form {
             if chat?.isGroup == true { GroupMembersSection(chatId: chatId) }
+            if let c = chat { faceSection(c) }
             if let onSearch {
                 Section {
                     Button(action: onSearch) {
@@ -193,12 +199,67 @@ struct ChatSettingsView: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { editingChar = nil } } }
             }
         }
+        .photosPicker(isPresented: $pickingFace, selection: $facePhoto, matching: .images)
+        .onChange(of: facePhoto) { _, item in
+            guard let item else { return }
+            facePhoto = nil
+            let key = faceKey
+            Task {
+                do {
+                    guard let data = try await item.loadTransferable(type: Data.self) else { return }
+                    let id = try Images.save(data, maxPixel: 512)
+                    try ChatFaces.set(chatId, key: key, imageId: id)
+                    await MainActor.run { reloadChat() }
+                } catch {
+                    await MainActor.run { problem = "头像未能保存：\(error.localizedDescription)" }
+                }
+            }
+        }
         .onChange(of: narration) { _, _ in save() }
         .onChange(of: userNarration) { _, _ in save() }
         .onChange(of: presetId) { _, _ in save() }
         .onChange(of: innerMode) { _, _ in save() }
         .onChange(of: innerStyle) { _, _ in save() }
         .onDisappear(perform: save)
+    }
+
+    /// 只在这段会话里换头像（网页版 4.437）：角色卡与主页上换的才是所有会话一起换
+    @ViewBuilder
+    private func faceSection(_ c: Chat) -> some View {
+        let faces = ChatFaces.faces(c)
+        let members = c.characterIds.compactMap { try? Repo.character($0) }
+        Section {
+            if c.isGroup {
+                Menu("更换成员的头像") {
+                    ForEach(members) { m in
+                        Button(GroupChat.nameIn(c, m)) { faceKey = m.id; pickingFace = true }
+                    }
+                }
+            } else if let m = members.first {
+                Button("更换角色的头像") { faceKey = m.id; pickingFace = true }
+            }
+            Button("更换我的头像") { faceKey = ChatFaces.me; pickingFace = true }
+            ForEach(members.filter { faces[$0.id] != nil }) { m in
+                Button(c.isGroup ? "恢复「\(GroupChat.nameIn(c, m))」的头像" : "恢复角色的头像") { clearFace(m.id) }
+            }
+            if faces[ChatFaces.me] != nil {
+                Button("恢复我的头像") { clearFace(ChatFaces.me) }
+            }
+        } header: {
+            Text("头像")
+        } footer: {
+            Text("只在这段会话中更换，其他会话、联系人、朋友圈与资料页仍显示原来的头像。所有会话一起换，在角色卡或主页中更换。")
+        }
+    }
+
+    private func clearFace(_ key: String) {
+        do { try ChatFaces.clear(chatId, key: key); reloadChat() }
+        catch { problem = "头像未能恢复：\(error.localizedDescription)" }
+    }
+
+    private func reloadChat() {
+        chat = try? Repo.chat(chatId)
+        NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
     }
 
     private func refreshBacklog() {

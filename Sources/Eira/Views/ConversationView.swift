@@ -735,7 +735,8 @@ struct ConversationView: View {
         case .stack(let list):
             let head = list[0]
             ImageStackRow(msgs: list, mine: head.role == .user,
-                          avatar: head.role == .user ? (me?.avatar ?? "") : (speaker(of: head)?.avatar ?? ""),
+                          avatar: head.role == .user ? ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? "")
+                              : speaker(of: head).map { ChatFaces.of(chat, key: $0.id, fallback: $0.avatar) } ?? "",
                           name: head.role == .user ? (me?.name ?? "我") : (speaker(of: head)?.displayName ?? ""),
                           onOpen: { viewing = ViewingImage(id: $0) },
                           onExpand: { openStacks.insert(head.id) })
@@ -797,13 +798,14 @@ struct ConversationView: View {
                           stamp: stamp,
                           stampBelow: ctx.stampMode == "below",
                           read: read,
-                          meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
+                          meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""), meName: me?.name ?? "我",
                           latestTurn: ctx.latestTurn,
                           translateLang: chat?.row.string("translateTo") ?? "",
                           quoteName: quoteName(of: m),
                           speakerName: groupName(of: m),
                           innerCard: chat.map { InnerVoice.style($0) == "card" } ?? false,
                           narrColor: look.narr,
+                          charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -1312,6 +1314,8 @@ struct MessageRow: View {
     var innerCard = false
     /// 旁白的文字颜色（聊天背景里设的，空为默认的灰）
     var narrColor = ""
+    /// 只在这段会话里用的角色头像（空为角色自己的那张）
+    var charFace = ""
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1466,7 +1470,7 @@ struct MessageRow: View {
     }
 
     private func avatarView(_ mine: Bool) -> some View {
-        Avatar(imageId: mine ? meAvatar : (char?.avatar ?? ""), name: mine ? meName : (char?.displayName ?? ""))
+        Avatar(imageId: mine ? meAvatar : (charFace.isEmpty ? (char?.avatar ?? "") : charFace), name: mine ? meName : (char?.displayName ?? ""))
             .onTapGesture {
                 guard !mine else { return }
                 if innerCard { onAction?(.innerCard); return }

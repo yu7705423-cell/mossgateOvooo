@@ -109,7 +109,7 @@ struct ChatListView: View {
                     : (first?.displayName ?? "已删除的角色")
                 let last = try Repo.messages(chatId: chat.id, limit: 1).last
                 return Item(chat: chat, title: title,
-                            avatar: chat.isGroup ? chat.avatar : (first?.avatar ?? ""),
+                            avatar: chat.isGroup ? chat.avatar : first.map { ChatFaces.of(chat, key: $0.id, fallback: $0.avatar) } ?? "",
                             preview: last.map(previewText) ?? "")
             }
             loadError = nil

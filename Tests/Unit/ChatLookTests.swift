@@ -48,3 +48,25 @@ final class ChatLookTests: StoreTestCase {
         XCTAssertFalse(ChatLook.of(try XCTUnwrap(Repo.chat("chat_a"))).isSet)
     }
 }
+
+/// 只在这段会话里换头像：专用的优先，恢复后用回自己的那张
+final class ChatFacesTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testSetAndClear() throws {
+        XCTAssertEqual(ChatFaces.of(try Repo.chat("chat_a"), key: "char_a", fallback: "img_a"), "img_a")
+        try ChatFaces.set("chat_a", key: "char_a", imageId: "img_new")
+        try ChatFaces.set("chat_a", key: ChatFaces.me, imageId: "img_me")
+        let c = try XCTUnwrap(Repo.chat("chat_a"))
+        XCTAssertEqual(ChatFaces.of(c, key: "char_a", fallback: "img_a"), "img_new")
+        XCTAssertEqual(ChatFaces.of(c, key: ChatFaces.me, fallback: ""), "img_me")
+        // 角色自己的头像不动
+        XCTAssertEqual(try Repo.character("char_a")?.avatar, "img_a")
+        XCTAssertTrue(try ChatFaces.clear("chat_a", key: "char_a"))
+        XCTAssertFalse(try ChatFaces.clear("chat_a", key: "char_a"))
+        XCTAssertEqual(ChatFaces.of(try Repo.chat("chat_a"), key: "char_a", fallback: "img_a"), "img_a")
+    }
+}
