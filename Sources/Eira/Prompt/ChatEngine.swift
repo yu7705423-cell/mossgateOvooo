@@ -204,6 +204,9 @@ enum ChatEngine {
         switch p.type {
         case .text:
             m = make("text", p.text)
+            // 命中禁写词的留个记号，气泡下方标出来。本地扫的，不依赖模型听不听话（网页版 ban.js）
+            let banned = Ban.scan(p.text, Ban.list(.load()))
+            if !banned.isEmpty { m.row["ban"] = .array(banned.map { .string($0) }) }
         case .image:
             m = make("image", "[图片：\(p.text)]")
             m.row["prompt"] = .string(p.text)

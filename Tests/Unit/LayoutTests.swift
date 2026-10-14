@@ -146,5 +146,27 @@ final class LayoutTests: StoreTestCase {
         XCTAssertEqual(Ban.list(AppSettings(raw: ["banPhrases": .string("a b\n\n a b \n把*揉")])), ["a b", "把*揉"])
         XCTAssertTrue(Ban.tooBroad("把*"))
         XCTAssertFalse(Ban.tooBroad("把*揉"))
+        // 星号代替最多十二个字；空白可有可无；英文不分大小写
+        XCTAssertEqual(Ban.scan("把她整个人揉进骨血里", ["把*揉进骨血里"]), ["把*揉进骨血里"])
+        XCTAssertEqual(Ban.scan("把这一段远远超过十二个字的内容全部揉进骨血里", ["把*揉进骨血里"]), [])
+        XCTAssertEqual(Ban.scan("屋里空气中弥漫着咖啡香", ["空气中 弥漫着"]), ["空气中 弥漫着"])
+        XCTAssertEqual(Ban.scan("A Chill ran down", ["a chill"]), ["a chill"])
+        XCTAssertEqual(Ban.scan("空气里弥漫着", ["空气中弥漫着"]), [])
+    }
+
+    /// 角色的回复命中禁写词：那一条带上记号。
+    func testBanMarkedOnReply() async throws {
+        try importFixture("data.json")
+        try setSettings(["banPhrases": .array([.string("不易察觉")]),
+                         "services": .object(["chat": .object(["presets": .array([.object(["id": .string("p"), "provider": .string("anthropic"),
+                            "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])])])])])
+        URLProtocol.registerClass(MockNet.self)
+        defer { URLProtocol.unregisterClass(MockNet.self) }
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("他露出不易察觉的笑\n好")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        let list = try Repo.messages(chatId: "chat_a")
+        XCTAssertEqual(list.first { $0.content.contains("不易察觉") }?.row["ban"]?.array?.first?.string, "不易察觉")
+        XCTAssertNil(list.last?.row["ban"])
+        XCTAssertTrue(try build().system.contains("不易察觉"))
     }
 }

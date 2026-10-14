@@ -595,6 +595,9 @@ struct MessageRow: View {
                     Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
                 }
                 reactions
+                if !mine, let ban = message.row["ban"]?.array, !ban.isEmpty {
+                    Text("命中禁写：\(ban.compactMap(\.string).joined(separator: "、"))").font(.caption).foregroundStyle(Theme.danger)
+                }
             }
             if !mine { Spacer(minLength: 48) }
         }

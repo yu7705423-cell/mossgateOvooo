@@ -644,6 +644,22 @@ enum Ban {
         return out
     }
 
+    /// 一条词条编译成正则：星号代替中间最多十二个字（不跨行），空白当可有可无，不分大小写（网页版 reOf）。
+    static func regex(_ phrase: String) -> NSRegularExpression? {
+        let body = phrase.trimmingCharacters(in: .whitespaces).components(separatedBy: "*")
+            .map { NSRegularExpression.escapedPattern(for: $0).replacingOccurrences(of: #"\s+"#, with: #"\\s*"#, options: .regularExpression) }
+            .joined(separator: "[^\\n]{0,12}")
+        guard !body.isEmpty else { return nil }
+        return try? NSRegularExpression(pattern: body, options: [.caseInsensitive])
+    }
+
+    /// 这段话踩了哪几条。回来的是词条原文。
+    static func scan(_ text: String, _ phrases: [String]) -> [String] {
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return [] }
+        let range = NSRange(text.startIndex..., in: text)
+        return phrases.filter { regex($0)?.firstMatch(in: text, range: range) != nil }
+    }
+
     /// 去掉星号与空格后不到两个字的，几乎每段话都会命中。
     static func tooBroad(_ p: String) -> Bool {
         p.replacingOccurrences(of: "*", with: "").filter { !$0.isWhitespace }.count < 2
