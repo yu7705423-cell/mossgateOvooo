@@ -92,7 +92,7 @@ struct HomeBar: View {
             .accessibilityElement()
             .accessibilityLabel("返回主屏")
             .accessibilityAddTraits(.isButton)
-            .accessibilityAction(perform: close)
+            .accessibilityAction(.default) { close() }
     }
 }
 
