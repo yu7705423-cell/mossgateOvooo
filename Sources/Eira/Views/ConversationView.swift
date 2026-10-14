@@ -484,13 +484,7 @@ struct ConversationView: View {
             Color.clear.frame(height: 1)
                 .onAppear { atBottom = true; unseen = 0 }
                 .onDisappear { atBottom = false }
-            if busy {
-                Text("正在回复")
-                    .font(.footnote).foregroundStyle(Theme.tertiaryText)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, Theme.pad)
-                    .id("busy")
-            } else if let turn {
+            if !busy, let turn {
                 turnBar(turn)
             }
         }
@@ -589,9 +583,10 @@ struct ConversationView: View {
         return char?.id == id ? (char?.displayName ?? "对方") : "对方"
     }
 
-    /// 标题：群名加人数（成员与我，网页版 group.headcount），单聊是角色备注名
+    /// 标题：生成中写「正在输入」；群名加人数（成员与我，网页版 group.headcount），单聊是角色备注名
     private var pageTitle: String {
         guard let chat else { return "" }
+        if busy { return "正在输入" }
         guard chat.isGroup else { return char?.displayName ?? chat.title }
         let list = chat.characterIds.compactMap { members[$0] }
         return "\(GroupChat.title(chat, members: list))（\(list.count + 1)）"
