@@ -63,7 +63,9 @@ enum ChatEngine {
         // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
         guard !ReplyParser.split(result.text).parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         if let old { try removeRows(old.rows, turnId: old.id, chatId: chat.id) }
-        try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
+        let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
+        // 心声「单独生成」那一档：整轮说完之后另调一次（默认关，在会话设置里开）
+        if let m = await InnerVoice.attach(chat: chat, char: char, created: created) { onRow(m) }
     }
 
     // MARK: - 轮与版本
@@ -108,8 +110,9 @@ enum ChatEngine {
     }
 
     /// 把一次回复落成消息。parts 之间按网页版的节奏停顿：非文字 700 毫秒，文字 320 + 每字 28 毫秒，最多 1.8 秒。
+    @discardableResult
     static func write(raw: String, chat: Chat, char: Character, turnId: String, versions: Versions,
-                      instant: Bool = false, onRow: @escaping OnRow) async throws {
+                      instant: Bool = false, onRow: @escaping OnRow) async throws -> [Message] {
         let parsed = ReplyParser.split(raw)
         guard !parsed.parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         func head(_ m: inout Message) {
@@ -158,6 +161,7 @@ enum ChatEngine {
             c.row.touch()
             try Repo.save(c)
         }
+        return created
     }
 
     /// 不是一条消息、而是一件事的那几样：收款、拆礼物、拍一拍、回应、改备注（网页版 reply.js 的 renderPart）。

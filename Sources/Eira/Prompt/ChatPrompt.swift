@@ -63,6 +63,7 @@ enum ChatPrompt {
         if !core.isEmpty { P["core"] = Templates.render("skeleton.core", ["core": core], settings: s) }
         P["ban"] = banPiece(s)
         P["genderTail"] = gender
+        P["inner"] = InnerVoice.piece(chat, settings: s)
         let arranged = Layout.arrange("chat", pieces: P, settings: s, names: names)
 
         // 放在历史末尾的那一段：条目里排在聊天记录下面的（默认是「此刻的状态」），再加本轮相关记忆

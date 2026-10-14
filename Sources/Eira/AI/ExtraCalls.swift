@@ -25,6 +25,10 @@ enum ExtraCalls {
                       if let n = s.raw["autoSummarizeChars"]?.number, n > 0 { parts.append("未总结文字达到 \(Int(n)) 字") }
                       return parts.joined(separator: "，或") + "时一次（走记忆接口，没单独配时走副用）"
                   }),
+        // 挂在会话上，不是全局设置：有一段会话开了就算开着
+        ExtraCall(id: "inner", label: "心声单独生成",
+                  isOn: { _ in ((try? Repo.chats()) ?? []).contains { $0.row.string("innerMode") == "apart" } },
+                  when: { _ in "开了这一档的对话，每一轮在整轮说完之后再一次" }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

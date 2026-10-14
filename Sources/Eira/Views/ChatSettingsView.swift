@@ -9,6 +9,8 @@ struct ChatSettingsView: View {
     @State private var pinned = false
     @State private var muted = false
     @State private var narration = false
+    @State private var innerMode = "off"
+    @State private var innerWhat = ""
     @State private var presetId = ""
     @State private var summary = ""
     @State private var presets: [AppSettings.Preset] = []
@@ -30,6 +32,21 @@ struct ChatSettingsView: View {
                 Toggle("旁白", isOn: $narration)
             } footer: {
                 Text("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
+            }
+            Section {
+                Picker("心声", selection: $innerMode) {
+                    Text("关闭").tag("off")
+                    Text("随回复一起").tag("inline")
+                    Text("单独生成").tag("apart")
+                }
+                if innerMode != "off" {
+                    TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
+                }
+            } footer: {
+                Text(innerMode == "apart"
+                     ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
+                     : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
+                     : "开启后显示角色每轮话语背后的想法。")
             }
             Section {
                 Picker("预设", selection: $presetId) {
@@ -87,6 +104,7 @@ struct ChatSettingsView: View {
         .onChange(of: muted) { _, _ in save() }
         .onChange(of: narration) { _, _ in save() }
         .onChange(of: presetId) { _, _ in save() }
+        .onChange(of: innerMode) { _, _ in save() }
         .onDisappear(perform: save)
     }
 
@@ -117,6 +135,7 @@ struct ChatSettingsView: View {
             guard let c = try Repo.chat(chatId) else { problem = "这段会话不存在"; return }
             chat = c
             pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration")
+            innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat")
             presetId = c.presetId; summary = c.summary
             presets = AppSettings.load().presets
             loaded = true
@@ -134,6 +153,8 @@ struct ChatSettingsView: View {
         if narration != c.row.bool("narration") { f["narration"] = .bool(narration) }
         if presetId != c.presetId { f["presetId"] = .string(presetId) }
         if summary != c.summary { f["summary"] = .string(summary) }
+        if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }
+        if innerWhat != c.row.string("innerWhat") { f["innerWhat"] = .string(String(innerWhat.prefix(300))) }
         guard !f.isEmpty else { return }
         var row = c.row
         for (k, v) in f { row[k] = v }
