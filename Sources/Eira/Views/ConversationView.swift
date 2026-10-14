@@ -48,6 +48,7 @@ struct ConversationView: View {
     @State private var dicing = false
     @State private var typingPhoto = false
     @State private var bindingSticker: Message?
+    @State private var innerCardFor: String?
     /// 展开了的那几叠图（按第一张的 id）
     @State private var openStacks: Set<String> = []
     @State private var photoText = ""
@@ -136,6 +137,10 @@ struct ConversationView: View {
             Button("保留图片描述，重新生成图片") { generate(regenerate: true, imageKeep: .redraw) }
         } message: {
             Text("一起重新生成时，原图片删除，新回复中的图片按新描述生成。保留图片时不调用生图接口；重新生成图片时按原描述各重画一次，每张调用一次生图接口。")
+        }
+        .sheet(item: Binding(get: { innerCardFor.map { ViewingImage(id: $0) } }, set: { innerCardFor = $0?.id })) { v in
+            InnerCardView(chatId: chatId, msgId: v.id, char: char)
+                .presentationDetents([.medium, .large])
         }
         .sheet(item: $bindingSticker) { m in
             NavigationStack {
@@ -769,6 +774,7 @@ struct ConversationView: View {
                           translateLang: chat?.row.string("translateTo") ?? "",
                           quoteName: quoteName(of: m),
                           speakerName: groupName(of: m),
+                          innerCard: chat.map { InnerVoice.style($0) == "card" } ?? false,
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -921,6 +927,10 @@ struct ConversationView: View {
             askRegenerate()
         case .bindSticker:
             bindingSticker = m
+        case .innerCard:
+            // 这一轮里带心声的那一条；没有就从最新的那张开始翻
+            let hit = messages.last { $0.turnId == m.turnId && !m.turnId.isEmpty && !($0.row["inner"]?.string ?? "").isEmpty }
+            innerCardFor = (hit ?? m).id
         case .revoice:
             var pending = m
             pending.row["media"] = .string("pending")
@@ -1247,7 +1257,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard }
 
     let message: Message
     let char: Character?
@@ -1268,6 +1278,8 @@ struct MessageRow: View {
     var quoteName = ""
     /// 群里气泡上方写的名字：有群昵称写群昵称
     var speakerName = ""
+    /// 心声显示成一张卡：点头像打开那张卡，不在气泡下展开
+    var innerCard = false
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1425,6 +1437,7 @@ struct MessageRow: View {
         Avatar(imageId: mine ? meAvatar : (char?.avatar ?? ""), name: mine ? meName : (char?.displayName ?? ""))
             .onTapGesture {
                 guard !mine else { return }
+                if innerCard { onAction?(.innerCard); return }
                 NotificationCenter.default.post(name: .eiraInnerToggle, object: message.turnId.isEmpty ? message.id : message.turnId)
             }
             .accessibilityAddTraits(mine ? [] : .isButton)

@@ -10,6 +10,14 @@ enum InnerVoice {
         return m == "inline" || m == "apart" ? m : "off"
     }
 
+    /// 显示方式（网页版 extras.innerStyle，每段会话一份）：quiet 气泡下面一行淡字，card 点头像打开一张卡。
+    /// 这段会话没选过就跟全局的设置
+    static func style(_ chat: Chat, settings s: AppSettings = .load()) -> String {
+        let own = chat.row.string("innerStyle")
+        if own == "quiet" || own == "card" { return own }
+        return s.raw["innerStyle"]?.string == "card" ? "card" : "quiet"
+    }
+
     /// 写什么：这段会话自己写的一句，没写用默认那句。
     static func what(_ chat: Chat, settings s: AppSettings) -> String {
         let own = chat.row.string("innerWhat").trimmingCharacters(in: .whitespacesAndNewlines)

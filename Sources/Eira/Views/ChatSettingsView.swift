@@ -16,6 +16,7 @@ struct ChatSettingsView: View {
     @State private var muted = false
     @State private var narration = false
     @State private var userNarration = false
+    @State private var innerStyle = "quiet"
     /// 在这里打开角色卡（编辑资料）：一张自带导航的页，从「聊天」与「联系」进来的会话都打得开
     @State private var editingChar: String?
     @State private var cardPath = NavigationPath()
@@ -90,6 +91,10 @@ struct ChatSettingsView: View {
                     Text("单独生成").tag("apart")
                 }
                 if innerMode != "off" {
+                    Picker("显示方式", selection: $innerStyle) {
+                        Text("淡色小字").tag("quiet")
+                        Text("打开一页").tag("card")
+                    }
                     TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
                 }
             } footer: {
@@ -187,6 +192,7 @@ struct ChatSettingsView: View {
         .onChange(of: userNarration) { _, _ in save() }
         .onChange(of: presetId) { _, _ in save() }
         .onChange(of: innerMode) { _, _ in save() }
+        .onChange(of: innerStyle) { _, _ in save() }
         .onDisappear(perform: save)
     }
 
@@ -217,7 +223,7 @@ struct ChatSettingsView: View {
             guard let c = try Repo.chat(chatId) else { problem = "这段会话不存在"; return }
             chat = c
             pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration"); userNarration = c.row.bool("userNarration")
-            innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat")
+            innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat"); innerStyle = InnerVoice.style(c)
             translateTo = c.row.string("translateTo")
             translateRules = c.row.string("translateRules")
             presetId = c.presetId; summary = c.summary
@@ -239,6 +245,7 @@ struct ChatSettingsView: View {
         if presetId != c.presetId { f["presetId"] = .string(presetId) }
         if summary != c.summary { f["summary"] = .string(summary) }
         if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }
+        if innerStyle != InnerVoice.style(c) { f["innerStyle"] = .string(innerStyle) }
         let lang = translateTo.trimmingCharacters(in: .whitespaces)
         if lang != c.row.string("translateTo") { f["translateTo"] = .string(String(lang.prefix(40))) }
         if translateRules != c.row.string("translateRules") { f["translateRules"] = .string(String(translateRules.prefix(500))) }

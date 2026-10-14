@@ -211,3 +211,25 @@ final class ImageStackTests: XCTestCase {
         XCTAssertEqual(g.map { $0.count }, [2, 1, 1, 1, 2])
     }
 }
+
+/// 心声的显示方式与翻看历史
+final class InnerCardTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testStyleAndHistory() throws {
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        XCTAssertEqual(InnerVoice.style(chat), "quiet")
+        chat.row["innerStyle"] = .string("card")
+        XCTAssertEqual(InnerVoice.style(chat), "card")
+        var a = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "嗯")
+        a.row["inner"] = .string("第一句心声")
+        a = try Repo.append(a)
+        var b = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "好")
+        b.row["inner"] = .string("第二句心声")
+        b = try Repo.append(b)
+        XCTAssertEqual(InnerCardView.history("chat_a").map(\.id), [b.id, a.id])
+    }
+}
