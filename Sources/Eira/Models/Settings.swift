@@ -55,7 +55,7 @@ struct AppSettings: Sendable {
         try Database.shared.setKV(KVKey.settings, .object(raw))
     }
 
-    private var services: [String: JSONValue] { raw["services"]?.object ?? [:] }
+    var services: [String: JSONValue] { raw["services"]?.object ?? [:] }
     private var chat: [String: JSONValue] { services["chat"]?.object ?? [:] }
 
     var chatPresets: [ChatPreset] {
