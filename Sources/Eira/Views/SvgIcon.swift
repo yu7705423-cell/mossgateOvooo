@@ -17,7 +17,7 @@ struct SvgIcon: View {
             let k = sz.width / 24
             let t = CGAffineTransform(scaleX: k, y: k)
             for p in parts {
-                let path = Path(p.path.applying(t))
+                let path = Path(p.path).applying(t)
                 if p.fill { ctx.fill(path, with: .color(color.opacity(p.opacity))) }
                 if p.stroke {
                     ctx.stroke(path, with: .color(color.opacity(p.opacity)),
