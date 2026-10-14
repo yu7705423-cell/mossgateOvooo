@@ -182,6 +182,8 @@ enum ChatEngine {
 
     /// 一次回复切成「谁说了什么」。一对一时全是同一个人；群聊时先按名字拆回各人，再各自切（网页版 renderGroupTurn）。
     static func plan(raw: String, chat: Chat, char: Character) -> (plan: Plan, think: String, stamp: String?) {
+        // 状态块不落成气泡：拆分之前先摘掉（网页版 statusbar.lift）
+        let raw = StatusBar.lift(raw).text
         guard chat.isGroup else {
             let parsed = ReplyParser.split(raw, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             return (parsed.parts.map { (part: $0, char: char) }, parsed.think, parsed.stamp)
@@ -287,6 +289,15 @@ enum ChatEngine {
             m = try Repo.append(m)
             created.append(m)
             onRow(m)
+        }
+
+        // 状态栏：这一轮的值存在最后一条上，连同当场读到的记录值。没开就什么都不存
+        if !chat.isGroup, var lastRow = created.last,
+           let snap = StatusBar.snapshot(chat, vals: StatusBar.lift(raw).vals, char: char, settings: AppSettings.load()) {
+            lastRow.row["sbar"] = snap
+            try Repo.save(lastRow)
+            created[created.count - 1] = lastRow
+            onRow(lastRow)
         }
 
         if !created.isEmpty, var c = try Repo.chat(chat.id) {

@@ -779,6 +779,11 @@ struct ConversationView: View {
         var upTo: Double
         var latestTurn: String
         var prevOf: [String: Message]
+        /// 状态栏挂在哪儿（关着为空）、每一轮带着状态的那一条、每一轮的第一条、栏目设置
+        var statusAt: String = ""
+        var sbarByTurn: [String: Message] = [:]
+        var firstOfTurn: [String: String] = [:]
+        var statusItems: [String: StatusBar.Item] = [:]
     }
 
     private func rowContext() -> RowContext {
@@ -788,7 +793,20 @@ struct ConversationView: View {
             readOn: Receipt.on(st),
             upTo: Receipt.readUpTo(messages),
             latestTurn: messages.last { $0.role == .char }?.turnId ?? "",
-            prevOf: Dictionary(zip(messages.dropFirst().map(\.id), messages.dropLast()), uniquingKeysWith: { a, _ in a }))
+            prevOf: Dictionary(zip(messages.dropFirst().map(\.id), messages.dropLast()), uniquingKeysWith: { a, _ in a }),
+            statusAt: chat.map { StatusBar.config($0) }.map { $0.on ? $0.at : "" } ?? "",
+            sbarByTurn: Dictionary(messages.filter { !$0.turnId.isEmpty && $0.row["sbar"]?.object != nil }.map { ($0.turnId, $0) },
+                                   uniquingKeysWith: { _, b in b }),
+            firstOfTurn: Dictionary(messages.filter { !$0.turnId.isEmpty }.map { ($0.turnId, $0.id) }, uniquingKeysWith: { a, _ in a }),
+            statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }))
+    }
+
+    /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
+    private func statusFor(_ m: Message, _ ctx: RowContext) -> (msg: Message, top: Bool)? {
+        guard !ctx.statusAt.isEmpty, !m.turnId.isEmpty, let holder = ctx.sbarByTurn[m.turnId] else { return nil }
+        let top = ctx.statusAt.hasSuffix("top")
+        if ctx.statusAt.hasPrefix("last") { return holder.id == m.id ? (holder, top) : nil }
+        return ctx.firstOfTurn[m.turnId] == m.id ? (holder, top) : nil
     }
 
     /// 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
@@ -803,7 +821,10 @@ struct ConversationView: View {
                 Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
                     .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
             }
+            let status = statusFor(m, ctx)
+            if let status, status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.bottom, Theme.sp2) }
             messageRow(m, ctx)
+            if let status, !status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.top, Theme.sp2) }
         }
         // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
         .padding(.top, top)

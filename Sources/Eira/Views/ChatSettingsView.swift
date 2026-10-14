@@ -98,6 +98,19 @@ struct ChatSettingsView: View {
             } footer: {
                 Text("对所有会话生效。")
             }
+            if chat?.isGroup == false {
+                Section {
+                    NavigationLink {
+                        StatusBarSettingsView(chatId: chatId)
+                    } label: {
+                        HStack {
+                            Text("状态栏")
+                            Spacer()
+                            Text(chat.map(StatusBar.active) == true ? "已开启" : "关闭").foregroundStyle(Theme.text3)
+                        }
+                    }
+                }
+            }
             ShowSection()
             Section {
                 Toggle("旁白", isOn: $narration)

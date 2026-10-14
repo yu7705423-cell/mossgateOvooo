@@ -73,6 +73,8 @@ enum ChatPrompt {
         P["ban"] = banPiece(s)
         P["genderTail"] = gender
         P["inner"] = InnerVoice.piece(chat, settings: s)
+        // 状态栏：开着、有要模型写的栏目时才出现（网页版 4.399）。通话里没有
+        if call == nil { P["status"] = StatusBar.piece(chat, msgs: all, names: names, settings: s) }
         if let call {
             P["call"] = call.rule
             P["callScript"] = call.script
