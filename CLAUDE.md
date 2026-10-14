@@ -51,7 +51,8 @@
   本地容器是 Linux，编译不了 SwiftUI，推之前要格外仔细地读一遍自己的代码。
 - 包标识 `cn.eiraphone.native`（`project.yml`），已在开发者网站登记、App Store Connect 建了 App。**永不改**：改了就是另一只 app，
   装着的人要重装，手机里的数据带不过去。网页壳用的是 `cn.eiraphone.app`，两者不要混。
-- **传 TestFlight**：`.github/workflows/testflight.yml`。推一个 `tf-` 开头的标签（如 `tf-0.1.0-1`）就传那次提交，推到 `main` 也传。
+- **传 TestFlight**：`.github/workflows/testflight.yml`。推到 `dev` 时最后一个提交的说明里写着 `[testflight]` 就传那次提交
+  （会话环境只许推 `dev`，推不了标签），推到 `main` 或推 `tf-` 开头的标签也传。
   证书与描述文件每次现申请、传完就撤（`scripts/asc.py`，照抄网页版仓库的 `ios/asc.py`），密钥在仓库 Secrets（`ASC_ISSUER_ID`、`ASC_KEY_ID`、
   `ASC_KEY_P8`、`APPLE_TEAM_ID`）。它只打包上传、不跑测试：打标签之前，那次提交要先在「编译」工作流里全部通过。
   **上了 TestFlight 就有真数据**：之后每次改存储都只许兼容旧数据（第 1 节的「数据不许丢」）。

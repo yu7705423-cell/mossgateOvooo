@@ -4,7 +4,9 @@ name: 传 TestFlight
 # 证书与描述文件每次现申请，传完就撤（scripts/asc.py 里写了为什么），不用自己管。
 #
 # 什么时候跑：
-#   - 推一个 tf- 开头的标签（例如 tf-0.1.0-1），传那个标签所在的那次提交。从 dev 发测试版不必动 main
+#   - 推到 dev，且这次推送的最后一个提交的说明里写着 [testflight]。从 dev 发测试版不必动 main
+#     （会话环境只许推 dev 分支，推不了标签，所以不用标签触发）
+#   - 推一个 tf- 开头的标签（例如 tf-0.1.0-1）
 #   - 推到 main
 #   - 在 Actions 页面手动运行（这份文件在 main 上才有那个按钮）
 # 要传的那次提交应当已经在「编译」那个工作流里过了全部测试：这里只打包上传，不再重跑测试。
@@ -18,7 +20,7 @@ name: 传 TestFlight
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, dev]
     tags: ['tf-*']
 
 concurrency:
@@ -27,6 +29,8 @@ concurrency:
 
 jobs:
   upload:
+    # dev 上只有说明里写着 [testflight] 的那次推送才传，其余推送这个工作流什么都不做
+    if: github.ref != 'refs/heads/dev' || contains(github.event.head_commit.message, '[testflight]')
     runs-on: macos-26
     timeout-minutes: 45
     env:
