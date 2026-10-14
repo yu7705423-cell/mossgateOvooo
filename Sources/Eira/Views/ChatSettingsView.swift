@@ -32,6 +32,7 @@ struct ChatSettingsView: View {
             }
             if let c = chat, !c.isGroup, let charId = c.characterIds.first {
                 ProactiveSection(charId: charId)
+                DayOnSection(charId: charId)
                 DiaryAutoSection(charId: charId)
             }
             Section {

@@ -5,6 +5,7 @@ struct AppsView: View {
     var body: some View {
         NavigationStack {
             List {
+                NavigationLink { DailyHomeView() } label: { Label("日常", systemImage: "sunrise") }
                 NavigationLink { DiaryHomeView() } label: { Label("日记", systemImage: "book.closed") }
             }
             .navigationTitle("应用")

@@ -153,6 +153,9 @@ struct UsageLimitsView: View {
             "call.summary": "通话总结",
             "chat.proactive": "主动发起对话",
             "diary.write": "角色写日记",
+            "day.plan": "当日日程",
+            "event.batch": "生成随机事件",
+            "recipe.batch": "生成食谱",
         ][task] ?? task
     }
 }

@@ -11,6 +11,8 @@ enum ReplyParser {
         case text, image, clip, voice, sticker, location, narration, dice, silence
         // 互动（网页版 reply.js）：转账、礼物各自发出与处理；拍一拍、回应、改备注
         case transfer, gift, settle, unwrap, pat, react, remark, takeout, meal
+        // 日常：角色勾掉今天的一条事项（flag 为真是完成，假是取消）
+        case agenda
     }
 
     struct Part: Equatable, Sendable {
@@ -175,6 +177,10 @@ enum ReplyParser {
                 }
             case "备注", "改备注":
                 push(Part(type: .remark, text: body))
+            case "事项完成", "事项取消":
+                var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
+                p.flag = kind == "事项完成"
+                push(p)
             default:
                 break   // 认得但原生版还没有对应功能：吞掉
             }

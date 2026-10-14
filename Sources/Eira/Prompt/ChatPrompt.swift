@@ -53,6 +53,7 @@ enum ChatPrompt {
             "time": timeBlock(char: char, msgs: all, settings: s, now: now),
             "recent": recentBlock(recent, now: now),
             "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
+            "day": DayPlan.block(char, at: now),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -323,6 +324,10 @@ enum ChatPrompt {
         cap("voice", on: VoiceGen.canSpeak(char, s), hot: used(#"^voice$|[\[【]语音"#),
             line: "Send a voice message: write a line on its own, [语音：what you say]") {
             Templates.get("skeleton.voice", settings: s)
+        }
+        // 今天的安排：今天排了日程才有，一直给全文（网页版 capabilities.js 的 agenda，always）
+        cap("agenda", on: DayPlan.brief(char) != nil, hot: true, line: nil) {
+            Templates.get("skeleton.agenda", settings: s)
         }
         let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
                                                                    used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))

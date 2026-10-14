@@ -30,6 +30,8 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
+        // 当日日程：这个角色开了、今天还没排、今天还没自动试过，先排一次再拼上下文（默认关，一天一次）
+        if !chat.isGroup { await DayPlan.ensureToday(char.id) }
         // 关系底色：开着且 S 级记忆变过时重压一次。不等它：这一轮用旧的，下一轮是新的（默认关）
         if !chat.isGroup && settings.raw["bondAuto"]?.bool == true {
             let cid = char.id, pid = chat.personaId
@@ -226,6 +228,10 @@ enum ChatEngine {
         case .pat:
             guard char.row["canPat"]?.bool != false else { return nil }
             return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
+        case .agenda:
+            // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
+            try DayPlan.mark(char, title: p.text, done: p.flag)
+            return nil
         case .remark:
             guard char.row["canRemark"]?.bool != false, !chat.isGroup else { return nil }
             return try Interact.setTheirRemark(chatId: chat.id, name: p.text, char: char, turnId: turnId)
@@ -313,7 +319,7 @@ enum ChatEngine {
         case .takeout:
             guard let t = try? Interact.takeout(make("takeout", ""), kind: p.extra ?? "self", item: p.text, amount: p.amount ?? 0) else { return nil }
             m = t
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }
