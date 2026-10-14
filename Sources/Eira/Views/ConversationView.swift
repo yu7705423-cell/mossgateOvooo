@@ -166,6 +166,7 @@ struct ConversationView: View {
     /// 会话页上弹出的那几样（拆开写：整页挂在一个表达式上，编译器推断不过来）
     private func withPanels<V: View>(_ base: V) -> some View {
         base
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in checkDue() }
         .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
             Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
             Button("保留图片，只重新生成文字") { generate(regenerate: true, imageKeep: .keep) }
@@ -296,8 +297,10 @@ struct ConversationView: View {
         .sheet(isPresented: $recordingVoice) {
             VoiceComposeView(chatId: chatId, quote: quoting) { m in
                 quoting = nil
+                let fresh = !messages.contains { $0.id == m.id }
                 if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } else { messages.append(m) }
                 turn = nil
+                if fresh { afterSend(m.content) }
             }
             .presentationDetents([.medium])
         }
@@ -344,6 +347,7 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
+            paceBar
             mentionBar
             narrTabs
             // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
@@ -381,6 +385,23 @@ struct ConversationView: View {
             }
         }
         .modifier(BottomBarLook(bar: look.bottom))
+    }
+
+    /// 延迟回复在等着时，输入栏上方一行：对方在做什么、约多久后回复；可以立即回复或取消
+    @ViewBuilder private var paceBar: some View {
+        if let c = chat, Pace.pending(c) != nil, !isBusy {
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                HStack(spacing: Theme.sp3) {
+                    Text(Pace.pendingText(c, now: ctx.date)).font(.system(size: 12)).foregroundStyle(Theme.text2).lineLimit(1)
+                    Spacer()
+                    Button("立即回复") { generate() }.font(.system(size: 12))
+                    Button("取消") { try? Pace.clear(chatId); chat = try? Repo.chat(chatId) }
+                        .font(.system(size: 12)).foregroundStyle(Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .padding(.horizontal, Theme.sp4).padding(.top, Theme.sp2)
+            }
+        }
     }
 
     /// 「消息 旁白」切换：输入栏上方一行小字，开了「我也写旁白」才有（网页版 composer-tabs）
@@ -580,9 +601,11 @@ struct ConversationView: View {
 
     private func post(_ make: () throws -> Message) {
         do {
-            messages.append(try make())
+            let m = try make()
+            messages.append(m)
             turn = nil
             problem = nil
+            if m.kind != "narration" { afterSend(m.content) }
         } catch {
             problem = "消息未能保存：\(error.localizedDescription)"
         }
@@ -855,6 +878,7 @@ struct ConversationView: View {
             messages.append(m)
             turn = nil
             problem = nil
+            afterSend(m.content)
         } catch {
             problem = "消息未能保存：\(error.localizedDescription)"
         }
@@ -887,6 +911,7 @@ struct ConversationView: View {
             messages.append(m)
             turn = nil
             problem = nil
+            afterSend(text)
         } catch {
             problem = "消息未能保存：\(error.localizedDescription)"
         }
@@ -1006,8 +1031,30 @@ struct ConversationView: View {
         if let turn, ChatEngine.hasImages(turn) { askingImageKeep = true } else { generate(regenerate: true) }
     }
 
+    /// 发出去之后：按这段会话的节奏，发完就回、排一个延迟回复，或者什么都不做（网页版 afterSend）
+    private func afterSend(_ text: String) {
+        guard let c = try? Repo.chat(chatId) else { return }
+        switch Pace.mode(c) {
+        case Pace.now:
+            generate()
+        case Pace.paced:
+            do { try Pace.schedule(chatId, text: text); chat = try Repo.chat(chatId) }
+            catch { problem = "延迟回复未能排上：\(error.localizedDescription)" }
+        default:
+            break
+        }
+    }
+
+    /// 会话页开着时自己盯着到点（全局巡检管的是其余的会话）
+    private func checkDue() {
+        guard !isBusy, let c = try? Repo.chat(chatId), let p = Pace.pending(c), p.dueAt <= Date().millis else { return }
+        generate()
+    }
+
     private func generate(regenerate: Bool = false, imageKeep: ChatEngine.ImageKeep = .all) {
         guard !isBusy else { return }
+        // 先清掉再生成：手动点了回复也算回过了，到点不再回第二次
+        if !regenerate { try? Pace.clear(chatId); chat = try? Repo.chat(chatId) }
         busy = true
         problem = nil
         let id = chatId
@@ -1078,7 +1125,11 @@ struct ConversationView: View {
                 }
             }
             let summary = failed > 0 ? "有 \(failed) 张图片未能发送：\(lastError)" : nil
-            await MainActor.run { problem = summary }
+            let sent = items.count - failed
+            await MainActor.run {
+                problem = summary
+                if sent > 0 { afterSend("[图片]") }
+            }
         }
     }
 

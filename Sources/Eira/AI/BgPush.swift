@@ -289,6 +289,8 @@ final class BgPush: ObservableObject {
         ticking = true
         let holds = holdsProactive
         Task.detached {
+            // 延迟回复到点的先回（会话页开着的那一段由会话页自己的定时器回，这里管其余的）
+            await Pace.runDue()
             await Proactive.tick(holds: holds)
             // 角色每天写日记（默认关）：到点先占住当天再发，不挂在发消息前面
             for c in (try? Repo.characters()) ?? [] where Diary.isAuto(c) { await Diary.ensureToday(c.id) }

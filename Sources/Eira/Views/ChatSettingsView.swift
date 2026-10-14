@@ -69,6 +69,7 @@ struct ChatSettingsView: View {
                 Toggle("置顶", isOn: $pinned)
                 Toggle("免打扰", isOn: $muted)
             }
+            PaceSection(chatId: chatId)
             if let c = chat, !c.isGroup, let charId = c.characterIds.first {
                 Section {
                     Button { cardPath = NavigationPath(); editingChar = charId } label: {
@@ -439,5 +440,61 @@ struct ShowSection: View {
         } footer: {
             Text("对所有会话生效。按间隔：相隔五分钟以上时在两条消息之间显示一行时间。已读回执：角色开始回复时，之前发出的消息标为已读。心声默认收起，点角色的头像展开。")
         }
+    }
+}
+
+
+/// 角色什么时候回（网页版 PacePage.js）：按按钮、发完就回、延迟回复。存在会话上，只对这段会话生效
+struct PaceSection: View {
+    let chatId: String
+    @State private var chat: Chat?
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            if let c = chat {
+                Picker("回复节奏", selection: Binding(get: { Pace.mode(c) }, set: { set(["paceMode": .string($0)]) })) {
+                    Text("按按钮").tag(Pace.manual)
+                    Text("发完就回").tag(Pace.now)
+                    Text("延迟回复").tag(Pace.paced)
+                }
+                if Pace.mode(c) == Pace.paced {
+                    Stepper("空闲时的基准时长：\(Pace.base(c)) 秒", value: Binding(
+                        get: { Pace.base(c) }, set: { set(["paceBase": .number(Double($0))]) }), in: 5...3600, step: 15)
+                    Stepper(Pace.maxWait(c) == 0 ? "最长等多久：等到状态结束" : "最长等多久：\(Pace.maxWait(c) / 60) 分钟", value: Binding(
+                        get: { Pace.maxWait(c) / 60 }, set: { set(["paceMax": .number(Double(max(0, $0) * 60))]) }), in: 0...1440, step: 5)
+                    if !c.isGroup {
+                        Toggle("休息时不回复", isOn: Binding(get: { Pace.sleepOn(c) }, set: { set(["paceSleep": .bool($0)]) }))
+                    }
+                    if Pace.pending(c) != nil {
+                        HStack {
+                            Text(Pace.pendingText(c)).font(.footnote).foregroundStyle(Theme.text2)
+                            Spacer()
+                            Button("取消") { try? Pace.clear(chatId); load() }.font(.footnote)
+                        }
+                    }
+                }
+                if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+            }
+        } header: {
+            Text("节奏")
+        } footer: {
+            Text("按按钮：发出去只是发出去，什么时候回由发送键右边那个按钮决定。发完就回：消息一发出去就立刻生成回复，每条都调用一次接口。"
+                 + "延迟回复：角色什么时候回取决于角色当时的状态。空闲时几分钟内回；「日常」里当前时段安排了事项，等这件事结束后回；"
+                 + "免打扰时段（在「主动发起对话」中设置）内视为休息，起床后回。期间发出的多条消息一并回复，不消耗额外的接口调用；"
+                 + "时刻由本地计算，不由模型决定。到点时应用不在前台的，在下次打开时补回。")
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() { chat = try? Repo.chat(chatId) }
+
+    private func set(_ patch: [String: JSONValue]) {
+        guard var c = try? Repo.chat(chatId) else { return }
+        for (k, v) in patch { c.row[k] = v }
+        if patch["paceMode"]?.string != nil && patch["paceMode"]?.string != Pace.paced { c.row["pacePending"] = .null }
+        c.row.touch()
+        do { try Repo.save(c); chat = c; problem = nil }
+        catch { problem = "未能保存：\(error.localizedDescription)" }
     }
 }
