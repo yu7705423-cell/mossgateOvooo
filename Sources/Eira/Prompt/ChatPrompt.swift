@@ -271,8 +271,8 @@ enum ChatPrompt {
         return n == 1 ? " Every reply contains at least one\nnarration line." : " Every reply contains at least \(n) narration lines."
     }
 
-    /// 能力一节。原生版只开回复解析认得的那几项：引用、骰子、撤回（一行），表情、旁白、时间戳（细则）。
-    /// 顺序照网页版 CAPS 数组：表情、引用、骰子、撤回、旁白、时间戳。
+    /// 能力一节。原生版只开回复解析认得的那几项。
+    /// 顺序照网页版 CAPS 数组：表情、引用、转账、礼物、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
         let lean = s.raw["promptLean"]?.bool ?? true
@@ -297,9 +297,40 @@ enum ChatPrompt {
             line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
             Templates.get("skeleton.quote", settings: s)
         }
+        func pending(_ kind: String) -> Bool { msgs.contains { $0.kind == kind && $0.row.string(kind) == "pending" } }
+        cap("transfer", on: char.row["canTransfer"]?.bool != false, hot: used(#"^transfer$|[\[【]转账"#) || pending("transfer"),
+            line: "Send money: write a line on its own, [转账：amount note]; on receiving money, write [收款] or [退回]") {
+            let label = Interact.currencyLabel(s)
+            return Templates.render("skeleton.transfer", ["currency": label.isEmpty ? "" : "\nMoney in this conversation is \(label); write amounts on that scale."], settings: s)
+        }
+        cap("gift", on: char.row["canSendGift"]?.bool != false, hot: used(#"^gift$|[\[【]礼物"#) || pending("gift"),
+            line: "Give a gift: write a line on its own, [礼物：cover name | what is inside]; on receiving one, write [拆开] or [拒收]") {
+            Templates.get("skeleton.gift", settings: s)
+        }
+        cap("pat", on: char.row["canPat"]?.bool != false, hot: used(#"拍了拍|[\[【]拍"#),
+            line: "Nudge: write a line on its own, [拍一拍]") {
+            Templates.get("skeleton.pat", settings: s)
+        }
         cap("dice", on: char.row["canDice"]?.bool != false, hot: used(#"^dice$|[\[【]骰子"#),
             line: "Roll a die: write a line on its own, [骰子]; the system rolls it, and the result is not knowable this turn") {
             Templates.get("skeleton.dice", settings: s)
+        }
+        let theirs = chat.row.string("charRemark").trimmingCharacters(in: .whitespaces)
+        let mineRemark = char.row.string("remark").trimmingCharacters(in: .whitespaces)
+        cap("remark", on: char.row["canRemark"]?.bool != false, hot: used(#"[\[【]备注|将你的备注改为"#),
+            line: "Rename the other party in your own contacts: write a line on its own, [备注：new name]. Currently: \(theirs.isEmpty ? "no name set" : theirs)."
+                + (mineRemark.isEmpty ? "" : " They have you saved as: \(mineRemark).")) {
+            Templates.render("skeleton.remark", ["current": theirs.isEmpty ? "no name set" : theirs,
+                                                 "mine": mineRemark.isEmpty ? "your own name" : mineRemark], settings: s)
+        }
+        cap("react", on: char.row["canReact"]?.bool != false && !msgs.isEmpty,
+            hot: recent.contains { !($0.row["reactions"]?.array ?? []).isEmpty || $0.kind == "silence" },
+            line: "React to a message with an emoji: write a line on its own, [回应：one emoji：a short excerpt of that message]") {
+            Templates.get("skeleton.react", settings: s)
+        }
+        cap("silence", on: char.row["canSilence"]?.bool == true, hot: recent.contains { $0.kind == "silence" },
+            line: "Send nothing this turn: output exactly [不回复] and nothing else") {
+            Templates.get("skeleton.silence", settings: s)
         }
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
             line: "Withdraw a message: write [撤回] on its own line directly after that message.") {

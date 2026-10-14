@@ -41,7 +41,7 @@ enum MessageActions {
             for k in headKeys where next.row[k] == nil { next.row[k] = m.row[k] }
             try Repo.save(next)
         }
-        try Database.shared.delete(Collections.messages, id: m.id)
+        try Interact.drop(m)
     }
 
     /// 引用这一条时存的四个字段（网页版 reply.js 的 quoteFields）。

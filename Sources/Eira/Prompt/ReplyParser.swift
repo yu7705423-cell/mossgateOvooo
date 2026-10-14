@@ -7,7 +7,11 @@ import Foundation
 /// 认出来、吞掉，不落成消息，也不留成文字。提示词里不告诉模型这些能力，正常不会出现。
 /// 不在标记表里的方括号（`[发呆]`）原样当文字。
 enum ReplyParser {
-    enum PartType: String, Sendable { case text, image, clip, voice, sticker, location, narration, dice, silence }
+    enum PartType: String, Sendable {
+        case text, image, clip, voice, sticker, location, narration, dice, silence
+        // 互动（网页版 reply.js）：转账、礼物各自发出与处理；拍一拍、回应、改备注
+        case transfer, gift, settle, unwrap, pat, react, remark
+    }
 
     struct Part: Equatable, Sendable {
         var type: PartType
@@ -19,6 +23,12 @@ enum ReplyParser {
         var recall = false
         /// 位置的地址
         var address: String?
+        /// 转账的金额
+        var amount: Double?
+        /// 礼物里面装的；回应的摘录
+        var extra: String?
+        /// 收款 / 拆开为 true，退回 / 拒收为 false
+        var flag = false
     }
 
     struct Result: Sendable {
@@ -45,6 +55,14 @@ enum ReplyParser {
     private static let recallLine = lineMark("撤回|撤回消息|撤回上一条")
     private static let silenceLine = lineMark("不回复|已读不回|不回")
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
+    private static let patLine = lineMark("拍一拍|拍拍|戳一戳")
+    // 收下或退回对方那一笔、拆开或拒收礼物。必须带方括号，整行只能是它
+    private static let settleLine = regex(#"^[\[【(（]\s*(收款|收下|接收|退回|退还)\s*[\]】)）]$"#, [])
+    private static let openLine = regex(#"^[\[【(（]\s*(拆开|拆|打开|拆礼物)\s*[\]】)）]$"#, [])
+    private static let refuseLine = regex(#"^[\[【(（]\s*(拒收|不收|退掉)\s*[\]】)）]$"#, [])
+    private static let reactLine = regex(#"^[\[【]\s*(?:回应|反应|react(?:ion)?)\s*[:：]\s*([^\]】]+?)\s*[\]】]\s*[。．.!！~～]?$"#, [.caseInsensitive])
+    /// 转账：金额在前，后面是留言
+    private static let amountRe = regex(#"^\s*(?:[¥￥$]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?\s*(.*)$"#, [])
 
     // 时间戳（网页版 stripStamps）
     private static let stampLabelled = regex(#"[\[【(（]\s*(?:时间|時間|time)\s*[:：][^\n\]】)）]{0,40}[\]】)）]"#, [.caseInsensitive])
@@ -131,6 +149,21 @@ enum ReplyParser {
                 attachInner(t, tr)
             case "私信":
                 push(Part(type: .text, text: body))
+            case "转账", "transfer":
+                // 金额读不出来就整条丢掉。凭空造一笔金额不明的转账比少发一条更糟
+                if let m = ReplyParser.match(ReplyParser.amountRe, body), let a = Double(m[1]) {
+                    var p = Part(type: .transfer, text: m[2].trimmingCharacters(in: .whitespaces))
+                    p.amount = a
+                    push(p)
+                }
+            case "礼物", "gift":
+                if let g = Interact.parseGift(body) {
+                    var p = Part(type: .gift, text: g.cover)
+                    p.extra = g.inner
+                    push(p)
+                }
+            case "备注", "改备注":
+                push(Part(type: .remark, text: body))
             default:
                 break   // 认得但原生版还没有对应功能：吞掉
             }
@@ -188,12 +221,30 @@ enum ReplyParser {
                 return
             }
 
+            if let m = ReplyParser.match(ReplyParser.settleLine, t) {
+                var p = Part(type: .settle, text: "")
+                p.flag = !m[1].contains("退")
+                push(p)
+                return
+            }
+            if ReplyParser.matches(ReplyParser.openLine, t) { var p = Part(type: .unwrap, text: ""); p.flag = true; push(p); return }
+            if ReplyParser.matches(ReplyParser.refuseLine, t) { push(Part(type: .unwrap, text: "")); return }
+            if ReplyParser.matches(ReplyParser.silenceLine, t) {
+                push(Part(type: .silence, text: ""))
+                return
+            }
+            if let r = ReplyParser.reactOf(t) {
+                var p = Part(type: .react, text: r.0)
+                p.extra = r.1
+                push(p)
+                return
+            }
             if ReplyParser.matches(ReplyParser.recallLine, t) {
                 if !parts.isEmpty { parts[parts.count - 1].recall = true }
                 return
             }
-            if ReplyParser.matches(ReplyParser.silenceLine, t) {
-                push(Part(type: .silence, text: ""))
+            if ReplyParser.matches(ReplyParser.patLine, t) {
+                push(Part(type: .pat, text: ""))
                 return
             }
             if ReplyParser.matches(ReplyParser.diceLine, t) {
@@ -218,6 +269,17 @@ enum ReplyParser {
     }
 
     // MARK: - 小工具
+
+    /// [回应：emoji：摘录]。emoji 与摘录之间是冒号；没写冒号按第一个空白分（网页版 reactOf）。
+    static func reactOf(_ line: String) -> (String, String?)? {
+        guard let m = match(reactLine, line) else { return nil }
+        let inner = m[1].trimmingCharacters(in: .whitespaces)
+        let cut = inner.firstIndex { $0 == ":" || $0 == "：" } ?? inner.firstIndex { $0.isWhitespace }
+        let e = (cut.map { String(inner[..<$0]) } ?? inner).trimmingCharacters(in: .whitespaces)
+        let q = cut.map { String(inner[inner.index(after: $0)...]).trimmingCharacters(in: .whitespaces) }
+        guard Interact.isEmoji(e) else { return nil }
+        return (e, q.flatMap { $0.isEmpty ? nil : $0 })
+    }
 
     /// 语音、旁白、心声里的「原文（译文：…）」拆成两半。
     static func splitVoiceText(_ s: String) -> (String, String?) {

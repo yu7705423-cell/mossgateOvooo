@@ -62,7 +62,7 @@ enum ChatEngine {
         }
         // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
         guard !ReplyParser.split(result.text).parts.isEmpty else { throw StoreError(message: "模型返回了空内容") }
-        if let old { try removeRows(old.rows) }
+        if let old { try removeRows(old.rows, turnId: old.id, chatId: chat.id) }
         try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
     }
 
@@ -97,12 +97,14 @@ enum ChatEngine {
         var v = t.versions
         v.index = ((v.index + step) % n + n) % n
         guard !ReplyParser.split(v.swipes[v.index]).parts.isEmpty else { throw StoreError(message: "这个版本没有内容") }
-        try removeRows(t.rows)
+        try removeRows(t.rows, turnId: t.id, chatId: chatId)
         try await write(raw: v.swipes[v.index], chat: chat, char: char, turnId: t.id, versions: v, instant: true, onRow: onRow)
     }
 
-    private static func removeRows(_ rows: [Message]) throws {
-        for m in rows { try Database.shared.delete(Collections.messages, id: m.id) }
+    /// 换掉一整轮：这一轮的消息删掉（收款、拆礼物那几行删掉时那一笔回到待处理），这一轮贴的回应一并撤掉。
+    private static func removeRows(_ rows: [Message], turnId: String, chatId: String) throws {
+        for m in rows { try Interact.drop(m) }
+        try Interact.undoReactions(chatId: chatId, turnId: turnId)
     }
 
     /// 把一次回复落成消息。parts 之间按网页版的节奏停顿：非文字 700 毫秒，文字 320 + 每字 28 毫秒，最多 1.8 秒。
@@ -125,7 +127,8 @@ enum ChatEngine {
 
         for (i, part) in parts.enumerated() {
             if part.type == .silence { sawSilence = true; continue }
-            guard var m = row(for: part, chat: chat, char: char, turnId: turnId) else { continue }
+            let built = try effect(part, chat: chat, char: char, turnId: turnId) ?? row(for: part, chat: chat, char: char, turnId: turnId)
+            guard var m = built else { continue }
             if created.isEmpty {
                 head(&m)
                 if let stamp = parsed.stamp { m.row["stamp"] = .string(stampBody(stamp)) }
@@ -139,8 +142,11 @@ enum ChatEngine {
             }
         }
 
-        if created.isEmpty && sawSilence {
+        // 一条气泡都没落、而模型写了 [不回复] 或只回应了：落一行「已读，未回复」，原文与版本挂在它上面
+        let reacted = parts.contains { $0.type == .react }
+        if created.isEmpty && (sawSilence || reacted) {
             var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[不回复]", kind: "silence", turnId: turnId)
+            m.row["reacted"] = .bool(reacted)
             head(&m)
             m = try Repo.append(m)
             created.append(m)
@@ -151,6 +157,41 @@ enum ChatEngine {
             c.row["lastMessageAt"] = .number(Date().millis)
             c.row.touch()
             try Repo.save(c)
+        }
+    }
+
+    /// 不是一条消息、而是一件事的那几样：收款、拆礼物、拍一拍、回应、改备注（网页版 reply.js 的 renderPart）。
+    /// 改完状态，需要落一行提示的返回那一行；什么都不落的返回 nil。不是这几样的也返回 nil，交给 row(for:)。
+    private static func effect(_ p: ReplyParser.Part, chat: Chat, char: Character, turnId: String) throws -> Message? {
+        switch p.type {
+        case .settle:
+            // 处理的是对方那一笔。没有待处理的就当没写过这一行
+            guard let target = try Interact.pendingTransfer(chat.id, from: .user) else { return nil }
+            return try Interact.settleTransfer(target.id, take: p.flag, turnId: turnId)
+        case .unwrap:
+            guard let target = try Interact.pendingGift(chat.id, from: .user) else { return nil }
+            return try Interact.settleGift(target.id, open: p.flag, turnId: turnId)
+        case .pat:
+            guard char.row["canPat"]?.bool != false else { return nil }
+            return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
+        case .remark:
+            guard char.row["canRemark"]?.bool != false, !chat.isGroup else { return nil }
+            return try Interact.setTheirRemark(chatId: chat.id, name: p.text, char: char, turnId: turnId)
+        case .react:
+            // 按摘录找到那一条贴上去；没写摘录的贴到对方最近一条上。认不出是哪一条的丢掉
+            guard char.row["canReact"]?.bool != false else { return nil }
+            let recent = (try? Repo.messages(chatId: chat.id, limit: 60)) ?? []
+            var target: Message?
+            if let q = p.extra {
+                let needle = q.filter { !$0.isWhitespace }
+                target = recent.reversed().first { $0.turnId != turnId && !needle.isEmpty && $0.content.filter { !$0.isWhitespace }.contains(needle) }
+            } else {
+                target = recent.last { $0.role == .user && !$0.isError && $0.kind != "silence" }
+            }
+            if let target { try Interact.toggleReaction(target.id, emoji: p.text, by: char.id, turnId: turnId) }
+            return nil
+        default:
+            return nil
         }
     }
 
@@ -201,7 +242,13 @@ enum ChatEngine {
             m = make("dice", "[骰子：\(value)]")
             m.row["faces"] = .number(Double(faces))
             m.row["value"] = .number(Double(value))
-        case .silence:
+        case .transfer:
+            guard let a = p.amount, let t = try? Interact.transfer(make("transfer", ""), amount: a, note: p.text) else { return nil }
+            m = t
+        case .gift:
+            guard let g = try? Interact.gift(make("gift", ""), cover: p.text, inner: p.extra ?? "") else { return nil }
+            m = g
+        case .silence, .settle, .unwrap, .pat, .react, .remark:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }
@@ -294,6 +341,29 @@ enum ChatEngine {
         }
         Stickers.markUsed(st.id)
         return m
+    }
+
+    /// 用户这边的转账、礼物、拍一拍。落成和角色那边同样的消息（网页版 TransferBits）。
+    static func sendTransfer(chatId: String, amount: Double, note: String) throws -> Message {
+        try post(Interact.transfer(Message.new(chatId: chatId, role: .user, authorId: "me", content: ""), amount: amount, note: note))
+    }
+
+    static func sendGift(chatId: String, cover: String, inner: String) throws -> Message {
+        try post(Interact.gift(Message.new(chatId: chatId, role: .user, authorId: "me", content: ""), cover: cover, inner: inner))
+    }
+
+    static func pat(chatId: String) throws -> Message {
+        try post(Interact.pat(chatId: chatId, role: .user))
+    }
+
+    private static func post(_ m: Message) throws -> Message {
+        let out = try Repo.append(m)
+        if var c = try Repo.chat(m.chatId) {
+            c.row["lastMessageAt"] = .number(Date().millis)
+            c.row.touch()
+            try Repo.save(c)
+        }
+        return out
     }
 
     /// 用户发一条文字。quote 是引用的那一条。

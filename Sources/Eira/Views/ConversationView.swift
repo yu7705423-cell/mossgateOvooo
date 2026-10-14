@@ -28,6 +28,7 @@ struct ConversationView: View {
     @State private var deleting: Message?
     @State private var showSettings = false
     @State private var showStickers = false
+    @State private var composing: InteractSheet.Kind?
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -119,6 +120,17 @@ struct ConversationView: View {
                             titleVisibility: .visible, presenting: deleting) { m in
             Button("删除这条消息", role: .destructive) { remove(m) }
         }
+        .sheet(item: $composing) { k in
+            NavigationStack {
+                InteractSheet(kind: k) { a, b, amount in
+                    post {
+                        try (k == .transfer ? ChatEngine.sendTransfer(chatId: chatId, amount: amount, note: a)
+                                            : ChatEngine.sendGift(chatId: chatId, cover: a, inner: b))
+                    }
+                    composing = nil
+                }
+            }
+        }
         .onChange(of: picked) { _, items in
             guard !items.isEmpty else { return }
             picked = []
@@ -164,6 +176,15 @@ struct ConversationView: View {
                 }
                 .accessibilityLabel("发送图片")
                 .disabled(busy)
+                Menu {
+                    Button { composing = .transfer } label: { Label("转账", systemImage: "yensign.circle") }
+                    Button { composing = .gift } label: { Label("礼物", systemImage: "gift") }
+                    Button { post { try ChatEngine.pat(chatId: chatId) } } label: { Label("拍一拍", systemImage: "hand.tap") }
+                } label: {
+                    Image(systemName: "plus.circle").font(.title2)
+                }
+                .accessibilityLabel("更多")
+                .disabled(busy)
                 Button {
                     showStickers.toggle()
                     if showStickers { typing = false }
@@ -196,6 +217,16 @@ struct ConversationView: View {
             }
         }
         .background(Theme.background)
+    }
+
+    private func post(_ make: () throws -> Message) {
+        do {
+            messages.append(try make())
+            turn = nil
+            problem = nil
+        } catch {
+            problem = "消息未能保存：\(error.localizedDescription)"
+        }
     }
 
     private func sendSticker(_ st: Stickers.Item) {
@@ -242,6 +273,15 @@ struct ConversationView: View {
             catch { problem = "撤回失败：\(error.localizedDescription)" }
         case .delete:
             deleting = m
+        case .settle(let yes):
+            do {
+                let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes) : Interact.settleTransfer(m.id, take: yes))
+                if let notice { _ = try Repo.append(notice) }
+                reload()
+            } catch { problem = "未能保存：\(error.localizedDescription)" }
+        case .react(let e):
+            do { try Interact.toggleReaction(m.id, emoji: e, by: "me"); reload() }
+            catch { problem = "回应未能保存：\(error.localizedDescription)" }
         }
     }
 
@@ -373,6 +413,52 @@ struct ConversationView: View {
     }
 }
 
+/// 用户发转账或礼物时填的那一页。有输入框，所以是整页（网页版第 23 条）。
+struct InteractSheet: View {
+    enum Kind: String, Identifiable { case transfer, gift; var id: String { rawValue } }
+    let kind: Kind
+    /// 转账：(留言, "", 金额)；礼物：(封面, 里面, 0)
+    let onSend: (String, String, Double) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var a = ""
+    @State private var b = ""
+    @State private var amount = ""
+
+    private var amountValue: Double? {
+        guard let v = Double(amount.trimmingCharacters(in: .whitespaces)), v > 0 else { return nil }
+        return Interact.round(v)
+    }
+
+    var body: some View {
+        Form {
+            if kind == .transfer {
+                Section {
+                    TextField("金额", text: $amount).keyboardType(.decimalPad)
+                    TextField("留言（可不填）", text: $a)
+                } footer: {
+                    Text("币种：\(Interact.currency().name)。对方可以收下或退回。")
+                }
+            } else {
+                Section {
+                    TextField("礼物名称", text: $a)
+                    TextField("里面是什么（可不填）", text: $b)
+                } footer: {
+                    Text(Interact.giftBlind() ? "对方拆开之前只看得到礼物名称。里面不填时与名称相同。" : "里面不填时与名称相同。")
+                }
+            }
+        }
+        .navigationTitle(kind == .transfer ? "转账" : "礼物")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("发送") { onSend(a, b, amountValue ?? 0) }
+                    .disabled(kind == .transfer ? amountValue == nil : a.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+    }
+}
+
 /// 编辑一条文字消息。
 struct EditMessageView: View {
     let message: Message
@@ -411,7 +497,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String) }
 
     let message: Message
     let char: Character?
@@ -441,14 +527,16 @@ struct MessageRow: View {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
                             .font(.footnote.italic()).foregroundStyle(Theme.secondaryText)
                             .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
                     case "silence":
-                        centered("对方已读，未回复")
+                        centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复")
+                    case "notice":
+                        centered(Self.unbracket(message.content))
                     default:
                         centered(message.content)
                     }
@@ -464,7 +552,21 @@ struct MessageRow: View {
         }
     }
 
+    /// 提示行存的是 `[…]`，显示时去掉外面那层括号。
+    static func unbracket(_ s: String) -> String {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard t.count >= 2, t.first == "[", t.last == "]" else { return t }
+        return String(t.dropFirst().dropLast())
+    }
+
     @ViewBuilder private var menu: some View {
+        if message.kind != "notice" && message.kind != "silence" {
+            ControlGroup {
+                ForEach(Interact.quick, id: \.self) { e in
+                    Button(e) { onAction?(.react(e)) }
+                }
+            }
+        }
         Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
         Button { onAction?(.quote) } label: { Label("引用", systemImage: "quote.bubble") }
         if MessageActions.canEdit(message) {
@@ -492,6 +594,7 @@ struct MessageRow: View {
                 if let inner = message.row["inner"]?.string, !inner.isEmpty {
                     Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
                 }
+                reactions
             }
             if !mine { Spacer(minLength: 48) }
         }
@@ -517,6 +620,10 @@ struct MessageRow: View {
             card(icon: "mappin.and.ellipse", text: [message.row.string("place"), message.row.string("address")].filter { !$0.isEmpty }.joined(separator: " "))
         case "dice":
             card(icon: "dice", text: "\(Int(message.row.number("value") ?? 0))")
+        case "transfer":
+            transferCard
+        case "gift":
+            giftCard
         default:
             bubble(message.content)
         }
@@ -536,6 +643,81 @@ struct MessageRow: View {
             Text(text).foregroundStyle(Theme.bubbleTheirsText)
         }
         .padding(Theme.pad)
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+    }
+
+    /// 贴在这一条上的回应，按 emoji 归并。点自己贴的那一个就是取消。
+    @ViewBuilder private var reactions: some View {
+        let list = message.row["reactions"]?.array ?? []
+        if !list.isEmpty {
+            let groups = Dictionary(grouping: list.compactMap { r -> (String, String)? in
+                guard let e = r["e"]?.string else { return nil }
+                return (e, r["by"]?.string ?? "")
+            }, by: { $0.0 })
+            let order = list.compactMap { $0["e"]?.string }.reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+            HStack(spacing: 4) {
+                ForEach(order, id: \.self) { e in
+                    let n = groups[e]?.count ?? 0
+                    let mineToo = groups[e]?.contains { $0.1 == "me" } ?? false
+                    Button { onAction?(.react(e)) } label: {
+                        Text(n > 1 ? "\(e) \(n)" : e).font(.footnote)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(mineToo ? Theme.placeholder : Theme.bubbleTheirs, in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
+
+    /// 转账：金额、留言、状态。对方发来、还没处理的那一张可以收下或退回。
+    private var transferCard: some View {
+        let state = message.row.string("transfer")
+        let code = message.row.string("currency")
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: Theme.gap) {
+                Image(systemName: "yensign.circle").foregroundStyle(Theme.secondaryText)
+                Text(Interact.display(message.row.number("amount") ?? 0, code.isEmpty ? nil : code)).font(.headline)
+            }
+            let note = message.row.string("note")
+            if !note.isEmpty { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText) }
+            Text(Interact.transferLabel(state)).font(.caption).foregroundStyle(Theme.secondaryText)
+            if !mine && state == "pending" {
+                HStack {
+                    Button("收下") { onAction?(.settle(true)) }
+                    Button("退回") { onAction?(.settle(false)) }.foregroundStyle(Theme.secondaryText)
+                }
+                .font(.footnote).buttonStyle(.bordered)
+            }
+        }
+        .padding(Theme.pad)
+        .frame(minWidth: 160, alignment: .leading)
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+    }
+
+    /// 礼物：封面；拆开之后写里面是什么。自己送出去的在对方拆开之前也写明里面是什么（只有自己看得到）。
+    private var giftCard: some View {
+        let state = message.row.string("gift")
+        let cover = message.row.string("cover")
+        let inner = message.row.string("inner")
+        let showInner = !inner.isEmpty && inner != cover && (state == "opened" || mine)
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: Theme.gap) {
+                Image(systemName: "gift").foregroundStyle(Theme.secondaryText)
+                Text(cover).font(.headline)
+            }
+            if showInner { Text("里面是：\(inner)").font(.footnote).foregroundStyle(Theme.secondaryText) }
+            Text(Interact.giftLabel(state)).font(.caption).foregroundStyle(Theme.secondaryText)
+            if !mine && state == "pending" {
+                HStack {
+                    Button("拆开") { onAction?(.settle(true)) }
+                    Button("拒收") { onAction?(.settle(false)) }.foregroundStyle(Theme.secondaryText)
+                }
+                .font(.footnote).buttonStyle(.bordered)
+            }
+        }
+        .padding(Theme.pad)
+        .frame(minWidth: 160, alignment: .leading)
         .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
     }
 
