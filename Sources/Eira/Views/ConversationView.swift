@@ -43,6 +43,7 @@ struct ConversationView: View {
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
     @State private var dicing = false
+    @State private var reactingTo: Message?
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -126,6 +127,15 @@ struct ConversationView: View {
             }
         } message: {
             Text("点数由本地随机数掷出，不经过模型。角色要到下一轮才看得到结果。")
+        }
+        .sheet(item: $reactingTo) { m in
+            NavigationStack {
+                ReactPickerView { e in
+                    reactingTo = nil
+                    act(.react(e), m)
+                }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { reactingTo = nil } } }
+            }
         }
         .sheet(isPresented: $forwarding) {
             NavigationStack {
@@ -706,8 +716,14 @@ struct ConversationView: View {
                 reload()
             } catch { problem = "未能保存：\(error.localizedDescription)" }
         case .react(let e):
-            do { try Interact.toggleReaction(m.id, emoji: e, by: "me"); reload() }
-            catch { problem = "回应未能保存：\(error.localizedDescription)" }
+            do {
+                if try Interact.toggleReaction(m.id, emoji: e, by: "me") {
+                    SettingsModel.shared.set("reactRecent", Interact.noteRecent(e, SettingsModel.shared.s))
+                }
+                reload()
+            } catch { problem = "回应未能保存：\(error.localizedDescription)" }
+        case .moreReact:
+            reactingTo = m
         case .revoice:
             var pending = m
             pending.row["media"] = .string("pending")
@@ -1012,7 +1028,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact }
 
     let message: Message
     let char: Character?
@@ -1129,10 +1145,11 @@ struct MessageRow: View {
     @ViewBuilder private var menu: some View {
         if message.kind != "notice" && message.kind != "silence" {
             ControlGroup {
-                ForEach(Interact.quick, id: \.self) { e in
+                ForEach(Interact.quickList(SettingsModel.shared.s), id: \.self) { e in
                     Button(e) { onAction?(.react(e)) }
                 }
             }
+            Button { onAction?(.moreReact) } label: { Label("更多回应", systemImage: "face.smiling") }
         }
         Button { onAction?(.quote) } label: { Label("引用", systemImage: "quote.bubble") }
         if message.kind == "song" {

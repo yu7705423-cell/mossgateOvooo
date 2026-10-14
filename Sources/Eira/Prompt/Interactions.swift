@@ -405,4 +405,43 @@ enum Interact {
 
     /// 常用的六个（网页版 reaction.QUICK：红心、点赞、笑哭、惊讶、哭、合十），由码点生成，源码里不写 emoji 字面量。
     static let quick = ["\u{2764}\u{FE0F}", "\u{1F44D}", "\u{1F602}", "\u{1F62E}", "\u{1F622}", "\u{1F64F}"]
+
+    private static func cp(_ codes: UInt32...) -> String {
+        String(String.UnicodeScalarView(codes.compactMap { Unicode.Scalar($0) }))
+    }
+    private static func range(_ a: UInt32, _ b: UInt32) -> [String] { (a...b).map { cp($0) } }
+
+    /// 「更多回应」里的网格：笑脸一片、手势几个、心与杂项几个（网页版 reaction.GRID）。不求全，输入框兜底
+    static let grid: [String] = {
+        var g = range(0x1F600, 0x1F64F)
+        g += range(0x1F910, 0x1F917) + range(0x1F920, 0x1F925) + range(0x1F970, 0x1F976) + [cp(0x1F97A)]
+        g += range(0x1F44A, 0x1F44F) + [cp(0x1F64C), cp(0x1F91D), cp(0x1F4AA), cp(0x270C, 0xFE0F), cp(0x1F44C), cp(0x1F44B)]
+        g += [cp(0x2764, 0xFE0F)] + range(0x1F493, 0x1F49D) + [cp(0x1F494), cp(0x1F525), cp(0x2728), cp(0x1F389), cp(0x1F381)]
+        g += [cp(0x1F338), cp(0x1F33F), cp(0x1F340), cp(0x1F31F), cp(0x1F319), cp(0x2600, 0xFE0F), cp(0x2614), cp(0x26A1)]
+        g += [cp(0x1F4AF), cp(0x1F4A4), cp(0x1F4A2), cp(0x1F4A5), cp(0x1F4A6), cp(0x1F440), cp(0x1F480), cp(0x1F37B), cp(0x2615)]
+        g += [cp(0x1F370), cp(0x1F35C), cp(0x1F436), cp(0x1F431), cp(0x1F430), cp(0x1F43B), cp(0x1F981), cp(0x1F427)]
+        var seen = Set<String>()
+        return g.filter { seen.insert($0).inserted }
+    }()
+
+    private static func strip(_ e: String) -> String { e.replacingOccurrences(of: "\u{FE0F}", with: "") }
+
+    /// 我最近贴过的（settings.reactRecent，最多 8 个，新的在前）
+    static func recentReactions(_ s: AppSettings) -> [String] {
+        (s.raw["reactRecent"]?.array ?? []).compactMap(\.string).filter(isEmoji)
+    }
+
+    /// 长按菜单上那一排：最近用过的排前面，常用的补齐，共 6 个
+    static func quickList(_ s: AppSettings) -> [String] {
+        var seen = Set<String>(), out: [String] = []
+        for e in recentReactions(s) + quick where !seen.contains(strip(e)) {
+            seen.insert(strip(e)); out.append(e)
+        }
+        return Array(out.prefix(6))
+    }
+
+    /// 记一次「最近用过」
+    static func noteRecent(_ e: String, _ s: AppSettings) -> JSONValue {
+        .array(([e] + recentReactions(s).filter { $0 != e }).prefix(8).map { .string($0) })
+    }
 }

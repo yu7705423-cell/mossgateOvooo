@@ -115,3 +115,20 @@ final class DiceTests: StoreTestCase {
         XCTAssertEqual(ChatEngine.diceFaces(try XCTUnwrap(Repo.chat("chat_a"))), 6)
     }
 }
+
+/// 回应：最近用过的排前面，网格没有重复，任意 emoji 都收
+final class ReactRecentTests: XCTestCase {
+    func testQuickListPutsRecentFirst() {
+        var s = AppSettings.load()
+        s.raw["reactRecent"] = .array([.string("\u{1F525}"), .string("abc"), .string("\u{2764}")])
+        let q = Interact.quickList(s)
+        XCTAssertEqual(q.count, 6)
+        XCTAssertEqual(q.first, "\u{1F525}")
+        // 红心带不带变体选择符算同一个
+        XCTAssertEqual(q.filter { $0.hasPrefix("\u{2764}") }.count, 1)
+        XCTAssertEqual(Set(Interact.grid).count, Interact.grid.count)
+        XCTAssertTrue(Interact.grid.allSatisfy(Interact.isEmoji))
+        let next = Interact.noteRecent("\u{1F602}", s).array?.compactMap(\.string) ?? []
+        XCTAssertEqual(next.first, "\u{1F602}")
+    }
+}
