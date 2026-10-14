@@ -312,7 +312,7 @@ struct ConversationView: View {
         }
     }
 
-    /// 最后一轮下面那一行：重新生成，有几个版本时可以左右切换。
+    /// 最后一轮下面那一行：有几个版本时左右切换。
     private func turnBar(_ t: ChatEngine.Turn) -> some View {
         HStack(spacing: Theme.pad) {
             if t.versions.swipes.count > 1 {
@@ -322,9 +322,6 @@ struct ConversationView: View {
                     .font(.footnote.monospacedDigit()).foregroundStyle(Theme.secondaryText)
                 Button { switchVersion(1) } label: { Image(systemName: "chevron.right") }
                     .accessibilityLabel("下一个版本")
-            }
-            Button { askRegenerate() } label: {
-                Label("重新生成", systemImage: "arrow.clockwise").font(.footnote)
             }
             Spacer()
         }
@@ -688,7 +685,8 @@ struct ConversationView: View {
             Color.clear.frame(height: 1)
                 .onAppear { atBottom = true; unseen = 0 }
                 .onDisappear { atBottom = false }
-            if !isBusy, let turn {
+            // 生成过几个版本时，最后一轮下面才有左右切换（网页版 .swipes）；重新生成在长按菜单里
+            if !isBusy, let turn, turn.versions.swipes.count > 1 {
                 turnBar(turn)
             }
         }
