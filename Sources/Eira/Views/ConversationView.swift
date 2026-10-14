@@ -16,7 +16,12 @@ struct ConversationView: View {
     @State private var members: [String: Character] = [:]
     @State private var messages: [Message] = []
     @State private var turn: ChatEngine.Turn?
-    @State private var pageSize = 100
+    /// 一次画多少条：设置里的 chatPage（默认 60，0 为全画），往上翻按同样的数继续（网页版第 13 条：默认值不是上限）
+    @State private var pageSize = ConversationView.pageStep
+    static var pageStep: Int {
+        let n = Int(AppSettings.load().num("chatPage", 60))
+        return n > 0 ? n : 1_000_000
+    }
     @State private var hasMore = false
     @State private var draft = ""
     @State private var quoting: Message?
@@ -31,6 +36,10 @@ struct ConversationView: View {
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
+    /// 最后一条在不在屏幕上：在的时候来了新消息才自动滚到底；往上翻着看时不把人拽下去，只数一数来了几条
+    @State private var atBottom = true
+    @State private var unseen = 0
+    @State private var earlier = 0
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
@@ -46,8 +55,14 @@ struct ConversationView: View {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         if hasMore {
-                            Button("加载更早的消息") { pageSize += 100; reload() }
-                                .font(.footnote).padding(.top, Theme.gap)
+                            Button(earlier > 0 ? "查看更早的消息（还有 \(earlier) 条）" : "查看更早的消息") {
+                                // 加载后视口钉在原来那一条上，不跳到最上面
+                                let keep = messages.first?.id
+                                pageSize += Self.pageStep
+                                reload()
+                                if let keep { DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) } }
+                            }
+                            .font(.system(size: 12)).foregroundStyle(Theme.text2).padding(.vertical, Theme.sp2)
                         }
                         // 开场白：会话里还没有消息时显示，不存进库、不发给模型（网页版同样）
                         if messages.isEmpty, let greet = char?.firstMessage, !greet.isEmpty, chat?.isGroup != true {
@@ -94,6 +109,9 @@ struct ConversationView: View {
                             .padding(.top, prev == nil ? 0 : (!sep && Receipt.cont(prev: prev, cur: m) ? 5 : Theme.sp4))
                             .id(m.id)
                         }
+                        Color.clear.frame(height: 1)
+                            .onAppear { atBottom = true; unseen = 0 }
+                            .onDisappear { atBottom = false }
                         if busy {
                             Text("正在回复")
                                 .font(.footnote).foregroundStyle(Theme.tertiaryText)
@@ -108,7 +126,36 @@ struct ConversationView: View {
                 }
                 .scrollDismissesKeyboard(.interactively)
                 .onChange(of: messages.last?.id) { _, id in
-                    if let id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                    guard let id else { return }
+                    // 自己发的一定滚到底；角色的只在贴着底部时滚，否则在右下角记一个数
+                    if atBottom || messages.last?.role == .user {
+                        withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+                    } else {
+                        unseen += 1
+                    }
+                }
+                .overlay(alignment: .bottomTrailing) {
+                    if !atBottom && !messages.isEmpty {
+                        Button {
+                            if let id = messages.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                            unseen = 0
+                        } label: {
+                            SvgIcon(name: "chevronDown", size: 18, color: Theme.text)
+                                .frame(width: 36, height: 36)
+                                .background(Circle().fill(Theme.surface).shadow(color: .black.opacity(0.1), radius: 8, y: 4))
+                                .overlay(alignment: .topTrailing) {
+                                    if unseen > 0 {
+                                        Text(unseen > 99 ? "99+" : "\(unseen)").font(.system(size: 11).monospacedDigit())
+                                            .foregroundStyle(Theme.onAccent).padding(.horizontal, 5)
+                                            .frame(minWidth: 17, minHeight: 17).background(Theme.accent, in: Capsule())
+                                            .offset(x: 4, y: -6)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .padding(Theme.sp3)
+                        .accessibilityLabel(unseen > 0 ? "回到最新，\(unseen) 条新消息" : "回到最新")
+                    }
                 }
                 .onAppear {
                     if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
@@ -562,6 +609,7 @@ struct ConversationView: View {
             let list = try Repo.messages(chatId: chatId, limit: pageSize + 1)
             hasMore = list.count > pageSize
             messages = Array(list.suffix(pageSize))
+            earlier = hasMore ? max(0, (try Database.shared.count(Collections.messages, where: chatId)) - messages.count) : 0
             turn = try ChatEngine.lastTurn(chatId: chatId)
         } catch {
             problem = error.localizedDescription
@@ -728,6 +776,8 @@ struct MessageRow: View {
     @State private var innerOpen = false
     /// 译文点一下展开或收起；「一直展开」时默认开着
     @State private var transOpen: Bool?
+    /// 左右滑一下引用这一条：跟着手指走，松手弹回
+    @State private var swipeX: CGFloat = 0
 
     private var mine: Bool { message.role == .user }
 
@@ -874,6 +924,24 @@ struct MessageRow: View {
             if !mine { Spacer(minLength: 48) }
         }
         .padding(.horizontal, Theme.pad)
+        .offset(x: swipeX)
+        // 朝哪边滑都算，滑够松手就引用；起手在屏幕左右边缘那一条里的归系统的返回（网页版 SW_EDGE），竖着走得多的是在翻消息
+        .simultaneousGesture(
+            DragGesture(minimumDistance: 12, coordinateSpace: .global)
+                .onChanged { v in
+                    let w = UIScreen.main.bounds.width
+                    guard v.startLocation.x > 24, v.startLocation.x < w - 24,
+                          abs(v.translation.width) > abs(v.translation.height) * 1.4 else { return }
+                    swipeX = max(-64, min(64, v.translation.width * 0.6))
+                }
+                .onEnded { _ in
+                    if abs(swipeX) >= 40 {
+                        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                        onAction?(.quote)
+                    }
+                    withAnimation(.spring(response: 0.25, dampingFraction: 0.8)) { swipeX = 0 }
+                }
+        )
         .onChange(of: latestTurn) { _, _ in
             if SettingsModel.shared.s.raw["translateOpen"]?.string == "turn" { transOpen = nil }
         }

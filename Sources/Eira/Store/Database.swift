@@ -134,6 +134,15 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 按查询字段数一数有几条（「还有 N 条更早的消息」）
+    func count(_ collection: String, where value: String) throws -> Int {
+        try queue.sync {
+            try query("SELECT COUNT(*) FROM records WHERE collection = ? AND idx = ?", [collection, value]) { stmt in
+                Int(sqlite3_column_int64(stmt, 0))
+            }.first ?? 0
+        }
+    }
+
     /// 每个数据域各有多少条。导入完摆给用户看。
     func counts() throws -> [String: Int] {
         try queue.sync {

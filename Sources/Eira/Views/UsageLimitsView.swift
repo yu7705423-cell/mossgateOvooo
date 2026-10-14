@@ -55,6 +55,12 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "会话一次显示几条", value: model.number("chatPage", 60), unit: "条", placeholder: "全部")
+            } footer: {
+                Text("打开会话时先显示最近这么多条，往上翻按同样的条数继续加载。填 0 表示一次全部显示，消息很多时打开会变慢。不影响发给模型的历史。")
+            }
+
+            Section {
                 NumberRow(title: "日记带最近几天", value: model.number("diaryDays", 2), unit: "天", placeholder: "全部")
             } footer: {
                 Text("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
