@@ -6,6 +6,8 @@ struct ChatSettingsView: View {
     var onDeleted: () -> Void = {}
     /// 搜索这段会话的聊天记录：回到会话页打开搜索，选中一条后跳过去
     var onSearch: (() -> Void)?
+    /// 进入多选：回到会话页，逐条勾选后一并删除
+    var onSelect: (() -> Void)?
 
     @State private var chat: Chat?
     @State private var pinned = false
@@ -36,6 +38,9 @@ struct ChatSettingsView: View {
                             Spacer()
                             SvgIcon(name: "search", size: 16, color: Theme.text3)
                         }
+                    }
+                    if let onSelect {
+                        Button(action: onSelect) { Text("多选消息").foregroundStyle(Theme.text) }
                     }
                 }
             }

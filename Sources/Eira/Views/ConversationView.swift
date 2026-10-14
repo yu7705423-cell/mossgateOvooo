@@ -204,7 +204,8 @@ struct ConversationView: View {
         }
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
-                             onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } })
+                             onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
+                             onSelect: { showSettings = false; picking = [] })
         }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
