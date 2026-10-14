@@ -44,16 +44,16 @@ struct ChatSettingsView: View {
     @State private var summarizing = false
     @State private var summaryNote: String?
     @State private var showSkin = false
+    @State private var query = ""
 
     var body: some View {
         Form {
-            tiles
-            whoSections
-            chatSections
+            menuSections
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
         .navigationTitle("聊天信息")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索设置项")
         .onAppear { if loaded { chat = try? Repo.chat(chatId); refreshBacklog(); presets = AppSettings.load().presets } else { load() } }
         .onChange(of: pinned) { _, _ in save() }
         .onChange(of: muted) { _, _ in save() }
@@ -92,58 +92,123 @@ struct ChatSettingsView: View {
         .onDisappear(perform: save)
     }
 
-    /// 这个群 / 这个角色
-    @ViewBuilder private var whoSections: some View {
-        if let c = chat, c.isGroup {
-            Section {
-                link("群资料", "\(c.characterIds.count) 人") { MenuPage("群资料") { GroupMembersSection(chatId: chatId) } }
-                link("头像", ChatFaces.faces(c).isEmpty ? "" : "已更换") { facePage(c) }
-            } header: { Text("这个群") }
-        } else if let c = chat, let charId = c.characterIds.first {
+    /// 菜单里的一项。分组、搜索、最近打开都读同一份，不各写一遍
+    struct Entry: Identifiable {
+        let id: String
+        let group: String
+        let title: String
+        var value = ""
+        /// 搜索时一并匹配的词：这一项点进去之后才看得到的开关
+        var keys = ""
+        /// 只在搜索结果里出现（上面四格已经有入口的）
+        var searchOnly = false
+        var action: (() -> Void)?
+        var dest: AnyView?
+    }
+
+    private func entries(_ c: Chat) -> [Entry] {
+        var out: [Entry] = []
+        func add(_ id: String, _ group: String, _ title: String, _ value: String = "", keys: String = "", searchOnly: Bool = false,
+                 action: (() -> Void)? = nil, dest: AnyView? = nil) {
+            out.append(Entry(id: id, group: group, title: title, value: value, keys: keys, searchOnly: searchOnly, action: action, dest: dest))
+        }
+        if let onSearch { add("search", "", "搜索聊天记录", keys: "查找 消息", searchOnly: true, action: onSearch) }
+        if let onSelect { add("select", "", "多选消息", keys: "批量 删除", searchOnly: true, action: onSelect) }
+        if let onLook { add("look", "", "聊天背景", keys: "背景图 遮罩 顶栏 输入栏 颜色 旁白颜色", searchOnly: true, action: onLook) }
+        add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执 译文显示", searchOnly: true,
+            action: { showSkin = true })
+        if c.isGroup {
+            add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称",
+                dest: AnyView(MenuPage("群资料") { GroupMembersSection(chatId: chatId) }))
+            add("face", "这个群", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "成员的头像 我的头像", dest: AnyView(facePage(c)))
+        } else if let charId = c.characterIds.first {
             let char = try? Repo.character(charId)
-            Section {
-                Button { cardPath = NavigationPath(); editingChar = charId } label: { row("角色卡与备注", "") }
-                link("头像", ChatFaces.faces(c).isEmpty ? "" : "已更换") { facePage(c) }
-                link("主动发起对话", Proactive.config(char).on ? "开启" : "关闭") { MenuPage("主动发起对话") { ProactiveSection(charId: charId) } }
-                link("日常与日记", "") {
-                    MenuPage("日常与日记") {
-                        DayOnSection(charId: charId)
-                        DiaryAutoSection(charId: charId)
+            add("card", "这个角色", "角色卡与备注", keys: "人设 资料 编辑 备注",
+                action: { cardPath = NavigationPath(); editingChar = charId })
+            add("face", "这个角色", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "角色的头像 我的头像", dest: AnyView(facePage(c)))
+            add("proactive", "这个角色", "主动发起对话", Proactive.config(char).on ? "开启" : "关闭", keys: "主动消息 间隔 免打扰",
+                dest: AnyView(MenuPage("主动发起对话") { ProactiveSection(charId: charId) }))
+            add("day", "这个角色", "日常与日记", keys: "日程 随机事件 写日记",
+                dest: AnyView(MenuPage("日常与日记") {
+                    DayOnSection(charId: charId)
+                    DiaryAutoSection(charId: charId)
+                }))
+            add("music", "这个角色", "角色在听什么", keys: "网易云 音乐 歌",
+                dest: AnyView(MenuPage("角色在听什么") { MusicCharSection(charId: charId) }))
+        }
+        let how = "这段对话怎么聊"
+        add("pace", how, "节奏与自动回复", Self.paceLabel(c) + (AutoReply.listTag(c).isEmpty ? "" : " · 自动回复"),
+            keys: "回复节奏 按按钮 发完就回 延迟回复 自动回复 忙碌 休息",
+            dest: AnyView(MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }))
+        add("inner", how, "心声", Self.innerLabel(innerMode), keys: "想法 内心", dest: AnyView(MenuPage("心声") { innerSection }))
+        if !c.isGroup {
+            add("status", how, "状态栏", StatusBar.active(c) ? "开启" : "关闭", keys: "心情 所在地 进度条",
+                dest: AnyView(StatusBarSettingsView(chatId: chatId)))
+        }
+        add("narr", how, "旁白", narration || userNarration ? "开启" : "关闭", keys: "我也写旁白",
+            dest: AnyView(MenuPage("旁白") { narrationSections }))
+        add("translate", how, "翻译", translateTo.trimmingCharacters(in: .whitespaces).isEmpty ? "关闭" : translateTo, keys: "译文 语言",
+            dest: AnyView(MenuPage("翻译") { translateSection }))
+        add("preset", how, "预设与前情", presets.first(where: { $0.id == presetId })?.name ?? "跟随全局", keys: "提示词 更早之前 摘要",
+            dest: AnyView(MenuPage("预设与前情") { presetSections }))
+        add("time", how, "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
+            dest: AnyView(TimeSettingsView()))
+        add("summary", "记忆", "记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "", keys: "总结 记住",
+            dest: AnyView(MenuPage("记忆总结") { summarySection }))
+        if !c.isGroup, Ties.pair(c) != nil {
+            add("ties", "好友与拉黑", "好友与拉黑", Self.tieLabel(c), keys: "拉黑 删除好友 好友申请",
+                dest: AnyView(MenuPage("好友与拉黑") { TiesSection(chatId: chatId) }))
+        }
+        add("more", "更多", "更多", "置顶、免打扰、清空与删除", keys: "置顶 免打扰 清空聊天记录 删除这段会话",
+            dest: AnyView(MenuPage("更多") { moreSections }))
+        return out
+    }
+
+    @ViewBuilder private func entryRow(_ e: Entry, showGroup: Bool = false) -> some View {
+        let sub = showGroup && !e.group.isEmpty ? e.group : ""
+        if let action = e.action {
+            Button { ChatMenuRecent.note(e.id); action() } label: { row(e.title, e.value, sub: sub) }
+        } else if let dest = e.dest {
+            NavigationLink {
+                dest.onAppear { ChatMenuRecent.note(e.id) }
+            } label: {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.title)
+                        if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(Theme.text3) }
                     }
+                    Spacer()
+                    if !e.value.isEmpty { Text(e.value).foregroundStyle(Theme.text3).lineLimit(1) }
                 }
-                link("角色在听什么", "") { MenuPage("角色在听什么") { MusicCharSection(charId: charId) } }
-            } header: { Text("这个角色") }
+            }
         }
     }
 
-    /// 这段对话怎么聊、记忆、好友与拉黑、更多
-    @ViewBuilder private var chatSections: some View {
+    /// 搜索框里有字时列命中的几项；没有字时是四格、最近打开、各组
+    @ViewBuilder private var menuSections: some View {
         if let c = chat {
-            Section {
-                link("节奏与自动回复", Self.paceLabel(c) + (AutoReply.listTag(c).isEmpty ? "" : " · 自动回复")) {
-                    MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }
-                }
-                link("心声", Self.innerLabel(innerMode)) { MenuPage("心声") { innerSection } }
-                if !c.isGroup {
-                    link("状态栏", StatusBar.active(c) ? "开启" : "关闭") { StatusBarSettingsView(chatId: chatId) }
-                }
-                link("旁白", narration || userNarration ? "开启" : "关闭") { MenuPage("旁白") { narrationSections } }
-                link("翻译", translateTo.trimmingCharacters(in: .whitespaces).isEmpty ? "关闭" : translateTo) {
-                    MenuPage("翻译") { translateSection }
-                }
-                link("预设与前情", presets.first(where: { $0.id == presetId })?.name ?? "跟随全局") { MenuPage("预设与前情") { presetSections } }
-                link("时间感知", Self.timeState(AppSettings.load())) { TimeSettingsView() }
-            } header: { Text("这段对话怎么聊") }
-            Section {
-                link("记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "") { MenuPage("记忆总结") { summarySection } }
-            } header: { Text("记忆") }
-            if !c.isGroup, Ties.pair(c) != nil {
+            let all = entries(c)
+            let key = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !key.isEmpty {
+                let hits = all.filter { "\($0.title) \($0.group) \($0.keys)".localizedCaseInsensitiveContains(key) }
                 Section {
-                    link("好友与拉黑", Self.tieLabel(c)) { MenuPage("好友与拉黑") { TiesSection(chatId: chatId) } }
+                    if hits.isEmpty { Text("没有找到，换一个关键词再试。").foregroundStyle(Theme.text3) }
+                    ForEach(hits) { e in entryRow(e, showGroup: true) }
                 }
-            }
-            Section {
-                link("更多", "置顶、免打扰、清空与删除") { MenuPage("更多") { moreSections } }
+            } else {
+                tiles
+                let recent = ChatMenuRecent.ids().compactMap { id in all.first(where: { $0.id == id && !$0.searchOnly }) }
+                if !recent.isEmpty {
+                    Section {
+                        ForEach(recent) { e in entryRow(e) }
+                    } header: { Text("最近打开") }
+                }
+                let groups = all.filter { !$0.searchOnly }.reduce(into: [String]()) { if !$0.contains($1.group) { $0.append($1.group) } }
+                ForEach(groups, id: \.self) { g in
+                    Section {
+                        ForEach(all.filter { $0.group == g && !$0.searchOnly }) { e in entryRow(e) }
+                    } header: { Text(g) }
+                }
             }
         }
     }
@@ -178,22 +243,15 @@ struct ChatSettingsView: View {
         .contentShape(Rectangle())
     }
 
-    private func row(_ title: String, _ value: String) -> some View {
+    private func row(_ title: String, _ value: String, sub: String = "") -> some View {
         HStack {
-            Text(title).foregroundStyle(Theme.text)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(Theme.text)
+                if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(Theme.text3) }
+            }
             Spacer()
             if !value.isEmpty { Text(value).foregroundStyle(Theme.text3).lineLimit(1) }
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.text3)
-        }
-    }
-
-    private func link<D: View>(_ title: String, _ value: String, @ViewBuilder _ dest: @escaping () -> D) -> some View {
-        NavigationLink(destination: dest) {
-            HStack {
-                Text(title)
-                Spacer()
-                if !value.isEmpty { Text(value).foregroundStyle(Theme.text3).lineLimit(1) }
-            }
         }
     }
 
@@ -747,5 +805,19 @@ struct MenuPage<Content: View>: View {
         Form { content() }
             .navigationTitle(title)
             .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+/// 会话菜单里最近点开的几项（本机的使用习惯，不进库、不进备份）。各段会话共用一份：常点的那几项在哪段会话里都一样
+enum ChatMenuRecent {
+    private static let key = "phone.chatMenu.recent"
+    static let keep = 4
+
+    static func ids() -> [String] { UserDefaults.standard.stringArray(forKey: key) ?? [] }
+
+    static func note(_ id: String) {
+        var list = ids().filter { $0 != id }
+        list.insert(id, at: 0)
+        UserDefaults.standard.set(Array(list.prefix(keep)), forKey: key)
     }
 }
