@@ -77,7 +77,7 @@ struct ConversationView: View {
             }
             if picking != nil { pickBar } else { composer }
         }
-        .navigationTitle(chat?.isGroup == true ? GroupChat.title(chat!, members: chat!.characterIds.compactMap { members[$0] }) : (char?.displayName ?? chat?.title ?? ""))
+        .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(picking != nil)
         .toolbar {
@@ -587,6 +587,14 @@ struct ConversationView: View {
         if id == "me" || id.isEmpty { return me?.name ?? "我" }
         if let c = members[id] { return c.displayName }
         return char?.id == id ? (char?.displayName ?? "对方") : "对方"
+    }
+
+    /// 标题：群名加人数（成员与我，网页版 group.headcount），单聊是角色备注名
+    private var pageTitle: String {
+        guard let chat else { return "" }
+        guard chat.isGroup else { return char?.displayName ?? chat.title }
+        let list = chat.characterIds.compactMap { members[$0] }
+        return "\(GroupChat.title(chat, members: list))（\(list.count + 1)）"
     }
 
     /// 引用块上写的名字：引的是我说的就写我的名字，否则写那位角色
