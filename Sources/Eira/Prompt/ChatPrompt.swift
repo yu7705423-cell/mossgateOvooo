@@ -105,7 +105,7 @@ enum ChatPrompt {
             let limit = Int(s.num("historyLimit", 20))
             window = limit > 0 ? Array(all.suffix(limit)) : all
         }
-        let stampOn = (s.raw["injectTime"]?.bool ?? true)
+        let stampOn = Clock.enabled(s)
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
         // 识图交给聊天模型时：只带当前这一轮（用户连着发、角色还没回的那几条）里还没被看过的图。
@@ -197,9 +197,12 @@ enum ChatPrompt {
         return msgs
     }
 
+    /// 历史里的时间（网页版 engine.js 的 timeLine）：按我的时区写，虚拟时间时整条时间线一起平移
     private static func timeLine(_ m: Message, _ prev: Message?) -> String {
-        let full = "[\(TimeText.format(Date(millis: m.createdAt)))] "
-        let newDay = prev.map { TimeText.day(Date(millis: $0.createdAt)) != TimeText.day(Date(millis: m.createdAt)) } ?? true
+        let s = AppSettings.load()
+        let uz = Clock.zone(Clock.userZone(s))
+        let full = "[\(TimeText.format(Clock.toWorld(m.createdAt, s), zone: uz))] "
+        let newDay = prev.map { TimeText.day(Clock.toWorld($0.createdAt, s), zone: uz) != TimeText.day(Clock.toWorld(m.createdAt, s), zone: uz) } ?? true
         if m.role == .char {
             let stamp = m.row.string("stamp")
             if !stamp.isEmpty { return "[\(stamp)] " }
@@ -413,7 +416,7 @@ enum ChatPrompt {
         cap("narration", on: chat.row.bool("narration"), hot: true, line: nil) {
             Templates.render("skeleton.narration", ["least": narrationLeast(s.raw["narrationMin"]?.number ?? 1)], settings: s)
         }
-        let stampOn = (s.raw["injectTime"]?.bool ?? true) && (s.raw["timeStamp"]?.bool ?? true)
+        let stampOn = Clock.stampOn(s)
         cap("time", on: stampOn, hot: true, line: nil) { Templates.get("skeleton.time", settings: s) }
         // 译文：这段会话设了目标语言时，每条消息同一行跟一句 [译文：…]（随回复一起那一档，不多调接口）。
         // 「这几种标记各跟一句译文」只列这段会话实际开着的那几样（网页版 4.373）
@@ -717,28 +720,24 @@ enum ChatPrompt {
 
     // MARK: - 时间
 
-    private static func timeBlock(char: Character, msgs: [Message], settings s: AppSettings, now: Date) -> String {
-        guard s.raw["injectTime"]?.bool ?? true else { return "" }
-        let zone = char.row.string("timezone")
-        let charZone = TimeZone(identifier: zone) ?? .current
-        var lines: [String] = []
-        if !zone.isEmpty {
-            lines.append("You are in \(zone). It is now \(TimeText.format(now, zone: charZone)).")
-        } else {
-            lines.append("It is now \(TimeText.format(now)).")
+    /// 现在几点（网页版 context/basic.js 的 time）。角色明确设过时区才写地名，两边不在一个时区才说时差
+    private static func timeBlock(char: Character, msgs: [Message], settings s: AppSettings, now real: Date) -> String {
+        guard Clock.enabled(s) else { return "" }
+        let n = Clock.now(s, real: real)
+        let cz = Clock.charZone(char, s)
+        let uz = Clock.userZone(s)
+        let named = !char.row.string("timezone").isEmpty
+        var lines = [named ? "You are in \(Clock.label(cz)). It is now \(TimeText.format(n, zone: Clock.zone(cz)))."
+                           : "It is now \(TimeText.format(n, zone: Clock.zone(cz)))."]
+        let d = Clock.zoneDiff(cz, uz, at: n)
+        if d != 0 {
+            lines.append("The other party is in \(Clock.label(uz)), where it is now \(Clock.clockOnly(n, zone: uz)), \(diffText(abs(d))) from your own clock.")
         }
-        let offset = charZone.secondsFromGMT(for: now) - TimeZone.current.secondsFromGMT(for: now)
-        if offset != 0 {
-            let f = DateFormatter()
-            f.timeZone = .current
-            f.dateFormat = "HH:mm"
-            lines.append("The other party is in \(TimeZone.current.identifier), where it is now \(f.string(from: now)), \(diffText(abs(offset) / 60)) from your own clock.")
-        }
-        // 从当前这一轮用户消息之前的最后一条算
+        // 从当前这一轮用户消息之前的最后一条算；量的是真实时间
         var i = msgs.count - 1
         while i >= 0 && msgs[i].role == .user { i -= 1 }
         if i >= 0 {
-            let minutes = Int((now.millis - msgs[i].createdAt) / 60_000)
+            let minutes = Int((real.millis - msgs[i].createdAt) / 60_000)
             if minutes < 5 { lines.append("The two of you are mid-conversation.") }
             else if minutes < 60 { lines.append("\(minutes) minutes have passed since either of you last spoke.") }
             else if minutes < 1440 { lines.append("\(minutes / 60) hours have passed since either of you last spoke.") }

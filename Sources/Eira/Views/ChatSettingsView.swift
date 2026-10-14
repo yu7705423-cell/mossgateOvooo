@@ -84,6 +84,19 @@ struct ChatSettingsView: View {
                 MusicCharSection(charId: charId)
                 DiaryAutoSection(charId: charId)
             }
+            Section {
+                NavigationLink {
+                    TimeSettingsView()
+                } label: {
+                    HStack {
+                        Text("时间感知")
+                        Spacer()
+                        Text(Self.timeState(AppSettings.load())).foregroundStyle(Theme.text3)
+                    }
+                }
+            } footer: {
+                Text("对所有会话生效。")
+            }
             ShowSection()
             Section {
                 Toggle("旁白", isOn: $narration)
@@ -260,6 +273,12 @@ struct ChatSettingsView: View {
     private func reloadChat() {
         chat = try? Repo.chat(chatId)
         NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+    }
+
+    /// 时间感知此刻的状态：系统时间 / 自定义时间 / 关闭
+    static func timeState(_ s: AppSettings) -> String {
+        guard Clock.enabled(s) else { return "关闭" }
+        return Clock.isVirtual(s) ? "自定义时间" : "系统时间"
     }
 
     private func refreshBacklog() {
