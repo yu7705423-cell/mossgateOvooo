@@ -30,6 +30,8 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
+        // 角色在听什么：登录了网易云、到了间隔才读一次（只调网易云，不调模型）
+        if !chat.isGroup { await Netease.pullIfDue(char.id) }
         // 当日日程：这个角色开了、今天还没排、今天还没自动试过，先排一次再拼上下文（默认关，一天一次）
         if !chat.isGroup { await DayPlan.ensureToday(char.id) }
         // 关系底色：开着且 S 级记忆变过时重压一次。不等它：这一轮用旧的，下一轮是新的（默认关）
@@ -169,7 +171,10 @@ enum ChatEngine {
         var created: [Message] = []
         var sawSilence = false
         // 角色写的 [图片：…]、[语音：…] 在后台一条一条生成，不挡着这一轮结束。中途停下也照样交出去：落库时已经占住了
-        defer { MediaJobs.launch(created, onRow: onRow) }
+        defer {
+            MediaJobs.launch(created, onRow: onRow)
+            MusicListen.resolveShared(created, onRow: onRow)
+        }
 
         for (i, step) in steps.enumerated() {
             let part = step.part
@@ -228,6 +233,8 @@ enum ChatEngine {
         case .pat:
             guard char.row["canPat"]?.bool != false else { return nil }
             return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
+        case .listen, .pick, .newlist:
+            return try MusicListen.effect(p, chat: chat, char: char, turnId: turnId)
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -319,7 +326,11 @@ enum ChatEngine {
         case .takeout:
             guard let t = try? Interact.takeout(make("takeout", ""), kind: p.extra ?? "self", item: p.text, amount: p.amount ?? 0) else { return nil }
             m = t
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda:
+        case .song:
+            m = make("song", "[分享歌曲：\(p.text)]")
+            m.row["songQuery"] = .string(p.text)
+            m.row["songState"] = .string("pending")
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

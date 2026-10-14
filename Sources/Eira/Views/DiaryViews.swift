@@ -6,6 +6,7 @@ struct AppsView: View {
         NavigationStack {
             List {
                 NavigationLink { DailyHomeView() } label: { Label("日常", systemImage: "sunrise") }
+                NavigationLink { MusicHomeView() } label: { Label("音乐", systemImage: "music.note") }
                 NavigationLink { DiaryHomeView() } label: { Label("日记", systemImage: "book.closed") }
             }
             .navigationTitle("应用")

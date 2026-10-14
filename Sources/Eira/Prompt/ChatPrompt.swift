@@ -54,6 +54,7 @@ enum ChatPrompt {
             "recent": recentBlock(recent, now: now),
             "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
             "day": DayPlan.block(char, at: now),
+            "music": Netease.block(char, now: now.millis),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -124,6 +125,8 @@ enum ChatPrompt {
             // 正则替换里「发给角色的」那一份（存着的原文不动）
             let m = RegexRules.promptMessage(raw, chat: chat, settings: s)
             var text = (stampOn ? timeLine(m, prev) : "") + withQuote(m, byId)
+            // 分享的歌带上歌词（「用量与上限」里可以关、可以只带前几句）
+            if m.kind == "song" { text += songLyric(m, s) }
             if m.isRecalled && m.role == .user {
                 let seen = m.row["recalled"]?["seen"]?.bool ?? false
                 text = seen ? "[撤回了一条消息：\(m.content)]" : "[撤回了一条消息]"
@@ -199,6 +202,15 @@ enum ChatPrompt {
         }
         let gap = prev.map { m.createdAt - $0.createdAt >= 30 * 60_000 } ?? true
         return newDay || gap ? full : ""
+    }
+
+    static func songLyric(_ m: Message, _ s: AppSettings) -> String {
+        guard s.raw["songLyric"]?.bool != false else { return "" }
+        if m.row.bool("songPure") { return "\n[歌词]\n纯音乐" }
+        let lines = m.row.string("songLyric").components(separatedBy: "\n").filter { !$0.isEmpty }
+        guard !lines.isEmpty else { return "" }
+        let n = Int(s.raw["songLyricLines"]?.number ?? 20)
+        return "\n[歌词]\n" + (n > 0 ? Array(lines.prefix(n)) : lines).joined(separator: "\n")
     }
 
     private static func withQuote(_ m: Message, _ byId: [String: Message]) -> String {
@@ -324,6 +336,12 @@ enum ChatPrompt {
         cap("voice", on: VoiceGen.canSpeak(char, s), hot: used(#"^voice$|[\[【]语音"#),
             line: "Send a voice message: write a line on its own, [语音：what you say]") {
             Templates.get("skeleton.voice", settings: s)
+        }
+        // 一起听、点歌、分享歌曲与歌单（网页版 capabilities.js 的 listen）。原生版直连网易云，曲库空着也能搜
+        let listening = MusicListen.active(chat.id)
+        cap("listen", on: char.row["canListen"]?.bool != false, hot: listening || used(#"^(listen|song)$|[\[【](一起听|点歌|建歌单|加入歌单|分享歌曲)"#),
+            line: "Music: [一起听] to listen together, [点歌：song title - artist] to change the track, [分享歌曲：song title - artist] to send a song, [加入歌单：playlist | song - artist] to keep songs") {
+            Templates.get("skeleton.listen", settings: s)
         }
         // 今天的安排：今天排了日程才有，一直给全文（网页版 capabilities.js 的 agenda，always）
         cap("agenda", on: DayPlan.brief(char) != nil, hot: true, line: nil) {

@@ -13,6 +13,8 @@ enum ReplyParser {
         case transfer, gift, settle, unwrap, pat, react, remark, takeout, meal
         // 日常：角色勾掉今天的一条事项（flag 为真是完成，假是取消）
         case agenda
+        // 音乐：一起听（整行 [一起听]）、点歌、分享歌曲、建歌单 / 加入歌单（extra 是用 ；隔开的几首）
+        case listen, pick, song, newlist
     }
 
     struct Part: Equatable, Sendable {
@@ -59,6 +61,7 @@ enum ReplyParser {
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
     private static let patLine = lineMark("拍一拍|拍拍|戳一戳")
     // 收下或退回对方那一笔、拆开或拒收礼物。必须带方括号，整行只能是它
+    private static let listenLine = regex(#"^[\[【(（]\s*(一起听|一起听歌|听歌)\s*[\]】)）]$"#, [])
     private static let settleLine = regex(#"^[\[【(（]\s*(收款|收下|接收|退回|退还)\s*[\]】)）]$"#, [])
     private static let openLine = regex(#"^[\[【(（]\s*(拆开|拆|打开|拆礼物)\s*[\]】)）]$"#, [])
     // 处理对方点的那一单。和收款、拆礼物各用一套词，不能用「收下」（那个归转账）
@@ -177,6 +180,19 @@ enum ReplyParser {
                 }
             case "备注", "改备注":
                 push(Part(type: .remark, text: body))
+            case "点歌":
+                push(Part(type: .pick, text: body.trimmingCharacters(in: .whitespaces)))
+            case "分享歌曲", "分享音乐":
+                push(Part(type: .song, text: body.trimmingCharacters(in: .whitespaces)))
+            case "建歌单", "加入歌单":
+                let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                let name = (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces)
+                let songs = bar.map { String(body[body.index(after: $0)...]) } ?? ""
+                if !name.isEmpty && (kind == "建歌单" || !songs.trimmingCharacters(in: .whitespaces).isEmpty) {
+                    var p = Part(type: .newlist, text: name)
+                    p.extra = songs
+                    push(p)
+                }
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"
@@ -238,6 +254,7 @@ enum ReplyParser {
                 return
             }
 
+            if ReplyParser.matches(ReplyParser.listenLine, t) { push(Part(type: .listen, text: "")); return }
             if let m = ReplyParser.match(ReplyParser.settleLine, t) {
                 var p = Part(type: .settle, text: "")
                 p.flag = !m[1].contains("退")

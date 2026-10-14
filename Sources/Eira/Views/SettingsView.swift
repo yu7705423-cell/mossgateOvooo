@@ -98,6 +98,9 @@ struct ServicesView: View {
                 NavigationLink { ImageSettingsView() } label: {
                     status("生图", model.s.activeImage.map { "\($0.name) · \($0.model.isEmpty ? "未填模型" : $0.model)" }, model.s.imageReady ? "" : "未配置")
                 }
+                NavigationLink { MusicSettingsView() } label: {
+                    status("音乐服务", nil, Netease.userCookie(model.s).isEmpty ? "未登录" : (Netease.config(model.s)["nickname"]?.string ?? "已登录"))
+                }
                 NavigationLink { VoiceSettingsView() } label: {
                     status("语音合成", model.s.voiceEnabled ? model.s.activeVoice?.name : nil,
                            !model.s.voiceEnabled ? "关闭" : model.s.voiceReady ? "" : "未填全")

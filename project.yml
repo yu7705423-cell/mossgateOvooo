@@ -33,6 +33,7 @@ targets:
         NSPhotoLibraryAddUsageDescription: 将图片存到「照片」。
         UIBackgroundModes:
           - fetch
+          - audio
         BGTaskSchedulerPermittedIdentifiers:
           - eira.bgpush.refresh
         NSMicrophoneUsageDescription: 录制发送给角色的语音消息。

@@ -32,6 +32,7 @@ struct ConversationView: View {
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
+    @ObservedObject private var music = MusicPlayer.shared
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -193,6 +194,7 @@ struct ConversationView: View {
 
     private var composer: some View {
         VStack(spacing: 0) {
+            if music.listenChat == chatId { ListenBar(chatId: chatId) }
             if let q = quoting {
                 HStack {
                     Text("引用：\(q.content)").font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1)
@@ -211,6 +213,11 @@ struct ConversationView: View {
                 .disabled(busy)
                 Menu {
                     Button { recordingVoice = true } label: { Label("语音", systemImage: "mic") }
+                    if chat?.isGroup == false {
+                        Button {
+                            do { try music.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
+                        } label: { Label("一起听", systemImage: "headphones") }
+                    }
                     Button { composing = .transfer } label: { Label("转账", systemImage: "yensign.circle") }
                     Button { composing = .gift } label: { Label("礼物", systemImage: "gift") }
                     Button { composing = .takeout } label: { Label("外卖", systemImage: "takeoutbag.and.cup.and.straw") }
@@ -654,7 +661,7 @@ struct MessageRow: View {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
@@ -751,6 +758,8 @@ struct MessageRow: View {
             card(icon: "video", text: message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt"))
         case "call":
             CallCard(message: message)
+        case "song":
+            SongCard(message: message)
         case "voice":
             VoiceBubble(message: message, mine: mine) { onAction?(.revoice) }
         case "location":
