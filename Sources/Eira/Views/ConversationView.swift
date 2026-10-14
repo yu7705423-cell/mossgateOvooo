@@ -786,6 +786,8 @@ struct ConversationView: View {
             } catch { problem = "回应未能保存：\(error.localizedDescription)" }
         case .moreReact:
             reactingTo = m
+        case .regenerate:
+            if !busy { generate(regenerate: true) }
         case .revoice:
             var pending = m
             pending.row["media"] = .string("pending")
@@ -1090,7 +1092,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate }
 
     let message: Message
     let char: Character?
@@ -1221,6 +1223,10 @@ struct MessageRow: View {
         }
         if MessageActions.canEdit(message) {
             Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
+        }
+        // 最新那一轮的角色消息（含旁白、「已读，未回复」）：重新生成这一轮
+        if !mine && !message.turnId.isEmpty && message.turnId == latestTurn {
+            Button { onAction?(.regenerate) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
         }
         if TranslateOne.can(message, lang: translateLang) {
             Button { onAction?(.translate) } label: { Label(translation.isEmpty ? "翻译" : "重新翻译", systemImage: "character.bubble") }
