@@ -46,6 +46,7 @@ struct ConversationView: View {
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
     @State private var reactingTo: Message?
+    @State private var askingImageKeep = false
     @State private var showStickers = false
     @State private var showPanel = false
     @State private var me: Persona?
@@ -120,6 +121,13 @@ struct ConversationView: View {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
                              onSelect: { showSettings = false; picking = [] })
+        }
+        .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
+            Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
+            Button("保留图片，只重新生成文字") { generate(regenerate: true, imageKeep: .keep) }
+            Button("保留图片描述，重新生成图片") { generate(regenerate: true, imageKeep: .redraw) }
+        } message: {
+            Text("一起重新生成时，原图片删除，新回复中的图片按新描述生成。保留图片时不调用生图接口；重新生成图片时按原描述各重画一次，每张调用一次生图接口。")
         }
         .confirmationDialog("掷骰子", isPresented: $dicing, titleVisibility: .visible) {
             ForEach(ChatEngine.diceChoices, id: \.self) { n in
@@ -241,7 +249,7 @@ struct ConversationView: View {
                 Button { switchVersion(1) } label: { Image(systemName: "chevron.right") }
                     .accessibilityLabel("下一个版本")
             }
-            Button { generate(regenerate: true) } label: {
+            Button { askRegenerate() } label: {
                 Label("重新生成", systemImage: "arrow.clockwise").font(.footnote)
             }
             Spacer()
@@ -787,7 +795,7 @@ struct ConversationView: View {
         case .moreReact:
             reactingTo = m
         case .regenerate:
-            if !busy { generate(regenerate: true) }
+            askRegenerate()
         case .revoice:
             var pending = m
             pending.row["media"] = .string("pending")
@@ -826,7 +834,13 @@ struct ConversationView: View {
     }
 
     /// 请角色回复；regenerate 时重新生成最后一轮。新落下的几条到了，旧的那一轮才从屏幕上拿掉。
-    private func generate(regenerate: Bool = false) {
+    /// 重新生成：这一轮里有角色发的图片时先问图片怎么处理（底部一列，网页版 4.522）
+    private func askRegenerate() {
+        guard !busy else { return }
+        if let turn, ChatEngine.hasImages(turn) { askingImageKeep = true } else { generate(regenerate: true) }
+    }
+
+    private func generate(regenerate: Bool = false, imageKeep: ChatEngine.ImageKeep = .all) {
         guard !busy else { return }
         busy = true
         problem = nil
@@ -834,7 +848,7 @@ struct ConversationView: View {
         let oldIds = regenerate ? Set(turn?.rows.map(\.id) ?? []) : []
         job = Task {
             do {
-                try await ChatEngine.reply(chatId: id, regenerate: regenerate) { m in
+                try await ChatEngine.reply(chatId: id, regenerate: regenerate, imageKeep: imageKeep) { m in
                     Task { @MainActor in
                         if !oldIds.isEmpty { messages.removeAll { oldIds.contains($0.id) } }
                         if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } else { messages.append(m) }

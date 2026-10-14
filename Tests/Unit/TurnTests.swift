@@ -139,3 +139,38 @@ extension TurnTests {
         XCTAssertEqual(try Repo.messages(chatId: "chat_a").suffix(30).map(\.id), ids)
     }
 }
+
+extension TurnTests {
+    /// 重新生成时保留图片：新回复里的图片标记放回原来那张（同一条、同一个 id），不另画；多出来的不画
+    func testRegenerateKeepsImages() async throws {
+        let before = try XCTUnwrap(charRows().first { $0.id == "msg_3" })
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("新的一句\n[图片：一只狗]\n[图片：又一张]")) }
+        try await ChatEngine.reply(chatId: "chat_a", regenerate: true, imageKeep: .keep) { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let rows = try charRows()
+        XCTAssertEqual(rows.map(\.content), ["新的一句", "[图片：一只猫]"])
+        XCTAssertEqual(rows.last?.id, "msg_3")
+        XCTAssertEqual(rows.last?.row.string("imageId"), before.row.string("imageId"))
+        XCTAssertTrue(rows.allSatisfy { $0.turnId == "turn_1" })
+        // 整轮的原文挂在第一条上，留下的图片上不再带旧的
+        XCTAssertNotNil(rows.first?.row["swipes"])
+        XCTAssertNil(rows.last?.row["swipes"])
+        XCTAssertEqual(try ChatEngine.lastTurn(chatId: "chat_a")?.versions.swipes.count, 2)
+    }
+
+    /// 新回复里没写图片：留下的那张接在这一轮末尾
+    func testKeptImageGoesToEnd() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("只有字")) }
+        try await ChatEngine.reply(chatId: "chat_a", regenerate: true, imageKeep: .keep) { _ in }
+        XCTAssertEqual(try charRows().map(\.id).last, "msg_3")
+        XCTAssertEqual(try charRows().map(\.content), ["只有字", "[图片：一只猫]"])
+    }
+
+    /// 一起重新生成：原来那张删掉
+    func testRegenerateAllDropsImage() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("只有字")) }
+        try await ChatEngine.reply(chatId: "chat_a", regenerate: true, imageKeep: .all) { _ in }
+        XCTAssertFalse(try charRows().contains { $0.id == "msg_3" })
+        XCTAssertTrue(ChatEngine.hasImages(try XCTUnwrap(ChatEngine.lastTurn(chatId: "chat_a"))) == false)
+    }
+}

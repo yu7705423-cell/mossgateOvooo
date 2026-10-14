@@ -19,7 +19,20 @@ enum ChatEngine {
     ///
     /// regenerate 为 true 时重新生成最后一轮：拿去掉这一轮之后的同样前文再请求一次（网页版 streamReply 的 excludeTurn），
     /// **成功之后**才换掉旧的那几条，新的原文追加成一个新版本。失败时旧的那一轮原样留着，不写失败的消息。
-    static func reply(chatId: String, regenerate: Bool = false, onRow: @escaping OnRow) async throws {
+    /// 重新生成的那一轮里有角色发的图片时，图片怎么处理（网页版 4.522）
+    enum ImageKeep: Sendable {
+        /// 文字与图片一起重新生成：原图片删除，新回复里的图片按新描述生成
+        case all
+        /// 保留图片，只重新生成文字：不调生图接口
+        case keep
+        /// 保留图片描述，重新生成图片：文字重新生成，图片按原描述各重画一次
+        case redraw
+    }
+
+    /// 这一轮里有没有角色发的图片。没有就不问
+    static func hasImages(_ t: Turn) -> Bool { t.rows.contains { $0.kind == "image" && $0.role == .char } }
+
+    static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, onRow: @escaping OnRow) async throws {
         guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
         guard let charId = chat.characterIds.first, let char = try Repo.character(charId) else {
             throw StoreError(message: "这段会话的角色不存在")
@@ -86,8 +99,12 @@ enum ChatEngine {
         }
         // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
         guard !plan(raw: result.text, chat: chat, char: char).plan.isEmpty else { throw StoreError(message: "模型返回了空内容") }
-        if let old { try removeRows(old.rows, turnId: old.id, chatId: chat.id) }
-        let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions, onRow: onRow)
+        // 保留图片的两种：图片那几条摘出来不删，新回复里第几个图片标记就放回第几张
+        let held = imageKeep == .all ? [] : (old?.rows ?? []).filter { $0.kind == "image" && $0.role == .char }
+        let heldIds = Set(held.map(\.id))
+        if let old { try removeRows(old.rows.filter { !heldIds.contains($0.id) }, turnId: old.id, chatId: chat.id) }
+        let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions,
+                                      held: held, redrawHeld: imageKeep == .redraw, onRow: onRow)
         // 心声「单独生成」那一档：整轮说完之后另调一次（默认关，在会话设置里开）
         if let m = await InnerVoice.attach(chat: chat, char: char, created: created) { onRow(m) }
     }
@@ -185,7 +202,8 @@ enum ChatEngine {
     /// 把一次回复落成消息。parts 之间按网页版的节奏停顿：非文字 700 毫秒，文字 320 + 每字 28 毫秒，最多 1.8 秒。
     @discardableResult
     static func write(raw: String, chat: Chat, char: Character, turnId: String, versions: Versions,
-                      instant: Bool = false, onRow: @escaping OnRow) async throws -> [Message] {
+                      instant: Bool = false, held: [Message] = [], redrawHeld: Bool = false,
+                      onRow: @escaping OnRow) async throws -> [Message] {
         let parsed = plan(raw: raw, chat: chat, char: char)
         guard !parsed.plan.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         func head(_ m: inout Message) {
@@ -207,10 +225,35 @@ enum ChatEngine {
             MusicListen.resolveShared(created, onRow: onRow)
         }
 
+        // 重新生成时留下的图片：放回原位置，不另画（选了重画的按原描述再画一次）。群聊按发图的人配
+        var pool = held
+        let holding = !held.isEmpty
+        func place(_ kept: Message) throws {
+            var m = kept
+            for k in ["raw", "think", "swipes", "swipeIndex", "served", "stamp"] { m.row[k] = nil }
+            m.row["turnId"] = .string(turnId)
+            m.row["createdAt"] = .number(max(Date().millis, (created.last?.createdAt ?? 0) + 1))
+            if created.isEmpty { head(&m) }
+            if redrawHeld {
+                m.row["imageId"] = .null
+                m.row["media"] = .string("pending")
+                m.row["mediaError"] = .string("")
+            }
+            m.row.touch()
+            try Repo.save(m)
+            created.append(m)
+            onRow(m)
+        }
+
         for (i, step) in steps.enumerated() {
             let part = step.part
             let who = step.char
             if part.type == .silence { sawSilence = true; continue }
+            if holding && part.type == .image {
+                // 新回复里多出来的图片标记不画：用户选的是留下原来的图
+                if let k = pool.firstIndex(where: { $0.authorId == who.id || $0.authorId.isEmpty }) { try place(pool.remove(at: k)) }
+                continue
+            }
             // 被禁言的成员这一轮写的一概不落。每一条都现查
             if chat.isGroup, let now = try Repo.chat(chat.id), GroupChat.isMuted(now, who.id) { continue }
             let built = try effect(part, chat: chat, char: who, turnId: turnId) ?? row(for: part, chat: chat, char: who, turnId: turnId, draw: !instant)
@@ -227,6 +270,9 @@ enum ChatEngine {
                 try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
             }
         }
+
+        // 没被用上的接在这一轮末尾
+        for kept in pool { try place(kept) }
 
         // 一条气泡都没落、而模型写了 [不回复] 或只回应了：落一行「已读，未回复」，原文与版本挂在它上面
         let reacted = parts.contains { $0.type == .react }
