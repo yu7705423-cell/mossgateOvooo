@@ -149,3 +149,20 @@ final class UserNarrationTests: StoreTestCase {
         XCTAssertNil(try ChatEngine.addNarration(text: "]", chatId: "chat_a"))
     }
 }
+
+/// 用文字发一张图：角色收到 [图片：…]，不走识图
+final class TextImageTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testSendTextImage() throws {
+        let m = try ChatEngine.sendTextImage(" 窗外的雪] ", chatId: "chat_a")
+        XCTAssertEqual(m.kind, "image")
+        XCTAssertEqual(m.content, "[图片：窗外的雪]")
+        XCTAssertEqual(m.row.string("vision"), "done")
+        XCTAssertEqual(m.row.string("imageDesc"), "窗外的雪")
+        XCTAssertThrowsError(try ChatEngine.sendTextImage("  ", chatId: "chat_a"))
+    }
+}

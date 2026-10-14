@@ -587,6 +587,21 @@ enum ChatEngine {
         return try post(m)
     }
 
+    /// 用文字发一张图（网页版 typePhoto）：手边没有那张图，写下画面发出去。角色收到的是 [图片：…]，
+    /// 和识图读出来的是同一种东西，所以不走识图，也不占生图接口
+    static func sendTextImage(_ text: String, chatId: String, quote: Message? = nil) throws -> Message {
+        let t = text.replacingOccurrences(of: "]", with: "").replacingOccurrences(of: "】", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { throw StoreError(message: "图片内容不能为空") }
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[图片：\(t)]", kind: "image")
+        m.row["imageId"] = .null
+        m.row["imageDesc"] = .string(t)
+        m.row["vision"] = .string("done")
+        m.row["media"] = .string("text")
+        if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
+        return try post(m)
+    }
+
     /// 我写的一行旁白（网页版 4.343）：居中一行小字，不触发回复，角色下一次回复时一并读到
     static func addNarration(text: String, chatId: String) throws -> Message? {
         let t = text.replacingOccurrences(of: "]", with: "").replacingOccurrences(of: "】", with: "")

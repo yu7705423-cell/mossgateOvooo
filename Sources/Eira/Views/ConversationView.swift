@@ -46,6 +46,8 @@ struct ConversationView: View {
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
     @State private var dicing = false
+    @State private var typingPhoto = false
+    @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
     @State private var reactingTo: Message?
@@ -131,6 +133,18 @@ struct ConversationView: View {
             Button("保留图片描述，重新生成图片") { generate(regenerate: true, imageKeep: .redraw) }
         } message: {
             Text("一起重新生成时，原图片删除，新回复中的图片按新描述生成。保留图片时不调用生图接口；重新生成图片时按原描述各重画一次，每张调用一次生图接口。")
+        }
+        .alert("输入图片内容", isPresented: $typingPhoto) {
+            TextField("描述图片上的画面", text: $photoText, axis: .vertical)
+            Button("发送") {
+                let t = photoText
+                post { try ChatEngine.sendTextImage(t, chatId: chatId, quote: quoting) }
+                quoting = nil
+            }
+            .disabled(photoText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将作为一张图片发出。角色收到的是这段描述，与识图读出的结果相同。")
         }
         .confirmationDialog("掷骰子", isPresented: $dicing, titleVisibility: .visible) {
             ForEach(ChatEngine.diceChoices, id: \.self) { n in
@@ -387,9 +401,14 @@ struct ConversationView: View {
     /// 加号面板（.composer-panel .panel-grid）：一行四格，浅灰圆角方块里一个线条图标，下面一行小字
     private var plusPanel: some View {
         LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
-            PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
-                panelItem("image", "图片")
-            }
+            Menu {
+                PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
+                    Label("从相册选择", systemImage: "photo.on.rectangle")
+                }
+                Button { showPanel = false; photoText = ""; typingPhoto = true } label: {
+                    Label("输入图片内容", systemImage: "text.below.photo")
+                }
+            } label: { panelItem("image", "图片") }
             .disabled(isBusy)
             panelButton("mic", "语音") { recordingVoice = true }
             panelButton("grid", "骰子") { dicing = true }
@@ -1456,7 +1475,9 @@ struct MessageRow: View {
     private var imageCard: some View {
         let media = message.row.string("media")
         let err = message.row.string("mediaError")
-        let prompt = message.row.string("prompt").isEmpty ? message.content : message.row.string("prompt")
+        // 我用文字写的图显示那段描述；角色的图显示生图描述
+        let desc = mine ? message.row.string("imageDesc") : message.row.string("prompt")
+        let prompt = desc.isEmpty ? message.content : desc
         let canRedraw = !mine && SettingsModel.shared.s.imageReady && !(media == "pending" && drawing)
         return VStack(alignment: .leading, spacing: 6) {
             card(icon: "photo", text: prompt)
