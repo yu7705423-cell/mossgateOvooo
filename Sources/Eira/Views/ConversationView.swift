@@ -43,6 +43,8 @@ struct ConversationView: View {
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
     @State private var dicing = false
+    /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
+    @State private var narrMode = false
     @State private var reactingTo: Message?
     @State private var showStickers = false
     @State private var showPanel = false
@@ -264,13 +266,14 @@ struct ConversationView: View {
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
             mentionBar
+            narrTabs
             // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
             HStack(alignment: .bottom, spacing: Theme.sp2) {
                 sideButton("plus", label: showPanel ? "收起" : "添加内容") {
                     showPanel.toggle()
                     if showPanel { showStickers = false; typing = false }
                 }
-                TextField("Aa…", text: $draft, axis: .vertical)
+                TextField(narrMode && chat?.row.bool("userNarration") == true ? "写一行旁白" : "Aa…", text: $draft, axis: .vertical)
                     .focused($typing)
                     .onChange(of: typing) { _, t in if t { showStickers = false; showPanel = false } }
                     .lineLimit(1...5)
@@ -299,6 +302,25 @@ struct ConversationView: View {
             }
         }
         .background(Theme.bg)
+    }
+
+    /// 「消息 旁白」切换：输入栏上方一行小字，开了「我也写旁白」才有（网页版 composer-tabs）
+    @ViewBuilder private var narrTabs: some View {
+        if chat?.row.bool("userNarration") == true {
+            HStack(spacing: Theme.sp4) {
+                ForEach([false, true], id: \.self) { v in
+                    Button { narrMode = v } label: {
+                        Text(v ? "旁白" : "消息")
+                            .font(.system(size: 12, weight: narrMode == v ? .semibold : .regular))
+                            .foregroundStyle(narrMode == v ? Theme.text : Theme.text3)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(narrMode == v ? .isSelected : [])
+                }
+                Spacer()
+            }
+            .padding(.horizontal, Theme.sp4).padding(.top, Theme.sp2)
+        }
     }
 
     /// 群里输入「@」时，输入框上方一排可以提到的成员
@@ -677,6 +699,19 @@ struct ConversationView: View {
     private func primary() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { generate(); return }
+        // 在写旁白：落一行我的旁白，切回发消息。不消耗正在引用的那一条，也不触发回复
+        if narrMode && chat?.row.bool("userNarration") == true {
+            do {
+                if let m = try ChatEngine.addNarration(text: text, chatId: chatId) { messages.append(m) }
+                draft = ""
+                narrMode = false
+                turn = nil
+                problem = nil
+            } catch {
+                problem = "旁白未能保存：\(error.localizedDescription)"
+            }
+            return
+        }
         do {
             let m = try ChatEngine.send(text: text, chatId: chatId, quote: quoting)
             draft = ""

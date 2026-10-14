@@ -13,6 +13,7 @@ struct ChatSettingsView: View {
     @State private var pinned = false
     @State private var muted = false
     @State private var narration = false
+    @State private var userNarration = false
     @State private var innerMode = "off"
     @State private var innerWhat = ""
     @State private var translateTo = ""
@@ -59,6 +60,11 @@ struct ChatSettingsView: View {
                 Toggle("旁白", isOn: $narration)
             } footer: {
                 Text("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
+            }
+            Section {
+                Toggle("我也写旁白", isOn: $userNarration)
+            } footer: {
+                Text("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
             }
             Section {
                 Picker("心声", selection: $innerMode) {
@@ -137,6 +143,7 @@ struct ChatSettingsView: View {
         .onChange(of: pinned) { _, _ in save() }
         .onChange(of: muted) { _, _ in save() }
         .onChange(of: narration) { _, _ in save() }
+        .onChange(of: userNarration) { _, _ in save() }
         .onChange(of: presetId) { _, _ in save() }
         .onChange(of: innerMode) { _, _ in save() }
         .onDisappear(perform: save)
@@ -168,7 +175,7 @@ struct ChatSettingsView: View {
         do {
             guard let c = try Repo.chat(chatId) else { problem = "这段会话不存在"; return }
             chat = c
-            pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration")
+            pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration"); userNarration = c.row.bool("userNarration")
             innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat")
             translateTo = c.row.string("translateTo")
             presetId = c.presetId; summary = c.summary
@@ -186,6 +193,7 @@ struct ChatSettingsView: View {
         if pinned != c.pinned { f["pinned"] = .bool(pinned) }
         if muted != c.muted { f["muted"] = .bool(muted) }
         if narration != c.row.bool("narration") { f["narration"] = .bool(narration) }
+        if userNarration != c.row.bool("userNarration") { f["userNarration"] = .bool(userNarration) }
         if presetId != c.presetId { f["presetId"] = .string(presetId) }
         if summary != c.summary { f["summary"] = .string(summary) }
         if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }

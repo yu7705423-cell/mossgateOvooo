@@ -132,3 +132,20 @@ final class ReactRecentTests: XCTestCase {
         XCTAssertEqual(next.first, "\u{1F602}")
     }
 }
+
+/// 我写的旁白：正文带标记，摘掉方括号，不调接口
+final class UserNarrationTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testAddNarration() throws {
+        let m = try XCTUnwrap(ChatEngine.addNarration(text: " 窗外下起了雨] ", chatId: "chat_a"))
+        XCTAssertEqual(m.kind, "narration")
+        XCTAssertEqual(m.role, .user)
+        XCTAssertEqual(m.content, "[旁白：窗外下起了雨]")
+        XCTAssertEqual(m.row.string("narration"), "窗外下起了雨")
+        XCTAssertNil(try ChatEngine.addNarration(text: "]", chatId: "chat_a"))
+    }
+}

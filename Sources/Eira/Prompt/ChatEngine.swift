@@ -538,6 +538,16 @@ enum ChatEngine {
         return try post(m)
     }
 
+    /// 我写的一行旁白（网页版 4.343）：居中一行小字，不触发回复，角色下一次回复时一并读到
+    static func addNarration(text: String, chatId: String) throws -> Message? {
+        let t = text.replacingOccurrences(of: "]", with: "").replacingOccurrences(of: "】", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty else { return nil }
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[旁白：\(t)]", kind: "narration")
+        m.row["narration"] = .string(t)
+        return try post(m)
+    }
+
     /// 用户发一条文字。quote 是引用的那一条。
     static func send(text: String, chatId: String, quote: Message? = nil) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)
