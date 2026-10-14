@@ -574,11 +574,20 @@ struct ConversationView: View {
                           meAvatar: me?.avatar ?? "", meName: me?.name ?? "我",
                           latestTurn: ctx.latestTurn,
                           translateLang: chat?.row.string("translateTo") ?? "",
+                          quoteName: quoteName(of: m),
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
                           onRetry: retry,
                           onOpenImage: { viewing = ViewingImage(id: $0) },
                           onAction: { act($0, m) })
+    }
+
+    /// 引用块上写的名字：引的是我说的就写我的名字，否则写那位角色
+    private func quoteName(of m: Message) -> String {
+        guard !m.row.string("quoteText").isEmpty else { return "" }
+        if m.row.string("quoteRole") == "user" { return me?.name ?? "我" }
+        let id = m.row.string("quoteAuthorId")
+        return members[id]?.displayName ?? (char?.id == id || id.isEmpty ? char?.displayName ?? "" : "")
     }
 
     /// 这一条是谁说的：群里按作者找成员，一对一就是这个角色。
@@ -624,6 +633,9 @@ struct ConversationView: View {
             openedForward = m
         case .editTrans:
             editingTrans = m
+        case .jumpQuote:
+            let id = m.row.string("quoteId")
+            if !id.isEmpty { jump(id) }
         case .translate:
             guard let chat else { return }
             Task {
@@ -975,7 +987,7 @@ struct EditMessageView: View {
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
 struct MessageRow: View {
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote }
 
     let message: Message
     let char: Character?
@@ -992,6 +1004,8 @@ struct MessageRow: View {
     var latestTurn = ""
     /// 这段会话译成哪种语言（空为不翻译）：长按菜单里「翻译 / 改译文」看它
     var translateLang = ""
+    /// 引用的那一条是谁说的
+    var quoteName = ""
     /// 多选模式：点一下选中或取消，长按菜单停用
     var picking = false
     var picked = false
@@ -1169,7 +1183,12 @@ struct MessageRow: View {
                 }
                 let quote = message.row.string("quoteText")
                 if !quote.isEmpty {
-                    Text("引用：\(quote)").font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2)
+                    Text(quoteName.isEmpty ? quote : "\(quoteName)：\(quote)")
+                        .font(.caption).foregroundStyle(Theme.secondaryText).lineLimit(2)
+                        .padding(.horizontal, Theme.sp2).padding(.vertical, Theme.sp1)
+                        .background(Theme.groupFill, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+                        .onTapGesture { onAction?(.jumpQuote) }
+                        .accessibilityAddTraits(.isButton)
                 }
                 HStack(alignment: .bottom, spacing: 6) {
                     if mine && !stampBelow { meta }
@@ -1249,7 +1268,7 @@ struct MessageRow: View {
         case "location":
             card(icon: "mappin.and.ellipse", text: [message.row.string("place"), message.row.string("address")].filter { !$0.isEmpty }.joined(separator: " "))
         case "dice":
-            card(icon: "dice", text: "\(Int(message.row.number("value") ?? 0))")
+            diceCard
         case "transfer":
             transferCard
         case "gift":
@@ -1308,6 +1327,19 @@ struct MessageRow: View {
             .foregroundStyle(mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)
             .background(mine ? Theme.bubbleMine : Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
             .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
+    }
+
+    /// 骰子：点数，加一行「骰子」或「N 面骰」
+    private var diceCard: some View {
+        let faces = Int(message.row.number("faces") ?? 6)
+        return HStack(alignment: .firstTextBaseline, spacing: Theme.sp2) {
+            Text("\(Int(message.row.number("value") ?? 0))").font(.system(size: 24, weight: .semibold).monospacedDigit())
+            Text(faces == 6 ? "骰子" : "\(faces) 面骰").font(.system(size: 12)).foregroundStyle(Theme.text3)
+        }
+        .foregroundStyle(Theme.bubbleTheirsText)
+        .padding(.horizontal, Theme.pad).padding(.vertical, Theme.sp2)
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
     }
 
     private func card(icon: String, text: String) -> some View {

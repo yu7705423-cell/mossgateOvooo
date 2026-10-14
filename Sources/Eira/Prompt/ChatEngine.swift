@@ -368,9 +368,11 @@ enum ChatEngine {
             m = make("narration", "[旁白：\(p.text)]")
             m.row["narration"] = .string(p.text)
         case .dice:
-            let faces = Int(chat.row.number("diceFaces") ?? 6)
-            let value = Int.random(in: 1...max(2, faces))
-            m = make("dice", "[骰子：\(value)]")
+            let raw = Int((chat.row.number("diceFaces") ?? 6).rounded())
+            let faces = raw >= 2 ? raw : 6
+            let value = Int.random(in: 1...faces)
+            // 正文是协议，和网页版 extras.roll 一字不差：六面只写点数，别的面数带上「N 面」
+            m = make("dice", faces == 6 ? "[骰子：\(value)]" : "[骰子：\(value)（\(faces) 面）]")
             m.row["faces"] = .number(Double(faces))
             m.row["value"] = .number(Double(value))
         case .transfer:
