@@ -281,6 +281,21 @@ enum ChatEngine {
         return m
     }
 
+    /// 用户发一个表情。content 写 `[表情：名字]`，和网页版存的一样（Conversation.js 的 sendSticker）。
+    static func sendSticker(_ st: Stickers.Item, chatId: String, quote: Message? = nil) throws -> Message {
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[表情：\(st.name)]", kind: "sticker")
+        m.row["stickerId"] = .string(st.id)
+        if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
+        m = try Repo.append(m)
+        if var c = try Repo.chat(chatId) {
+            c.row["lastMessageAt"] = .number(Date().millis)
+            c.row.touch()
+            try Repo.save(c)
+        }
+        Stickers.markUsed(st.id)
+        return m
+    }
+
     /// 用户发一条文字。quote 是引用的那一条。
     static func send(text: String, chatId: String, quote: Message? = nil) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: text)

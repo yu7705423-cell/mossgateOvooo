@@ -27,6 +27,8 @@ struct ConversationView: View {
     @State private var editing: Message?
     @State private var deleting: Message?
     @State private var showSettings = false
+    @State private var showStickers = false
+    @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
@@ -162,7 +164,17 @@ struct ConversationView: View {
                 }
                 .accessibilityLabel("发送图片")
                 .disabled(busy)
+                Button {
+                    showStickers.toggle()
+                    if showStickers { typing = false }
+                } label: {
+                    Image(systemName: showStickers ? "keyboard" : "face.smiling").font(.title2)
+                }
+                .accessibilityLabel(showStickers ? "收起表情" : "表情")
+                .disabled(busy)
                 TextField("输入消息", text: $draft, axis: .vertical)
+                    .focused($typing)
+                    .onChange(of: typing) { _, t in if t { showStickers = false } }
                     .lineLimit(1...5)
                     .padding(.horizontal, Theme.pad).padding(.vertical, 8)
                     .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
@@ -179,8 +191,23 @@ struct ConversationView: View {
                 }
             }
             .padding(Theme.pad)
+            if showStickers {
+                StickerPanel { st in sendSticker(st) }
+            }
         }
         .background(Theme.background)
+    }
+
+    private func sendSticker(_ st: Stickers.Item) {
+        do {
+            let m = try ChatEngine.sendSticker(st, chatId: chatId, quote: quoting)
+            quoting = nil
+            messages.append(m)
+            turn = nil
+            problem = nil
+        } catch {
+            problem = "消息未能保存：\(error.localizedDescription)"
+        }
     }
 
     private var draftEmpty: Bool { draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
