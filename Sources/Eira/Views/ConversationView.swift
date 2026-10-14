@@ -457,6 +457,22 @@ struct ConversationView: View {
         }
     }
 
+    /// 选中的几条画成一张长图，存到「照片」
+    private func shotPicked() {
+        guard let p = picking, !p.isEmpty else { return }
+        let picked = messages.filter { p.contains($0.id) }
+        let title = pageTitle
+        Task { @MainActor in
+            let lines = await ChatShot.lines(picked) { m in
+                m.role == .user ? (me?.name ?? "我") : (speaker(of: m)?.displayName ?? "对方")
+            }
+            guard let img = ChatShot.render(lines, title: title) else { notice = "图片未能生成。"; return }
+            let said = await ChatShot.save(img)
+            if said.hasPrefix("已存") { picking = nil }
+            notice = said
+        }
+    }
+
     private func removePicked() {
         guard let p = picking else { return }
         do {
@@ -472,6 +488,9 @@ struct ConversationView: View {
             Button("取消") { picking = nil }.buttonStyle(EiraButtonStyle(kind: .ghost))
             Spacer()
             Button("转发") { forwarding = true }
+                .buttonStyle(EiraButtonStyle(kind: .ghost))
+                .disabled(picking?.isEmpty != false)
+            Button("存为图片") { shotPicked() }
                 .buttonStyle(EiraButtonStyle(kind: .ghost))
                 .disabled(picking?.isEmpty != false)
             Button("删除（\(picking?.count ?? 0)）") { confirmBatchDelete = true }
