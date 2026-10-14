@@ -66,100 +66,7 @@ struct ConversationView: View {
     var body: some View {
         VStack(spacing: 0) {
             ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        if hasMore {
-                            Button(earlier > 0 ? "查看更早的消息（还有 \(earlier) 条）" : "查看更早的消息") {
-                                // 加载后视口钉在原来那一条上，不跳到最上面
-                                let keep = messages.first?.id
-                                pageSize += Self.pageStep
-                                reload()
-                                if let keep { DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) } }
-                            }
-                            .font(.system(size: 12)).foregroundStyle(Theme.text2).padding(.vertical, Theme.sp2)
-                        }
-                        // 开场白：会话里还没有消息时显示，不存进库、不发给模型（网页版同样）
-                        if messages.isEmpty, let greet = char?.firstMessage, !greet.isEmpty, chat?.isGroup != true {
-                            HStack(alignment: .top, spacing: Theme.gap) {
-                                Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "")
-                                Text(greet)
-                                    .font(.system(size: Theme.bubbleFont))
-                                    .lineSpacing(Theme.bubbleFont * 0.4)
-                                    .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
-                                    .foregroundStyle(Theme.bubbleTheirsText)
-                                    .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
-                                    .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
-                                Spacer(minLength: 48)
-                            }
-                            .padding(.horizontal, Theme.pad)
-                        }
-                        // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
-                        let ctx = rowContext()
-                        ForEach(messages) { m in
-                            messageCell(m, ctx)
-                        }
-                        Color.clear.frame(height: 1)
-                            .onAppear { atBottom = true; unseen = 0 }
-                            .onDisappear { atBottom = false }
-                        if busy {
-                            Text("正在回复")
-                                .font(.footnote).foregroundStyle(Theme.tertiaryText)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .padding(.horizontal, Theme.pad)
-                                .id("busy")
-                        } else if let turn {
-                            turnBar(turn)
-                        }
-                    }
-                    .padding(.vertical, Theme.pad)
-                }
-                .scrollDismissesKeyboard(.interactively)
-                .onChange(of: messages.last?.id) { _, id in
-                    guard let id else { return }
-                    // 自己发的一定滚到底；角色的只在贴着底部时滚，否则在右下角记一个数
-                    if atBottom || messages.last?.role == .user {
-                        withAnimation { proxy.scrollTo(id, anchor: .bottom) }
-                    } else {
-                        unseen += 1
-                    }
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    if !atBottom && !messages.isEmpty {
-                        Button {
-                            if let id = messages.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
-                            unseen = 0
-                        } label: {
-                            SvgIcon(name: "chevronDown", size: 18, color: Theme.text)
-                                .frame(width: 36, height: 36)
-                                .background(Circle().fill(Theme.surface).shadow(color: .black.opacity(0.1), radius: 8, y: 4))
-                                .overlay(alignment: .topTrailing) {
-                                    if unseen > 0 {
-                                        Text(unseen > 99 ? "99+" : "\(unseen)").font(.system(size: 11).monospacedDigit())
-                                            .foregroundStyle(Theme.onAccent).padding(.horizontal, 5)
-                                            .frame(minWidth: 17, minHeight: 17).background(Theme.accent, in: Capsule())
-                                            .offset(x: 4, y: -6)
-                                    }
-                                }
-                        }
-                        .buttonStyle(.plain)
-                        .padding(Theme.sp3)
-                        .accessibilityLabel(unseen > 0 ? "回到最新，\(unseen) 条新消息" : "回到最新")
-                    }
-                }
-                .onAppear {
-                    if let focusId { jump(focusId) } else if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
-                }
-                .onChange(of: jumpTo) { _, id in
-                    guard let id else { return }
-                    jumpTo = nil
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(id, anchor: .center)
-                        withAnimation(.easeOut(duration: 0.2)) { flashId = id }
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
-                            withAnimation(.easeOut(duration: 0.4)) { if flashId == id { flashId = nil } }
-                        }
-                    }
-                }
+                messageScroll(proxy)
             }
             if let problem {
                 Text(problem)
@@ -494,7 +401,109 @@ struct ConversationView: View {
 
     private var isGroup: Bool { chat?.isGroup == true }
 
-    /// 这一条是谁说的：群里按作者找成员，一对一就是这个角色。
+    /// 消息列表那一块。拆出来单独推断类型，整页写在 body 里编译器推断不过来
+    private func messageScroll(_ proxy: ScrollViewProxy) -> some View {
+        ScrollView { messageStack(proxy) }
+        .scrollDismissesKeyboard(.interactively)
+        .onChange(of: messages.last?.id) { _, id in
+            guard let id else { return }
+            // 自己发的一定滚到底；角色的只在贴着底部时滚，否则在右下角记一个数
+            if atBottom || messages.last?.role == .user {
+                withAnimation { proxy.scrollTo(id, anchor: .bottom) }
+            } else {
+                unseen += 1
+            }
+        }
+        .overlay(alignment: .bottomTrailing) { latestButton(proxy) }
+        .onAppear {
+            if let focusId { jump(focusId) } else if let id = messages.last?.id { proxy.scrollTo(id, anchor: .bottom) }
+        }
+        .onChange(of: jumpTo) { _, id in
+            guard let id else { return }
+            jumpTo = nil
+            DispatchQueue.main.async {
+                proxy.scrollTo(id, anchor: .center)
+                withAnimation(.easeOut(duration: 0.2)) { flashId = id }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) {
+                    withAnimation(.easeOut(duration: 0.4)) { if flashId == id { flashId = nil } }
+                }
+            }
+        }
+    }
+
+    private func messageStack(_ proxy: ScrollViewProxy) -> some View {
+        LazyVStack(spacing: 0) {
+            if hasMore {
+                Button(earlier > 0 ? "查看更早的消息（还有 \(earlier) 条）" : "查看更早的消息") {
+                    // 加载后视口钉在原来那一条上，不跳到最上面
+                    let keep = messages.first?.id
+                    pageSize += Self.pageStep
+                    reload()
+                    if let keep { DispatchQueue.main.async { proxy.scrollTo(keep, anchor: .top) } }
+                }
+                .font(.system(size: 12)).foregroundStyle(Theme.text2).padding(.vertical, Theme.sp2)
+            }
+            // 开场白：会话里还没有消息时显示，不存进库、不发给模型（网页版同样）
+            if messages.isEmpty, let greet = char?.firstMessage, !greet.isEmpty, chat?.isGroup != true {
+                HStack(alignment: .top, spacing: Theme.gap) {
+                    Avatar(imageId: char?.avatar ?? "", name: char?.displayName ?? "")
+                    Text(greet)
+                        .font(.system(size: Theme.bubbleFont))
+                        .lineSpacing(Theme.bubbleFont * 0.4)
+                        .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
+                        .foregroundStyle(Theme.bubbleTheirsText)
+                        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+                        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
+                    Spacer(minLength: 48)
+                }
+                .padding(.horizontal, Theme.pad)
+            }
+            // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
+            let ctx = rowContext()
+            ForEach(messages) { m in
+                messageCell(m, ctx)
+            }
+            Color.clear.frame(height: 1)
+                .onAppear { atBottom = true; unseen = 0 }
+                .onDisappear { atBottom = false }
+            if busy {
+                Text("正在回复")
+                    .font(.footnote).foregroundStyle(Theme.tertiaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, Theme.pad)
+                    .id("busy")
+            } else if let turn {
+                turnBar(turn)
+            }
+        }
+        .padding(.vertical, Theme.pad)
+    }
+
+    /// 往上翻看时右下角那个「回到最新」，带新消息数
+    @ViewBuilder private func latestButton(_ proxy: ScrollViewProxy) -> some View {
+        if !atBottom && !messages.isEmpty {
+            Button {
+                if let id = messages.last?.id { withAnimation { proxy.scrollTo(id, anchor: .bottom) } }
+                unseen = 0
+            } label: {
+                SvgIcon(name: "chevronDown", size: 18, color: Theme.text)
+                    .frame(width: 36, height: 36)
+                    .background(Circle().fill(Theme.surface).shadow(color: .black.opacity(0.1), radius: 8, y: 4))
+                    .overlay(alignment: .topTrailing) {
+                        if unseen > 0 {
+                            Text(unseen > 99 ? "99+" : "\(unseen)").font(.system(size: 11).monospacedDigit())
+                                .foregroundStyle(Theme.onAccent).padding(.horizontal, 5)
+                                .frame(minWidth: 17, minHeight: 17).background(Theme.accent, in: Capsule())
+                                .offset(x: 4, y: -6)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .padding(Theme.sp3)
+            .accessibilityLabel(unseen > 0 ? "回到最新，\(unseen) 条新消息" : "回到最新")
+        }
+    }
+
     /// 一行要用到的、整段会话共用的那几样，算一次传下去（ForEach 里写一长串，编译器推断不过来）
     private struct RowContext {
         var stampMode: String
@@ -553,6 +562,7 @@ struct ConversationView: View {
                           onAction: { act($0, m) })
     }
 
+    /// 这一条是谁说的：群里按作者找成员，一对一就是这个角色。
     private func speaker(of m: Message) -> Character? {
         guard isGroup, let c = members[m.authorId] else { return char }
         return c
