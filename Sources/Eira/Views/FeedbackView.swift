@@ -36,7 +36,7 @@ struct FeedbackView: View {
             }
 
             Section {
-                Button("清空诊断记录", role: .destructive) { confirmClear = true }
+                Button("清空诊断记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
             } footer: {
                 Text("只清空上方的记录，不影响聊天与其他数据。")
             }

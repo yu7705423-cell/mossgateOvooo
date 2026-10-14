@@ -30,13 +30,20 @@ struct MusicHomeView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 新版页头：眉题 MUSIC，宋体标题随所在的页签换（网页版 music/App.js 的 titles[tab]）
+            VStack(alignment: .leading, spacing: 2) {
+                Text("MUSIC").font(.system(size: 11, weight: .semibold)).kerning(2.2).foregroundStyle(Theme.text3)
+                Text(["首页", "搜索", "我的"][tab]).font(Theme.serif(30)).kerning(0.6)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, Theme.sp4).padding(.bottom, Theme.sp3)
             Picker("", selection: $tab) {
                 Text("首页").tag(0)
                 Text("搜索").tag(1)
                 Text("我的").tag(2)
             }
             .pickerStyle(.segmented)
-            .padding(.horizontal, Theme.pad)
+            .padding(.horizontal, Theme.sp4)
             switch tab {
             case 1: MusicSearchView()
             case 2: MusicMineView()
@@ -45,6 +52,8 @@ struct MusicHomeView: View {
             NowBar()
         }
         .navigationTitle("音乐")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .principal) { EmptyView() } }
     }
 }
 
@@ -619,7 +628,7 @@ struct MusicCharSection: View {
                 if logged {
                     LabeledContent("角色的网易云", value: nick.isEmpty ? "已登录" : nick)
                     Button("查看角色在听什么") { pull() }
-                    Button("退出角色的网易云", role: .destructive) { try? Netease.logout(charId: charId); load() }
+                    Button("退出角色的网易云", role: .destructive) { try? Netease.logout(charId: charId); load() }.foregroundStyle(Theme.dangerText)
                 } else {
                     Button("登录角色的网易云账号") { login = true }
                 }

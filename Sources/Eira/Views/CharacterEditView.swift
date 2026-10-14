@@ -93,7 +93,7 @@ struct CharacterEditView: View {
                 Text(voiceFooter)
             }
             Section {
-                Button("删除角色", role: .destructive) { confirmDelete = true }
+                Button("删除角色", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             } footer: {
                 Text("同时删除与该角色的单聊、全部记忆与按角色存的数据，无法撤销。群聊中只移除该角色。")
             }

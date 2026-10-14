@@ -224,3 +224,85 @@ struct EiraButtonStyle: ButtonStyle {
             .opacity(configuration.isPressed ? 0.6 : 1)
     }
 }
+
+/// 一级页的大标题（新版 Page 的 hero）：上面一行眉题，下面宋体大标题。
+/// 放在列表最前面；滚出屏幕之后顶栏的小标题才出现（.page.has-hero:not(.is-scrolled) .nav-title { opacity: 0 }）。
+struct HeroHeader: View {
+    let eyebrow: String
+    let title: String
+    @Binding var shown: Bool
+
+    private var cjk: Bool { eyebrow.unicodeScalars.contains { (0x4E00...0x9FFF).contains($0.value) } }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            if !eyebrow.isEmpty {
+                Text(cjk ? eyebrow : eyebrow.uppercased())
+                    .font(.system(size: 11, weight: cjk ? .regular : .semibold))
+                    .kerning(cjk ? 0.44 : 2.2)
+                    .foregroundStyle(cjk ? Theme.text2 : Theme.text3)
+            }
+            Text(title).font(Theme.serif(30)).kerning(0.6).foregroundStyle(Theme.text)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, Theme.sp1)
+        .padding(.bottom, Theme.sp2)
+        .onAppear { shown = true }
+        .onDisappear { shown = false }
+        .listRowBackground(Color.clear)
+        .listRowSeparator(.hidden)
+        .listRowInsets(EdgeInsets(top: 0, leading: Theme.sp4, bottom: 0, trailing: Theme.sp4))
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
+extension View {
+    /// 配合 HeroHeader：顶栏只放小标题，大标题还在屏幕上时小标题藏起来
+    func heroTitle(_ title: String, heroShown: Bool) -> some View {
+        self
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text(title).font(.system(size: 17, weight: .semibold))
+                        .opacity(heroShown ? 0 : 1)
+                        .animation(.easeOut(duration: 0.14), value: heroShown)
+                }
+            }
+    }
+}
+
+/// 分组小标题（新版 .list-title）：12 号半粗，次级文字色，不转大写
+struct GroupTitle: View {
+    let text: String
+    init(_ text: String) { self.text = text }
+    var body: some View {
+        Text(text).font(.system(size: 12, weight: .semibold)).kerning(0.5).foregroundStyle(Theme.text2).textCase(nil)
+    }
+}
+
+/// 列表里一行入口（ListItem 带 left 图标与 right 状态）：线条图标、名字、右边灰字
+struct IconRow: View {
+    let title: String
+    let icon: String
+    var value: String = ""
+
+    var body: some View {
+        HStack(spacing: Theme.sp3) {
+            SvgIcon(name: icon, size: 19, color: Theme.text2)
+            Text(title)
+            Spacer(minLength: Theme.sp2)
+            if !value.isEmpty { Text(value).font(.system(size: 13)).foregroundStyle(Theme.text3).lineLimit(1) }
+        }
+        .frame(minHeight: 38)
+    }
+}
+
+extension Theme {
+    /// 日常首页的眉题（网页版 ui/page.js 的 todayLine）：10月14日 · 周二
+    static func todayLine(_ d: Date = Date()) -> String {
+        let c = Calendar(identifier: .gregorian).dateComponents([.month, .day, .weekday], from: d)
+        let w = Array("日一二三四五六")[((c.weekday ?? 1) - 1) % 7]
+        return "\(c.month ?? 1)月\(c.day ?? 1)日 · 周\(w)"
+    }
+}

@@ -262,7 +262,7 @@ struct VoicePresetEditView: View {
                     Text("合成一句短句并播放，按一次语音合成计费。")
                 }
                 Section {
-                    Button("删除这套接口", role: .destructive) { confirmDelete = true }
+                    Button("删除这套接口", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
                 }
             }
             ProblemSection(text: model.problem)

@@ -97,7 +97,7 @@ struct LorebookView: View {
                 Button("添加条目", action: addEntry)
             }
             Section {
-                Button("删除这本世界书", role: .destructive) { confirmDelete = true }
+                Button("删除这本世界书", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             } footer: {
                 Text("同时从各个角色身上摘下，无法撤销。")
             }
@@ -223,7 +223,7 @@ struct LoreEntryEditView: View {
             } footer: {
                 Text("优先级大的排在前面；优先级相同时按顺序从小到大。")
             }
-            Section { Button("删除这条设定", role: .destructive) { confirmDelete = true } }
+            Section { Button("删除这条设定", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
         .navigationTitle("编辑设定")

@@ -39,7 +39,7 @@ struct StorageView: View {
                 Text("导出的备份可以在网页版「设置 - 存储与备份」中恢复。")
             }
             Section {
-                Button("清空全部数据", role: .destructive) { confirmWipe = true }
+                Button("清空全部数据", role: .destructive) { confirmWipe = true }.foregroundStyle(Theme.dangerText)
                 if let wipeProblem { Text(wipeProblem).foregroundStyle(Theme.danger) }
                 if wiped { Text("已清空。").foregroundStyle(Theme.secondaryText) }
             } footer: {

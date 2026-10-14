@@ -8,23 +8,30 @@ struct DiaryHomeView: View {
     @State private var chars: [Character] = []
     @State private var problem: String?
     @State private var writing = false
+    @State private var hero = true
 
     var body: some View {
         List {
+            HeroHeader(eyebrow: "DIARY", title: "日记", shown: $hero)
             Picker("", selection: $tab) {
                 Text("我的").tag(0)
                 Text("角色的").tag(1)
             }
             .pickerStyle(.segmented)
             .listRowSeparator(.hidden)
+            .listRowBackground(Color.clear)
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             if tab == 0 {
-                if mine.isEmpty { Text("尚无日记。").foregroundStyle(Theme.secondaryText) }
+                if mine.isEmpty {
+                    EmptyState(title: "尚无日记", desc: "点右上角写下第一篇。").listRowBackground(Color.clear).listRowSeparator(.hidden)
+                }
                 ForEach(mine) { e in
                     NavigationLink { DiaryReadView(id: e.id) } label: { DiaryRow(entry: e, who: "") }
                 }
             } else {
-                if writers.isEmpty { Text("尚无角色写过日记。").foregroundStyle(Theme.secondaryText) }
+                if writers.isEmpty {
+                    EmptyState(title: "尚无角色写过日记", desc: "在角色的日记页中可以请角色现在写一篇。").listRowBackground(Color.clear).listRowSeparator(.hidden)
+                }
                 ForEach(writers) { w in
                     NavigationLink { CharDiaryView(charId: w.char.id) } label: {
                         HStack(spacing: Theme.pad) {
@@ -47,7 +54,7 @@ struct DiaryHomeView: View {
             }
         }
         .listStyle(.plain)
-        .navigationTitle("日记")
+        .heroTitle("日记", heroShown: hero)
         .toolbar {
             if tab == 0 {
                 ToolbarItem(placement: .primaryAction) {

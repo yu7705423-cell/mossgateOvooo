@@ -4,25 +4,33 @@ import SwiftUI
 struct DailyHomeView: View {
     @State private var chars: [Character] = []
     @State private var eventCount = 0
+    @State private var hero = true
 
     var body: some View {
         List {
-            Section("今天") {
-                if chars.isEmpty { Text("尚无角色。").foregroundStyle(Theme.secondaryText) }
+            HeroHeader(eyebrow: Theme.todayLine(), title: "日常", shown: $hero)
+            // 新版日常（.dyn-cards）：每个角色一张浅灰卡，名字与时段一行，正在做的事用宋体
+            Section {
+                if chars.isEmpty {
+                    EmptyState(title: "还没有角色", desc: "在「联系」中创建角色后，这里会显示每个角色的今天。")
+                        .listRowBackground(Color.clear)
+                }
                 ForEach(chars) { c in
                     NavigationLink { DayTodayView(charId: c.id) } label: { card(c) }
+                        .listRowBackground(Theme.surface2)
                 }
-            }
+            } header: { GroupTitle("今天") }
+            .listRowSeparator(.hidden)
             Section {
-                NavigationLink { FoodRegionsView() } label: { Text("吃什么") }
-                NavigationLink { EventLibraryView() } label: {
-                    HStack { Text("事件库"); Spacer(); Text("共 \(eventCount) 条").foregroundStyle(Theme.secondaryText) }
-                }
+                NavigationLink { FoodRegionsView() } label: { IconRow(title: "吃什么", icon: "cup") }
+                NavigationLink { EventLibraryView() } label: { IconRow(title: "事件库", icon: "spark", value: "共 \(eventCount) 条") }
             } footer: {
                 Text("日程由模型按人设生成，一天一次。撞上的事、运势与三顿吃什么都由本地随机数决定，不额外调用接口。")
+                    .font(.system(size: 12)).foregroundStyle(Theme.text2)
             }
         }
-        .navigationTitle("日常")
+        .listRowSpacing(Theme.sp2)
+        .heroTitle("日常", heroShown: hero)
         .onAppear {
             chars = ((try? Repo.characters()) ?? []).filter { !$0.row.bool("isNpc") && $0.row.string("parentId").isEmpty }
             eventCount = ((try? DayPlan.events()) ?? []).count
@@ -31,28 +39,42 @@ struct DailyHomeView: View {
 
     private func card(_ c: Character) -> some View {
         let b = DayPlan.brief(c)
+        let doing = b?.nowItems.first
         let now: String = {
             if !DayPlan.isOn(c) { return "未开启当日日程" }
             guard let b else { return "今天还没有安排" }
             if let first = b.nowItems.first { return first }
             return b.total > 0 ? "\(b.doneCount) / \(b.total) 已完成" : "这个时段没有安排"
         }()
-        return HStack(spacing: Theme.pad) {
-            Avatar(imageId: c.avatar, name: c.displayName, size: Theme.listAvatarSize)
-            VStack(alignment: .leading, spacing: 2) {
-                HStack {
-                    Text(c.displayName)
-                    if let b { Text(b.slot.label).font(.caption).foregroundStyle(Theme.tertiaryText) }
-                }
-                Text(now).font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1)
+        return VStack(alignment: .leading, spacing: Theme.sp2) {
+            HStack(spacing: Theme.sp2) {
+                Avatar(imageId: c.avatar, name: c.displayName, size: 32)
+                Text(c.displayName).font(.system(size: 14, weight: .semibold)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let b { Text(b.slot.label).font(.system(size: 12)).foregroundStyle(Theme.text2) }
+            }
+            if doing != nil {
+                Text(now).font(Theme.serif(20)).lineSpacing(4)
+            } else {
+                Text(now).font(.system(size: 14)).foregroundStyle(Theme.text2)
+            }
+            let extra: [String] = {
+                var out: [String] = []
                 if let ev = b?.event, let t = ev["text"]?.string {
                     let tone = ev["tone"]?.string == "good" ? "好事 · " : ev["tone"]?.string == "bad" ? "坏事 · " : ""
-                    Text(tone + t).font(.caption).foregroundStyle(Theme.tertiaryText).lineLimit(1)
-                } else if let b, !b.meal.isEmpty {
-                    Text(b.meal).font(.caption).foregroundStyle(Theme.tertiaryText).lineLimit(1)
+                    out.append(tone + t)
                 }
+                if let b, !b.meal.isEmpty { out.append(b.meal) }
+                return out
+            }()
+            if !extra.isEmpty {
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(extra, id: \.self) { Text($0).lineLimit(2) }
+                }
+                .font(.system(size: 13)).foregroundStyle(Theme.text2)
             }
         }
+        .padding(.vertical, Theme.sp2)
     }
 }
 
@@ -409,7 +431,7 @@ struct EventBatchView: View {
                 if !failed.isEmpty { Section("这几格没成") { ForEach(failed, id: \.self) { Text($0).font(.footnote) } } }
                 Section {
                     Button("保存 \(results.filter(\.keep).count) 条", action: save)
-                    Button("放弃", role: .destructive) { results = []; failed = [] }
+                    Button("放弃", role: .destructive) { results = []; failed = [] }.foregroundStyle(Theme.dangerText)
                 }
             }
         }

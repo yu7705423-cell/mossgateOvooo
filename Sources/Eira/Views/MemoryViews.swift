@@ -196,7 +196,7 @@ struct MemoryEditView: View {
             }
 
             if memory != nil {
-                Section { Button("删除这条记忆", role: .destructive) { confirmDelete = true } }
+                Section { Button("删除这条记忆", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }

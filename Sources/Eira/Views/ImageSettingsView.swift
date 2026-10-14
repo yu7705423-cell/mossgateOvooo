@@ -142,7 +142,7 @@ struct ImagePresetEditView: View {
                     Text("用这一套接口实际生成一张图，会按一张图计费。")
                 }
                 Section {
-                    Button("删除这套接口", role: .destructive) { confirmDelete = true }
+                    Button("删除这套接口", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
                 }
             }
             ProblemSection(text: model.problem)

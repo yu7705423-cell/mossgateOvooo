@@ -93,8 +93,8 @@ struct ChatSettingsView: View {
                 Text("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
             }
             Section {
-                Button("清空聊天记录", role: .destructive) { confirmClear = true }
-                Button("删除这段会话", role: .destructive) { confirmDelete = true }
+                Button("清空聊天记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
+                Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             } footer: {
                 Text("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
             }

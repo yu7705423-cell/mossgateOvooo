@@ -7,6 +7,7 @@ struct ContactsView: View {
     @State private var query = ""
     @State private var path = NavigationPath()
     @State private var problem: String?
+    @State private var hero = true
 
     enum Route: Hashable {
         case profile(String)
@@ -19,22 +20,23 @@ struct ContactsView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                HeroHeader(eyebrow: "CONTACTS", title: "联系", shown: $hero)
                 if let problem { Text(problem).foregroundStyle(Theme.danger) }
-                Section("我") {
+                Section {
                     NavigationLink(value: Route.personas) {
                         row(avatar: me?.avatar ?? "", name: me?.name ?? "我", sub: me?.signature ?? "")
                     }
                     .eiraRow()
-                }
+                } header: { GroupTitle("我") }
                 ForEach(groups) { g in
-                    Section(g.title) {
+                    Section {
                         ForEach(g.chars) { c in
                             NavigationLink(value: Route.profile(c.id)) {
                                 row(avatar: c.avatar, name: c.displayName, sub: c.signature)
                             }
                             .eiraRow()
                         }
-                    }
+                    } header: { GroupTitle(g.title) }
                 }
                 if chars.isEmpty {
                     EmptyState(title: "暂无角色", desc: "点右上角新建，或在「设置 - 存储与备份 - 导入网页版备份」中导入。")
@@ -42,7 +44,7 @@ struct ContactsView: View {
                 }
             }
             .searchable(text: $query, prompt: "搜索名字或备注")
-            .navigationTitle("联系")
+            .heroTitle("联系", heroShown: hero)
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Menu {
@@ -137,7 +139,7 @@ struct CharacterProfileView: View {
                 Section {
                     VStack(spacing: Theme.gap) {
                         Avatar(imageId: char.avatar, name: char.displayName, size: 88)
-                        Text(char.displayName).font(.title3)
+                        Text(char.displayName).font(Theme.serif(24))
                         if !char.remark.isEmpty && char.remark != char.name {
                             Text(char.name).font(.footnote).foregroundStyle(Theme.secondaryText)
                         }
@@ -148,14 +150,25 @@ struct CharacterProfileView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, Theme.pad)
+                    .listRowBackground(Color.clear)
+                }
+                // 新版按钮：发消息是描边主按钮，编辑资料是文字次按钮
+                Section {
+                    HStack(spacing: Theme.sp2) {
+                        Button("发消息", action: openChat).buttonStyle(EiraButtonStyle(kind: .primary, full: true))
+                        NavigationLink(value: ContactsView.Route.edit(char.id)) {
+                            Text("编辑资料").frame(maxWidth: .infinity, minHeight: 44)
+                                .font(.system(size: 15, weight: .medium))
+                                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.rBtn, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .listRowBackground(Color.clear)
+                    .listRowInsets(EdgeInsets(top: 0, leading: Theme.sp4, bottom: 0, trailing: Theme.sp4))
                 }
                 Section {
-                    Button(action: openChat) { Label("发消息", systemImage: "bubble.left") }
-                    NavigationLink(value: ContactsView.Route.edit(char.id)) { Label("编辑资料", systemImage: "pencil") }
-                }
-                Section {
-                    NavigationLink { MemoryListView(charId: char.id) } label: { Label("记忆", systemImage: "brain") }
-                    NavigationLink { CharacterLoreView(charId: char.id) } label: { Label("世界书", systemImage: "books.vertical") }
+                    NavigationLink { MemoryListView(charId: char.id) } label: { IconRow(title: "记忆", icon: "brain") }
+                    NavigationLink { CharacterLoreView(charId: char.id) } label: { IconRow(title: "世界书", icon: "book") }
                 }
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }

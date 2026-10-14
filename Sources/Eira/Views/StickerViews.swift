@@ -239,7 +239,7 @@ struct StickerEditView: View {
             } footer: {
                 Text("角色按名字挑选表情。关键词用于搜索与联想。")
             }
-            Section { Button("删除这个表情", role: .destructive) { confirmDelete = true } }
+            Section { Button("删除这个表情", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
         .navigationTitle("表情")

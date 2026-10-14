@@ -10,20 +10,32 @@ struct UsageLimitsView: View {
         let s = model.s
         let extra = ExtraCalls.active(s)
         Form {
+            // 新版的汇总卡（.lmn-sum）：宋体大数字，下面列出开着的几项与各自什么时候多调一次
             Section {
-                LabeledContent("一次回复", value: extra.isEmpty ? "1 次" : "基础 1 次，另有 \(extra.count) 项已开启")
-                ForEach(extra) { x in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(x.label)
-                        Text(x.when(s)).font(.footnote).foregroundStyle(Theme.secondaryText)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("一次回复调用接口").font(.system(size: 12)).kerning(0.5).foregroundStyle(Theme.text2)
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
+                        Text("1").font(Theme.serif(28))
+                        Text(extra.isEmpty ? "次" : "次，另有 \(extra.count) 项开着时追加").font(.system(size: 15))
+                    }
+                    if !extra.isEmpty {
+                        Divider().overlay(Theme.border).padding(.vertical, Theme.sp2)
+                        VStack(alignment: .leading, spacing: Theme.sp2) {
+                            ForEach(extra) { x in
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(x.label).font(.system(size: 14))
+                                    Text(x.when(s)).font(.system(size: 12)).foregroundStyle(Theme.text2).lineSpacing(3)
+                                }
+                            }
+                        }
+                    }
+                    if ExtraCalls.attemptsPerCall(s) > 1 {
+                        Text("请求失败时，一次调用最多发出 \(ExtraCalls.attemptsPerCall(s)) 个请求，每个都计费。自动重试与换接口是相乘的关系，不是相加。")
+                            .font(.system(size: 13)).foregroundStyle(Theme.dangerText).padding(.top, Theme.sp3)
                     }
                 }
-                if ExtraCalls.attemptsPerCall(s) > 1 {
-                    Text("请求失败时，每一次调用最多变成 \(ExtraCalls.attemptsPerCall(s)) 个请求。自动重试与换接口是相乘的关系，不是相加。")
-                        .font(.footnote).foregroundStyle(Theme.secondaryText)
-                }
-            } header: {
-                Text("一次回复调用几次接口")
+                .padding(.vertical, Theme.sp2)
+                .listRowBackground(Theme.surface2)
             }
 
             Section {

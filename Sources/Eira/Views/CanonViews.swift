@@ -6,33 +6,35 @@ struct CanonView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var loreCount = 0
     @State private var memoryCount = 0
+    @State private var hero = true
 
     var body: some View {
         NavigationStack {
             List {
-                Section("角色知道什么") {
-                    NavigationLink { LorebookListView() } label: { row("世界书", "book.closed", "\(loreCount) 本") }
-                    NavigationLink { MemoryCharsView() } label: { row("记忆", "brain", "\(memoryCount) 条") }
-                }
-                Section("角色怎么写") {
+                HeroHeader(eyebrow: "CANON", title: "设定集", shown: $hero)
+                Section {
+                    NavigationLink { LorebookListView() } label: { IconRow(title: "世界书", icon: "book", value: "\(loreCount) 本") }
+                    NavigationLink { MemoryCharsView() } label: { IconRow(title: "记忆", icon: "brain", value: "\(memoryCount) 条") }
+                } header: { GroupTitle("角色知道什么") }
+                Section {
                     NavigationLink { PresetListView() } label: {
-                        row("预设", "slider.horizontal.3", Presets.name(model.s, Presets.activeId(model.s)))
+                        IconRow(title: "预设", icon: "layers", value: Presets.name(model.s, Presets.activeId(model.s)))
                     }
                     NavigationLink { RegexListView() } label: {
                         let n = RegexRules.list(model.s).filter(\.on).count
-                        row("正则替换", "chevron.left.forwardslash.chevron.right", n > 0 ? "\(n) 条开启" : "未设置")
+                        IconRow(title: "正则替换", icon: "code", value: n > 0 ? "\(n) 条开启" : "未设置")
                     }
                     NavigationLink { BanView() } label: {
-                        row("不要写这些", "nosign", Ban.list(model.s).isEmpty ? "未设置" : "\(Ban.list(model.s).count) 条")
+                        IconRow(title: "不要写这些", icon: "filter", value: Ban.list(model.s).isEmpty ? "未设置" : "\(Ban.list(model.s).count) 条")
                     }
-                }
-                Section("角色能做什么") {
+                } header: { GroupTitle("角色怎么写") }
+                Section {
                     NavigationLink { CapsView() } label: {
-                        row("能力", "list.bullet", "开启 \(CapsView.onCount(model.s)) / \(CapsView.caps.count)")
+                        IconRow(title: "能力", icon: "sliders", value: "开启 \(CapsView.onCount(model.s)) / \(CapsView.caps.count)")
                     }
-                }
+                } header: { GroupTitle("角色能做什么") }
             }
-            .navigationTitle("设定集")
+            .heroTitle("设定集", heroShown: hero)
             .onAppear {
                 model.reload()
                 let counts = (try? Database.shared.counts()) ?? [:]
@@ -42,13 +44,6 @@ struct CanonView: View {
         }
     }
 
-    private func row(_ title: String, _ icon: String, _ value: String) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
-            Spacer()
-            Text(value).foregroundStyle(Theme.secondaryText)
-        }
-    }
 }
 
 /// 记忆按角色分开，先选角色。
@@ -242,7 +237,7 @@ struct PresetEditView: View {
                             do { exported = try Presets.exportFile(model.s, presetId) }
                             catch { model.problem = "导出失败：\(error.localizedDescription)" }
                         }
-                        if !isActive { Button("删除", role: .destructive) { confirmDelete = true } }
+                        if !isActive { Button("删除", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
                     }
                 }
             }
@@ -557,7 +552,7 @@ struct CustomEntryEditor: View {
             } footer: {
                 Text("按原文发送。{{charName}} 与 {{userName}} 填入角色名与用户名。")
             }
-            Section { Button("删除这个条目", role: .destructive) { confirmDelete = true } }
+            Section { Button("删除这个条目", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
         }
         .navigationTitle(entry.name.isEmpty ? "条目" : entry.name)
         .navigationBarTitleDisplayMode(.inline)
@@ -924,7 +919,7 @@ struct RegexEditView: View {
                 } header: {
                     Text("试一试")
                 }
-                Section { Button("删除这条规则", role: .destructive) { confirmDelete = true } }
+                Section { Button("删除这条规则", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
                 ProblemSection(text: model.problem)
             } else {
                 Text("这条规则已删除。").foregroundStyle(Theme.secondaryText)

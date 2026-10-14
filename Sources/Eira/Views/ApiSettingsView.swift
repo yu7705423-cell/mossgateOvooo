@@ -113,7 +113,7 @@ struct PresetEditor: View {
             }
             if !isNew {
                 Section {
-                    Button("删除这套接口", role: .destructive) { confirmDelete = true }
+                    Button("删除这套接口", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
                 }
             }
             if let problem {

@@ -4,70 +4,93 @@ import SwiftUI
 /// 排法照网页版新版根页（4.528）：主用接口一张状态卡，其余分组；一行只写名字和当前状态。
 struct SettingsView: View {
     @ObservedObject private var model = SettingsModel.shared
+    @State private var hero = true
 
     var body: some View {
         NavigationStack {
             List {
+                HeroHeader(eyebrow: "SETTINGS", title: "设置", shown: $hero)
                 Section {
                     NavigationLink { ServicesView() } label: { apiCard }
-                }
-                Section("对话") {
-                    NavigationLink { UsageLimitsView() } label: {
-                        row("用量与上限", "slider.horizontal.3", ExtraCalls.active(model.s).isEmpty ? "无额外调用" : "额外调用 \(ExtraCalls.active(model.s).count) 项")
-                    }
-                }
-                Section("通知") {
-                    NavigationLink { NotifyView() } label: {
-                        row("消息通知", "app.badge", Notifier.isOn(model.s) ? "开启" : "关闭")
-                    }
-                    NavigationLink { BgPushView() } label: {
-                        row("后台消息", "icloud.and.arrow.down", BgPush.isOn(model.s) ? "开启" : "关闭")
-                    }
-                }
-                Section("外观") {
-                    NavigationLink { AppearanceView() } label: {
-                        row("主题", "circle.lefthalf.filled", AppearanceView.label(model.s))
-                    }
-                }
-                Section("数据") {
-                    NavigationLink { StorageView() } label: { row("存储与备份", "externaldrive", "") }
+                        .listRowBackground(Theme.surface2)
                 }
                 Section {
-                    NavigationLink { FeedbackView() } label: { row("问题反馈", "exclamationmark.bubble", "") }
+                    NavigationLink { UsageLimitsView() } label: {
+                        row("用量与上限", "filter", ExtraCalls.active(model.s).isEmpty ? "无额外调用" : "额外调用 \(ExtraCalls.active(model.s).count) 项")
+                    }
+                } header: { groupTitle("对话") }
+                Section {
+                    NavigationLink { AppearanceView() } label: {
+                        row("主题", "grid", AppearanceView.label(model.s))
+                    }
+                    NavigationLink { NotifyView() } label: {
+                        row("消息通知", "bell", Notifier.isOn(model.s) ? "开启" : "关闭")
+                    }
+                    NavigationLink { BgPushView() } label: {
+                        row("后台消息", "cloud", BgPush.isOn(model.s) ? "开启" : "关闭")
+                    }
+                } header: { groupTitle("外观与提醒") }
+                Section {
+                    NavigationLink { StorageView() } label: { row("存储与备份", "database", "") }
+                } header: { groupTitle("数据") }
+                Section {
+                    NavigationLink { FeedbackView() } label: { row("问题反馈", "alert", "") }
                 } header: {
-                    Text("关于")
+                    groupTitle("关于")
                 } footer: {
-                    Text("角色读到的世界书、记忆、预设、能力在「设定集」中。\nEiraowo · 本地运行，数据只存在这台设备上\n版本 \(Self.version)")
+                    VStack(alignment: .leading, spacing: Theme.sp4) {
+                        Text("角色读到的世界书、记忆、预设、能力在「设定集」中。")
+                            .foregroundStyle(Theme.text2)
+                        Text("Eiraowo · 本地运行，数据只存在这台设备上\n版本 \(Self.version)")
+                            .foregroundStyle(Theme.text3)
+                    }
+                    .font(.system(size: 12))
+                    .lineSpacing(4)
+                    .padding(.top, Theme.sp4)
                 }
             }
-            .navigationTitle("设置")
+            .heroTitle("设置", heroShown: hero)
             .onAppear { model.reload() }
         }
     }
 
+    /// 主用接口那张状态卡（.stn-api）：浅灰块，宋体接口名，下面一条细线隔开副用与服务数
     private var apiCard: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("主用接口").font(.caption).foregroundStyle(Theme.secondaryText)
-            if let p = model.s.mainPreset {
-                Text(p.name.isEmpty ? "未命名接口" : p.name).font(.title3)
-                Text(p.model.isEmpty ? "未选模型" : p.model).font(.footnote).foregroundStyle(Theme.secondaryText)
-                if let f = model.s.fallbackPreset {
-                    Text("副用 \(f.name.isEmpty ? "未命名接口" : f.name)").font(.footnote).foregroundStyle(Theme.secondaryText)
+        let p = model.s.mainPreset
+        let services = ServicesView.configuredCount(model.s)
+        return VStack(alignment: .leading, spacing: 2) {
+            Text("主用接口").font(.system(size: 12)).kerning(0.5).foregroundStyle(Theme.text2)
+            Text(p.map { $0.name.isEmpty ? "未命名接口" : $0.name } ?? "尚未配置")
+                .font(Theme.serif(20)).padding(.top, Theme.sp1)
+            Text(p.map { $0.model.isEmpty ? "未选模型" : $0.model } ?? "配置后才能对话")
+                .font(.system(size: 14)).foregroundStyle(Theme.text2)
+            Divider().overlay(Theme.border).padding(.top, Theme.sp3)
+            HStack {
+                if p != nil {
+                    Text([model.s.fallbackPreset.map { "副用 \($0.name.isEmpty ? "未命名接口" : $0.name)" }, "已配置 \(services) 项服务"]
+                        .compactMap { $0 }.joined(separator: " · "))
                 }
-            } else {
-                Text("尚未配置").font(.title3)
-                Text("配置后才能对话").font(.footnote).foregroundStyle(Theme.secondaryText)
+                Spacer()
+                Text(p == nil ? "去配置" : "全部服务").fontWeight(.medium).foregroundStyle(Theme.text)
             }
+            .font(.system(size: 13)).foregroundStyle(Theme.text2)
+            .padding(.top, Theme.sp2)
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, Theme.sp2)
+    }
+
+    private func groupTitle(_ t: String) -> some View {
+        Text(t).font(.system(size: 12, weight: .semibold)).kerning(0.5).foregroundStyle(Theme.text2).textCase(nil)
     }
 
     private func row(_ title: String, _ icon: String, _ value: String) -> some View {
-        HStack {
-            Label(title, systemImage: icon)
+        HStack(spacing: Theme.sp3) {
+            SvgIcon(name: icon, size: 19, color: Theme.text2)
+            Text(title)
             Spacer()
-            if !value.isEmpty { Text(value).foregroundStyle(Theme.secondaryText) }
+            if !value.isEmpty { Text(value).font(.system(size: 13)).foregroundStyle(Theme.text3).lineLimit(1) }
         }
+        .frame(minHeight: 54 - 16)
     }
 
     static var version: String {
@@ -80,6 +103,12 @@ struct SettingsView: View {
 
 struct ServicesView: View {
     @ObservedObject private var model = SettingsModel.shared
+
+    /// 设置根页那张卡上的「已配置几项服务」：这一页里填好了的几项
+    static func configuredCount(_ s: AppSettings) -> Int {
+        [s.mainPreset != nil, s.memoryPreset != nil, s.imageReady, !Netease.userCookie(s).isEmpty,
+         s.voiceEnabled && s.voiceReady, s.visionMode == "api" && s.visionPreset != nil, s.asrReady].filter { $0 }.count
+    }
 
     var body: some View {
         List {
