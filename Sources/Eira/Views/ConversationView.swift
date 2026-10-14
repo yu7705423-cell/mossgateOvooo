@@ -62,8 +62,8 @@ struct ConversationView: View {
                             .padding(.horizontal, Theme.pad)
                         }
                         ForEach(messages) { m in
-                            MessageRow(message: m, char: chat?.isGroup == true ? (members[m.authorId] ?? char) : char,
-                                       showName: chat?.isGroup == true,
+                            MessageRow(message: m, char: speaker(of: m),
+                                       showName: isGroup,
                                        onRetry: m.isError ? { retry(m) } : nil,
                                        onOpenImage: { viewing = ViewingImage(id: $0) },
                                        onAction: { act($0, m) })
@@ -246,6 +246,14 @@ struct ConversationView: View {
         } catch {
             problem = "消息未能保存：\(error.localizedDescription)"
         }
+    }
+
+    private var isGroup: Bool { chat?.isGroup == true }
+
+    /// 这一条是谁说的：群里按作者找成员，一对一就是这个角色。
+    private func speaker(of m: Message) -> Character? {
+        guard isGroup, let c = members[m.authorId] else { return char }
+        return c
     }
 
     private func sendSticker(_ st: Stickers.Item) {
