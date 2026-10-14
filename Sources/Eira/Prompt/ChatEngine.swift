@@ -171,6 +171,9 @@ enum ChatEngine {
         case .unwrap:
             guard let target = try Interact.pendingGift(chat.id, from: .user) else { return nil }
             return try Interact.settleGift(target.id, open: p.flag, turnId: turnId)
+        case .meal:
+            guard let target = try Interact.pendingTakeout(chat.id, from: .user) else { return nil }
+            return try Interact.settleTakeout(target.id, take: p.flag, turnId: turnId)
         case .pat:
             guard char.row["canPat"]?.bool != false else { return nil }
             return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
@@ -251,7 +254,10 @@ enum ChatEngine {
         case .gift:
             guard let g = try? Interact.gift(make("gift", ""), cover: p.text, inner: p.extra ?? "") else { return nil }
             m = g
-        case .silence, .settle, .unwrap, .pat, .react, .remark:
+        case .takeout:
+            guard let t = try? Interact.takeout(make("takeout", ""), kind: p.extra ?? "self", item: p.text, amount: p.amount ?? 0) else { return nil }
+            m = t
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }
@@ -353,6 +359,14 @@ enum ChatEngine {
 
     static func sendGift(chatId: String, cover: String, inner: String) throws -> Message {
         try post(Interact.gift(Message.new(chatId: chatId, role: .user, authorId: "me", content: ""), cover: cover, inner: inner))
+    }
+
+    static func sendTakeout(chatId: String, kind: String, item: String, amount: Double) throws -> Message {
+        try post(Interact.takeout(Message.new(chatId: chatId, role: .user, authorId: "me", content: ""), kind: kind, item: item, amount: amount))
+    }
+
+    static func sendLocation(chatId: String, place: String, address: String) throws -> Message {
+        try post(Interact.location(Message.new(chatId: chatId, role: .user, authorId: "me", content: ""), place: place, address: address))
     }
 
     static func pat(chatId: String) throws -> Message {

@@ -272,7 +272,7 @@ enum ChatPrompt {
     }
 
     /// 能力一节。原生版只开回复解析认得的那几项。
-    /// 顺序照网页版 CAPS 数组：表情、引用、转账、礼物、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
+    /// 顺序照网页版 CAPS 数组：表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
         let lean = s.raw["promptLean"]?.bool ?? true
@@ -306,6 +306,15 @@ enum ChatPrompt {
         cap("gift", on: char.row["canSendGift"]?.bool != false, hot: used(#"^gift$|[\[【]礼物"#) || pending("gift"),
             line: "Give a gift: write a line on its own, [礼物：cover name | what is inside]; on receiving one, write [拆开] or [拒收]") {
             Templates.get("skeleton.gift", settings: s)
+        }
+        cap("location", on: char.row["canSendLocation"]?.bool != false, hot: used(#"^location$|[\[【](位置|定位)"#),
+            line: "Share your location: write a line on its own, [位置：place name, address]") {
+            let tz = char.row.string("timezone")
+            return Templates.render("skeleton.location", ["city": tz.isEmpty ? "" : " (you are in \(tz))"], settings: s)
+        }
+        cap("takeout", on: char.row["canTakeout"]?.bool != false, hot: used(#"^takeout$|[\[【](外卖|请客|代付)"#) || pending("takeout"),
+            line: "Order delivery: [外卖：item amount] for yourself, [请客：…] for them, [代付：…] paid by them; for an order they placed, write [要了] or [不要]") {
+            Templates.get("skeleton.takeout", settings: s)
         }
         cap("pat", on: char.row["canPat"]?.bool != false, hot: used(#"拍了拍|[\[【]拍"#),
             line: "Nudge: write a line on its own, [拍一拍]") {

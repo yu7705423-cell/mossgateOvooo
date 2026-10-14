@@ -122,10 +122,14 @@ struct ConversationView: View {
         }
         .sheet(item: $composing) { k in
             NavigationStack {
-                InteractSheet(kind: k) { a, b, amount in
+                InteractSheet(kind: k) { a, b, amount, sub in
                     post {
-                        try (k == .transfer ? ChatEngine.sendTransfer(chatId: chatId, amount: amount, note: a)
-                                            : ChatEngine.sendGift(chatId: chatId, cover: a, inner: b))
+                        switch k {
+                        case .transfer: return try ChatEngine.sendTransfer(chatId: chatId, amount: amount, note: a)
+                        case .gift: return try ChatEngine.sendGift(chatId: chatId, cover: a, inner: b)
+                        case .takeout: return try ChatEngine.sendTakeout(chatId: chatId, kind: sub, item: a, amount: amount)
+                        case .location: return try ChatEngine.sendLocation(chatId: chatId, place: a, address: b)
+                        }
                     }
                     composing = nil
                 }
@@ -179,6 +183,8 @@ struct ConversationView: View {
                 Menu {
                     Button { composing = .transfer } label: { Label("转账", systemImage: "yensign.circle") }
                     Button { composing = .gift } label: { Label("礼物", systemImage: "gift") }
+                    Button { composing = .takeout } label: { Label("外卖", systemImage: "takeoutbag.and.cup.and.straw") }
+                    Button { composing = .location } label: { Label("位置", systemImage: "mappin.and.ellipse") }
                     Button { post { try ChatEngine.pat(chatId: chatId) } } label: { Label("拍一拍", systemImage: "hand.tap") }
                 } label: {
                     Image(systemName: "plus.circle").font(.title2)
@@ -275,7 +281,9 @@ struct ConversationView: View {
             deleting = m
         case .settle(let yes):
             do {
-                let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes) : Interact.settleTransfer(m.id, take: yes))
+                let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
+                                  : m.kind == "takeout" ? Interact.settleTakeout(m.id, take: yes)
+                                  : Interact.settleTransfer(m.id, take: yes))
                 if let notice { _ = try Repo.append(notice) }
                 reload()
             } catch { problem = "未能保存：\(error.localizedDescription)" }
@@ -413,47 +421,86 @@ struct ConversationView: View {
     }
 }
 
-/// 用户发转账或礼物时填的那一页。有输入框，所以是整页（网页版第 23 条）。
+/// 用户发转账、礼物、外卖、位置时填的那一页。有输入框，所以是整页（网页版第 23 条）。
 struct InteractSheet: View {
-    enum Kind: String, Identifiable { case transfer, gift; var id: String { rawValue } }
+    enum Kind: String, Identifiable { case transfer, gift, takeout, location; var id: String { rawValue } }
     let kind: Kind
-    /// 转账：(留言, "", 金额)；礼物：(封面, 里面, 0)
-    let onSend: (String, String, Double) -> Void
+    /// (主要的那一项, 第二项, 金额, 外卖的点法)
+    let onSend: (String, String, Double, String) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var a = ""
     @State private var b = ""
     @State private var amount = ""
+    @State private var sub = "self"
 
     private var amountValue: Double? {
-        guard let v = Double(amount.trimmingCharacters(in: .whitespaces)), v > 0 else { return nil }
+        let t = amount.trimmingCharacters(in: .whitespaces)
+        if kind == .takeout && t.isEmpty { return 0 }
+        guard let v = Double(t), kind == .takeout ? v >= 0 : v > 0 else { return nil }
         return Interact.round(v)
+    }
+
+    private var title: String {
+        switch kind {
+        case .transfer: return "转账"
+        case .gift: return "礼物"
+        case .takeout: return "外卖"
+        case .location: return "位置"
+        }
+    }
+
+    private var ready: Bool {
+        let filled = !a.trimmingCharacters(in: .whitespaces).isEmpty
+        switch kind {
+        case .transfer: return amountValue != nil
+        case .takeout: return filled && amountValue != nil
+        case .gift, .location: return filled
+        }
     }
 
     var body: some View {
         Form {
-            if kind == .transfer {
+            switch kind {
+            case .transfer:
                 Section {
                     TextField("金额", text: $amount).keyboardType(.decimalPad)
                     TextField("留言（可不填）", text: $a)
                 } footer: {
                     Text("币种：\(Interact.currency().name)。对方可以收下或退回。")
                 }
-            } else {
+            case .gift:
                 Section {
                     TextField("礼物名称", text: $a)
                     TextField("里面是什么（可不填）", text: $b)
                 } footer: {
                     Text(Interact.giftBlind() ? "对方拆开之前只看得到礼物名称。里面不填时与名称相同。" : "里面不填时与名称相同。")
                 }
+            case .takeout:
+                Section {
+                    Picker("点法", selection: $sub) {
+                        Text("自己吃").tag("self")
+                        Text("请对方").tag("treat")
+                        Text("让对方付").tag("ask")
+                    }
+                    .pickerStyle(.segmented)
+                    TextField("点什么", text: $a)
+                    TextField("金额（可不填）", text: $amount).keyboardType(.decimalPad)
+                } footer: {
+                    Text(sub == "self" ? "自己点自己吃，对方不需要表态。" : sub == "treat" ? "给对方点，自己付。对方可以收下或谢绝。" : "自己吃，让对方付。对方可以付款或不付。")
+                }
+            case .location:
+                Section {
+                    TextField("地点名称", text: $a)
+                    TextField("地址（可不填）", text: $b)
+                }
             }
         }
-        .navigationTitle(kind == .transfer ? "转账" : "礼物")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
-                Button("发送") { onSend(a, b, amountValue ?? 0) }
-                    .disabled(kind == .transfer ? amountValue == nil : a.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button("发送") { onSend(a, b, amountValue ?? 0, sub) }.disabled(!ready)
             }
         }
     }
@@ -527,7 +574,7 @@ struct MessageRow: View {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
@@ -627,6 +674,8 @@ struct MessageRow: View {
             transferCard
         case "gift":
             giftCard
+        case "takeout":
+            takeoutCard
         default:
             bubble(message.content)
         }
@@ -715,6 +764,33 @@ struct MessageRow: View {
                 HStack {
                     Button("拆开") { onAction?(.settle(true)) }
                     Button("拒收") { onAction?(.settle(false)) }.foregroundStyle(Theme.secondaryText)
+                }
+                .font(.footnote).buttonStyle(.bordered)
+            }
+        }
+        .padding(Theme.pad)
+        .frame(minWidth: 160, alignment: .leading)
+        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+    }
+
+    /// 外卖、请客、代付。对方请客或让你代付、还没表态的那一单可以表态。
+    private var takeoutCard: some View {
+        let kind = message.row.string("takeoutKind")
+        let state = message.row.string("takeout")
+        let code = message.row.string("currency")
+        let title = kind == "treat" ? "请客" : kind == "ask" ? "代付" : "外卖"
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: Theme.gap) {
+                Image(systemName: "takeoutbag.and.cup.and.straw").foregroundStyle(Theme.secondaryText)
+                Text("\(title)：\(message.row.string("item"))").font(.headline)
+            }
+            Text(Interact.display(message.row.number("amount") ?? 0, code.isEmpty ? nil : code)).font(.footnote).foregroundStyle(Theme.secondaryText)
+            let label = Interact.takeoutLabel(kind, state)
+            if !label.isEmpty { Text(label).font(.caption).foregroundStyle(Theme.secondaryText) }
+            if !mine && state == "pending" && kind != "self" {
+                HStack {
+                    Button(kind == "treat" ? "收下" : "付款") { onAction?(.settle(true)) }
+                    Button(kind == "treat" ? "谢绝" : "不付") { onAction?(.settle(false)) }.foregroundStyle(Theme.secondaryText)
                 }
                 .font(.footnote).buttonStyle(.bordered)
             }

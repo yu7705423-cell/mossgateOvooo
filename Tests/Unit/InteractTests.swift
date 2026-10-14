@@ -168,6 +168,39 @@ final class InteractTests: StoreTestCase {
         XCTAssertTrue(b.system.contains("[不回复]"))
     }
 
+    /// 外卖：角色请客，用户收下；用户让角色代付，角色写 [要了]；重新生成退回待处理。位置照网页版的写法落库。
+    func testTakeoutAndLocation() async throws {
+        let p = ReplyParser.split("[请客：奶茶 18]\n[外卖：炸鸡]\n[要了]\n[不要]").parts
+        XCTAssertEqual(p.map(\.type), [.takeout, .takeout, .meal, .meal])
+        XCTAssertEqual(p[0].extra, "treat")
+        XCTAssertEqual(p[0].amount, 18)
+        XCTAssertEqual(p[1].amount, 0)
+        XCTAssertTrue(p[2].flag)
+        XCTAssertFalse(p[3].flag)
+
+        try await reply("[请客：奶茶 18]")
+        let treat = try XCTUnwrap(all().last { $0.kind == "takeout" })
+        XCTAssertEqual(treat.content, "[请客：奶茶 18.00]")
+        XCTAssertEqual(treat.row.string("takeout"), "pending")
+        _ = try Repo.append(XCTUnwrap(Interact.settleTakeout(treat.id, take: true)))
+        XCTAssertEqual(try all().first { $0.id == treat.id }?.content, "[请客：奶茶 18.00]（已被收下）")
+
+        let ask = try ChatEngine.sendTakeout(chatId: "chat_a", kind: "ask", item: "火锅", amount: 120)
+        XCTAssertEqual(ask.content, "[代付：火锅 120.00]")
+        try await reply("[要了]\n好")
+        XCTAssertEqual(try all().first { $0.id == ask.id }?.row.string("takeout"), "taken")
+        XCTAssertTrue(try all().contains { $0.content == "[林替小于付了火锅 120.00]" })
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("再说")) }
+        try await ChatEngine.reply(chatId: "chat_a", regenerate: true) { _ in }
+        XCTAssertEqual(try all().first { $0.id == ask.id }?.row.string("takeout"), "pending")
+
+        // 自己吃的那一档一落库就算完
+        let me = try ChatEngine.sendTakeout(chatId: "chat_a", kind: "self", item: "面", amount: 0)
+        XCTAssertEqual(me.row.string("takeout"), "taken")
+        let loc = try ChatEngine.sendLocation(chatId: "chat_a", place: "公园", address: "东门")
+        XCTAssertEqual(loc.content, "[位置：公园 东门]")
+    }
+
     func testCurrencyFormat() throws {
         XCTAssertEqual(Interact.format(3), "3.00")
         try setSettings(["currency": .string("JPY")])

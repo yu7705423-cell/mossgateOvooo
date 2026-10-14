@@ -205,6 +205,95 @@ enum Interact {
         try pending(chatId, kind: "gift", field: "gift", role: role)
     }
 
+    // MARK: - 外卖（网页版 takeout.js）：自己点（self）、请客（treat）、代付（ask）
+
+    static func takeoutLabel(_ kind: String, _ state: String) -> String {
+        if kind == "self" { return "" }
+        if state == "taken" { return kind == "treat" ? "已收下" : "已付款" }
+        if state == "declined" { return kind == "treat" ? "已谢绝" : "未代付" }
+        return kind == "treat" ? "待收下" : "待代付"
+    }
+
+    static func takeoutContent(kind: String, item: String, amount: Double, state: String, code: String?) -> String {
+        let money = format(amount, code)
+        let head = kind == "treat" ? "[请客：\(item) \(money)]" : kind == "ask" ? "[代付：\(item) \(money)]" : "[外卖：\(item) \(money)]"
+        if kind == "self" || state == "pending" { return head }
+        if state == "taken" { return head + (kind == "treat" ? "（已被收下）" : "（对方付了）") }
+        return head + (kind == "treat" ? "（被谢绝了）" : "（对方没付）")
+    }
+
+    /// 「东西 金额」：最后一个数是金额，没有就是 0。
+    static func parseTakeout(_ body: String) -> (item: String, amount: Double)? {
+        let t = body.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty else { return nil }
+        let re = try! NSRegularExpression(pattern: #"^(.*?)[\s　]*(?:[¥￥$]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?$"#)
+        let ns = t as NSString
+        guard let m = re.firstMatch(in: t, range: NSRange(location: 0, length: ns.length)) else { return (String(t.prefix(40)), 0) }
+        return (String(ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces).prefix(40)),
+                Double(ns.substring(with: m.range(at: 2))) ?? 0)
+    }
+
+    static func takeout(_ base: Message, kind: String, item: String, amount: Double) throws -> Message {
+        let it = String(item.trimmingCharacters(in: .whitespaces).prefix(40))
+        guard !it.isEmpty else { throw StoreError(message: "请填写要点的东西") }
+        guard ["self", "treat", "ask"].contains(kind) else { throw StoreError(message: "不认识这种点法") }
+        let code = currency().code
+        let v = round(amount, code)
+        guard v >= 0 else { throw StoreError(message: "金额不能是负数") }
+        var m = base
+        m.row["kind"] = .string("takeout")
+        m.row["takeoutKind"] = .string(kind)
+        m.row["item"] = .string(it)
+        m.row["amount"] = .number(v)
+        m.row["currency"] = .string(code)
+        m.row["takeout"] = .string(kind == "self" ? "taken" : "pending")
+        m.row["content"] = .string(takeoutContent(kind: kind, item: it, amount: v, state: "pending", code: code))
+        return m
+    }
+
+    static func settleTakeout(_ msgId: String, take: Bool, turnId: String? = nil) throws -> Message? {
+        guard let row = try Database.shared.get(Collections.messages, id: msgId) else { return nil }
+        let m = Message(row: row)
+        guard m.kind == "takeout", row.string("takeout") == "pending" else { return nil }
+        let state = take ? "taken" : "declined"
+        let kind = row.string("takeoutKind"), item = row.string("item")
+        let amount = row.number("amount") ?? 0
+        let code = row.string("currency").isEmpty ? nil : row.string("currency")
+        try update(msgId) {
+            $0["takeout"] = .string(state)
+            $0["content"] = .string(takeoutContent(kind: kind, item: item, amount: amount, state: state, code: code))
+        }
+        let n = names(m.chatId)
+        let byUser = m.role != .user
+        let who = byUser ? n.me : n.char
+        let from = byUser ? n.char : n.me
+        let what = "\(item) \(format(amount, code))"
+        let line = kind == "treat" ? "\(who)\(take ? "收下了" : "谢绝了")\(from)点的\(what)" : "\(who)\(take ? "替" : "没有替")\(from)付了\(what)"
+        var notice = Message.new(chatId: m.chatId, role: byUser ? .user : .char, authorId: byUser ? "me" : (n.charId.isEmpty ? m.authorId : n.charId),
+                                 content: "[\(line)]", kind: "notice", turnId: turnId)
+        notice.row["settledId"] = .string(msgId)
+        notice.row["settledKind"] = .string("takeout")
+        return notice
+    }
+
+    static func pendingTakeout(_ chatId: String, from role: Message.Role) throws -> Message? {
+        try pending(chatId, kind: "takeout", field: "takeout", role: role)
+    }
+
+    // MARK: - 位置（网页版 place.js）
+
+    static func location(_ base: Message, place: String, address: String) throws -> Message {
+        let p = String(place.trimmingCharacters(in: .whitespaces).prefix(40))
+        guard !p.isEmpty else { throw StoreError(message: "请填写地点名称") }
+        let a = String(address.trimmingCharacters(in: .whitespaces).prefix(80))
+        var m = base
+        m.row["kind"] = .string("location")
+        m.row["place"] = .string(p)
+        m.row["address"] = .string(a)
+        m.row["content"] = .string("[位置：\(p)\(a.isEmpty ? "" : " " + a)]")
+        return m
+    }
+
     /// 「已收款」「已拆开」那一行删掉，就当这次处理没发生过，那一笔回到待处理（网页版 dropMessage）。
     static func unsettle(_ notice: Message) throws {
         guard notice.kind == "notice", case let id = notice.row.string("settledId"), !id.isEmpty,
@@ -214,6 +303,14 @@ enum Interact {
             try update(id) {
                 $0["gift"] = .string("pending")
                 $0["content"] = .string(giftContent(cover: row.string("cover"), inner: row.string("inner"), state: "pending", hide: giftBlind()))
+            }
+        } else if notice.row.string("settledKind") == "takeout" {
+            guard row.string("kind") == "takeout" else { return }
+            let code = row.string("currency").isEmpty ? nil : row.string("currency")
+            try update(id) {
+                $0["takeout"] = .string("pending")
+                $0["content"] = .string(takeoutContent(kind: row.string("takeoutKind"), item: row.string("item"),
+                                                       amount: row.number("amount") ?? 0, state: "pending", code: code))
             }
         } else if notice.row.string("settledKind").isEmpty {
             guard row.string("kind") == "transfer" else { return }

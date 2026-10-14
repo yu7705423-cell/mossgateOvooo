@@ -10,7 +10,7 @@ enum ReplyParser {
     enum PartType: String, Sendable {
         case text, image, clip, voice, sticker, location, narration, dice, silence
         // 互动（网页版 reply.js）：转账、礼物各自发出与处理；拍一拍、回应、改备注
-        case transfer, gift, settle, unwrap, pat, react, remark
+        case transfer, gift, settle, unwrap, pat, react, remark, takeout, meal
     }
 
     struct Part: Equatable, Sendable {
@@ -59,6 +59,9 @@ enum ReplyParser {
     // 收下或退回对方那一笔、拆开或拒收礼物。必须带方括号，整行只能是它
     private static let settleLine = regex(#"^[\[【(（]\s*(收款|收下|接收|退回|退还)\s*[\]】)）]$"#, [])
     private static let openLine = regex(#"^[\[【(（]\s*(拆开|拆|打开|拆礼物)\s*[\]】)）]$"#, [])
+    // 处理对方点的那一单。和收款、拆礼物各用一套词，不能用「收下」（那个归转账）
+    private static let takeLine = regex(#"^[\[【(（]\s*(?:要了|吃了|签收)\s*[\]】)）]$"#, [])
+    private static let nopeLine = regex(#"^[\[【(（]\s*(?:不要|不用了|不吃)\s*[\]】)）]$"#, [])
     private static let refuseLine = regex(#"^[\[【(（]\s*(拒收|不收|退掉)\s*[\]】)）]$"#, [])
     private static let reactLine = regex(#"^[\[【]\s*(?:回应|反应|react(?:ion)?)\s*[:：]\s*([^\]】]+?)\s*[\]】]\s*[。．.!！~～]?$"#, [.caseInsensitive])
     /// 转账：金额在前，后面是留言
@@ -162,6 +165,14 @@ enum ReplyParser {
                     p.extra = g.inner
                     push(p)
                 }
+            case "外卖", "请客", "代付":
+                // 吃什么读不出来就整条丢掉
+                if let o = Interact.parseTakeout(body), !o.item.isEmpty {
+                    var p = Part(type: .takeout, text: o.item)
+                    p.amount = o.amount
+                    p.extra = kind == "请客" ? "treat" : kind == "代付" ? "ask" : "self"
+                    push(p)
+                }
             case "备注", "改备注":
                 push(Part(type: .remark, text: body))
             default:
@@ -229,6 +240,8 @@ enum ReplyParser {
             }
             if ReplyParser.matches(ReplyParser.openLine, t) { var p = Part(type: .unwrap, text: ""); p.flag = true; push(p); return }
             if ReplyParser.matches(ReplyParser.refuseLine, t) { push(Part(type: .unwrap, text: "")); return }
+            if ReplyParser.matches(ReplyParser.takeLine, t) { var p = Part(type: .meal, text: ""); p.flag = true; push(p); return }
+            if ReplyParser.matches(ReplyParser.nopeLine, t) { push(Part(type: .meal, text: "")); return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))
                 return
