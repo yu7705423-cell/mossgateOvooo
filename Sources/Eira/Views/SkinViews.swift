@@ -91,6 +91,7 @@ struct SkinPageView: View {
             } header: { Text(cur == nil ? "挂一份现成的" : "换一份") } footer: {
                 HelpNote("美化按会话生效：挂上之后只在这段会话中起作用。网页版导出的备份中的美化随备份导入；自定义 CSS 与头像框在原生版中不显示。")
             }
+            ShowSection()
         }
         .navigationTitle("美化")
         .navigationBarTitleDisplayMode(.inline)

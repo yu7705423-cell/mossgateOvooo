@@ -43,197 +43,18 @@ struct ChatSettingsView: View {
     @State private var backlog = 0
     @State private var summarizing = false
     @State private var summaryNote: String?
+    @State private var showSkin = false
 
     var body: some View {
         Form {
-            if chat?.isGroup == true { GroupMembersSection(chatId: chatId) }
-            if let c = chat { faceSection(c) }
-            TiesSection(chatId: chatId)
-            if let onSearch {
-                Section {
-                    Button(action: onSearch) {
-                        HStack {
-                            Text("搜索聊天记录").foregroundStyle(Theme.text)
-                            Spacer()
-                            SvgIcon(name: "search", size: 16, color: Theme.text3)
-                        }
-                    }
-                    if let onSelect {
-                        Button(action: onSelect) { Text("多选消息").foregroundStyle(Theme.text) }
-                    }
-                    if let onLook {
-                        Button(action: onLook) { Text("聊天背景").foregroundStyle(Theme.text) }
-                    }
-                }
-            }
-            Section {
-                Toggle("置顶", isOn: $pinned)
-                Toggle("免打扰", isOn: $muted)
-            }
-            PaceSection(chatId: chatId)
-            if let c = chat, !c.isGroup, let charId = c.characterIds.first {
-                Section {
-                    Button { cardPath = NavigationPath(); editingChar = charId } label: {
-                        HStack {
-                            Text("角色卡与备注").foregroundStyle(Theme.text)
-                            Spacer()
-                            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.text3)
-                        }
-                    }
-                } header: { Text("这个角色") }
-                ProactiveSection(charId: charId)
-                DayOnSection(charId: charId)
-                MusicCharSection(charId: charId)
-                DiaryAutoSection(charId: charId)
-            }
-            Section {
-                NavigationLink {
-                    TimeSettingsView()
-                } label: {
-                    HStack {
-                        Text("时间感知")
-                        Spacer()
-                        Text(Self.timeState(AppSettings.load())).foregroundStyle(Theme.text3)
-                    }
-                }
-            } footer: {
-                HelpNote("对所有会话生效。")
-            }
-            if chat?.isGroup == false {
-                Section {
-                    NavigationLink {
-                        StatusBarSettingsView(chatId: chatId)
-                    } label: {
-                        HStack {
-                            Text("状态栏")
-                            Spacer()
-                            Text(chat.map(StatusBar.active) == true ? "已开启" : "关闭").foregroundStyle(Theme.text3)
-                        }
-                    }
-                }
-            }
-            Section {
-                NavigationLink {
-                    SkinPageView(chatId: chatId)
-                } label: {
-                    HStack {
-                        Text("美化")
-                        Spacer()
-                        Text(Skins.get(chat?.row.string("skinId") ?? "")?.string("name") ?? "未使用").foregroundStyle(Theme.text3)
-                    }
-                }
-            }
-            ShowSection()
-            Section {
-                Toggle("旁白", isOn: $narration)
-            } footer: {
-                HelpNote("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
-            }
-            Section {
-                Toggle("我也写旁白", isOn: $userNarration)
-            } footer: {
-                HelpNote("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
-            }
-            Section {
-                Picker("心声", selection: $innerMode) {
-                    Text("关闭").tag("off")
-                    Text("随回复一起").tag("inline")
-                    Text("单独生成").tag("apart")
-                }
-                if innerMode != "off" {
-                    Picker("显示方式", selection: $innerStyle) {
-                        Text("淡色小字").tag("quiet")
-                        Text("打开一页").tag("card")
-                    }
-                    TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
-                }
-            } footer: {
-                if innerMode == "apart" { Text("每轮多调用一次接口。") }
-                HelpNote(innerMode == "apart"
-                     ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
-                     : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
-                     : "开启后显示角色每轮话语背后的想法。")
-            }
-            Section {
-                Toggle("翻译这段对话", isOn: Binding(
-                    get: { !translateTo.trimmingCharacters(in: .whitespaces).isEmpty },
-                    set: { translateTo = $0 ? (translateTo.isEmpty ? "中文" : translateTo) : ""; save() }))
-                if !translateTo.trimmingCharacters(in: .whitespaces).isEmpty {
-                    TextField("译成什么语言", text: $translateTo)
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: Theme.sp2) {
-                            ForEach(Self.commonLangs, id: \.self) { l in
-                                Button(l) { translateTo = l; save() }
-                                    .font(.system(size: 13))
-                                    .foregroundStyle(translateTo == l ? Theme.onAccent : Theme.text)
-                                    .padding(.horizontal, Theme.sp3).padding(.vertical, 5)
-                                    .background(translateTo == l ? Theme.accent : Theme.surface2, in: Capsule())
-                                    .buttonStyle(.plain)
-                            }
-                        }
-                    }
-                    TextField("额外的翻译要求（例如：保留原文中的称呼）", text: $translateRules, axis: .vertical).lineLimit(1...4)
-                }
-            } header: {
-                Text("翻译")
-            } footer: {
-                Text("回复变长，用量随之增加。")
-                HelpNote("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
-            }
-            Section {
-                Picker("预设", selection: $presetId) {
-                    Text("跟随全局").tag("")
-                    ForEach(presets) { p in Text(p.name).tag(p.id) }
-                }
-            } footer: {
-                HelpNote("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
-            }
-            Section {
-                TextField("尚无摘要", text: $summary, axis: .vertical).lineLimit(3...20)
-            } header: {
-                Text("更早之前发生过什么")
-            } footer: {
-                HelpNote("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
-            }
-            Section {
-                LabeledContent("未总结的消息", value: "\(backlog) 条")
-                Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2 || chat?.isGroup == true)
-                Button("全部标为已总结") {
-                    do { let n = try MemorySummary.markCaughtUp(chatId: chatId); summaryNote = "已将 \(n) 条标为已总结。"; refreshBacklog() }
-                    catch { problem = "未能保存：\(error.localizedDescription)" }
-                }
-                .disabled(summarizing || backlog == 0)
-                if let summaryNote { Text(summaryNote).font(.footnote).foregroundStyle(Theme.secondaryText) }
-            } header: {
-                Text("记忆总结")
-            } footer: {
-                Text("立即总结调用一次接口。")
-                HelpNote("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
-            }
-            Section {
-                Button("清空聊天记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
-                Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
-            } footer: {
-                Text("清空与删除均无法撤销。")
-                HelpNote("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
-            }
+            tiles
+            whoSections
+            chatSections
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
-        .navigationTitle("会话设置")
+        .navigationTitle("聊天信息")
         .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("清空后无法恢复。", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("清空聊天记录", role: .destructive) {
-                do { try Database.shared.deleteAll(Collections.messages, where: chatId) }
-                catch { problem = "清空失败：\(error.localizedDescription)" }
-            }
-        }
-        .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("删除这段会话", role: .destructive) {
-                do { try People.deleteChat(chatId); onDeleted() }
-                catch { problem = "删除失败：\(error.localizedDescription)" }
-            }
-        }
-        .onAppear(perform: load)
+        .onAppear { if loaded { chat = try? Repo.chat(chatId); refreshBacklog(); presets = AppSettings.load().presets } else { load() } }
         .onChange(of: pinned) { _, _ in save() }
         .onChange(of: muted) { _, _ in save() }
         .sheet(item: Binding(get: { editingChar.map { EditTarget(id: $0) } }, set: { editingChar = $0?.id })) { t in
@@ -242,7 +63,6 @@ struct ChatSettingsView: View {
                     .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { editingChar = nil } } }
             }
         }
-        .photosPicker(isPresented: $pickingFace, selection: $facePhoto, matching: .images)
         .onChange(of: facePhoto) { _, item in
             guard let item else { return }
             facePhoto = nil
@@ -263,10 +83,274 @@ struct ChatSettingsView: View {
         .onChange(of: presetId) { _, _ in save() }
         .onChange(of: innerMode) { _, _ in save() }
         .onChange(of: innerStyle) { _, _ in save() }
+        // 输入框也随改随存：子页返回时这一页会重新出现，不能等到整页关掉才存
+        .navigationDestination(isPresented: $showSkin) { SkinPageView(chatId: chatId) }
+        .onChange(of: summary) { _, _ in save() }
+        .onChange(of: innerWhat) { _, _ in save() }
+        .onChange(of: translateTo) { _, _ in save() }
+        .onChange(of: translateRules) { _, _ in save() }
         .onDisappear(perform: save)
     }
 
+    /// 这个群 / 这个角色
+    @ViewBuilder private var whoSections: some View {
+        if let c = chat, c.isGroup {
+            Section {
+                link("群资料", "\(c.characterIds.count) 人") { MenuPage("群资料") { GroupMembersSection(chatId: chatId) } }
+                link("头像", ChatFaces.faces(c).isEmpty ? "" : "已更换") { facePage(c) }
+            } header: { Text("这个群") }
+        } else if let c = chat, let charId = c.characterIds.first {
+            let char = try? Repo.character(charId)
+            Section {
+                Button { cardPath = NavigationPath(); editingChar = charId } label: { row("角色卡与备注", "") }
+                link("头像", ChatFaces.faces(c).isEmpty ? "" : "已更换") { facePage(c) }
+                link("主动发起对话", Proactive.config(char).on ? "开启" : "关闭") { MenuPage("主动发起对话") { ProactiveSection(charId: charId) } }
+                link("日常与日记", "") {
+                    MenuPage("日常与日记") {
+                        DayOnSection(charId: charId)
+                        DiaryAutoSection(charId: charId)
+                    }
+                }
+                link("角色在听什么", "") { MenuPage("角色在听什么") { MusicCharSection(charId: charId) } }
+            } header: { Text("这个角色") }
+        }
+    }
+
+    /// 这段对话怎么聊、记忆、好友与拉黑、更多
+    @ViewBuilder private var chatSections: some View {
+        if let c = chat {
+            Section {
+                link("节奏与自动回复", Self.paceLabel(c) + (AutoReply.listTag(c).isEmpty ? "" : " · 自动回复")) {
+                    MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }
+                }
+                link("心声", Self.innerLabel(innerMode)) { MenuPage("心声") { innerSection } }
+                if !c.isGroup {
+                    link("状态栏", StatusBar.active(c) ? "开启" : "关闭") { StatusBarSettingsView(chatId: chatId) }
+                }
+                link("旁白", narration || userNarration ? "开启" : "关闭") { MenuPage("旁白") { narrationSections } }
+                link("翻译", translateTo.trimmingCharacters(in: .whitespaces).isEmpty ? "关闭" : translateTo) {
+                    MenuPage("翻译") { translateSection }
+                }
+                link("预设与前情", presets.first(where: { $0.id == presetId })?.name ?? "跟随全局") { MenuPage("预设与前情") { presetSections } }
+                link("时间感知", Self.timeState(AppSettings.load())) { TimeSettingsView() }
+            } header: { Text("这段对话怎么聊") }
+            Section {
+                link("记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "") { MenuPage("记忆总结") { summarySection } }
+            } header: { Text("记忆") }
+            if !c.isGroup, Ties.pair(c) != nil {
+                Section {
+                    link("好友与拉黑", Self.tieLabel(c)) { MenuPage("好友与拉黑") { TiesSection(chatId: chatId) } }
+                }
+            }
+            Section {
+                link("更多", "置顶、免打扰、清空与删除") { MenuPage("更多") { moreSections } }
+            }
+        }
+    }
+
+    // MARK: - 菜单的零件（网页版新版会话菜单：上面四格，下面一组一组，一行只写名字和当前状态，点进去再设置）
+
+    /// 搜索、多选、背景、美化
+    private var tiles: some View {
+        Section {
+            HStack(spacing: 0) {
+                if let onSearch { tile("搜索", "search", action: onSearch) }
+                if let onSelect { tile("多选", "check", action: onSelect) }
+                if let onLook { tile("背景", "image", action: onLook) }
+                tile("美化", "palette") { showSkin = true }
+            }
+            .padding(.vertical, Theme.sp2)
+        }
+    }
+
+    private func tile(_ label: String, _ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) { tileFace(label, icon) }
+            .buttonStyle(.plain)
+            .frame(maxWidth: .infinity)
+    }
+
+    private func tileFace(_ label: String, _ icon: String) -> some View {
+        VStack(spacing: 6) {
+            SvgIcon(name: icon, size: 20, color: Theme.text)
+            Text(label).font(.system(size: 12)).foregroundStyle(Theme.text2)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
+    }
+
+    private func row(_ title: String, _ value: String) -> some View {
+        HStack {
+            Text(title).foregroundStyle(Theme.text)
+            Spacer()
+            if !value.isEmpty { Text(value).foregroundStyle(Theme.text3).lineLimit(1) }
+            Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.text3)
+        }
+    }
+
+    private func link<D: View>(_ title: String, _ value: String, @ViewBuilder _ dest: @escaping () -> D) -> some View {
+        NavigationLink(destination: dest) {
+            HStack {
+                Text(title)
+                Spacer()
+                if !value.isEmpty { Text(value).foregroundStyle(Theme.text3).lineLimit(1) }
+            }
+        }
+    }
+
+    static func paceLabel(_ c: Chat) -> String {
+        [Pace.manual: "按按钮", Pace.now: "发完就回", Pace.paced: "延迟回复"][Pace.mode(c)] ?? ""
+    }
+
+    static func innerLabel(_ mode: String) -> String {
+        ["inline": "随回复一起", "apart": "单独生成"][mode] ?? "关闭"
+    }
+
+    static func tieLabel(_ c: Chat) -> String {
+        switch (Ties.userRejects(c), Ties.charRejects(c)) {
+        case (_, "blocked"?): return "被角色拉黑"
+        case (_, "removed"?): return "被角色删除"
+        case ("blocked"?, _): return "已拉黑"
+        case ("removed"?, _): return "已删除"
+        default: return "好友"
+        }
+    }
+
+    @ViewBuilder private var innerSection: some View {
+        Section {
+            Picker("心声", selection: $innerMode) {
+                Text("关闭").tag("off")
+                Text("随回复一起").tag("inline")
+                Text("单独生成").tag("apart")
+            }
+            if innerMode != "off" {
+                Picker("显示方式", selection: $innerStyle) {
+                    Text("淡色小字").tag("quiet")
+                    Text("打开一页").tag("card")
+                }
+                TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
+            }
+        } footer: {
+            if innerMode == "apart" { Text("每轮多调用一次接口。") }
+            HelpNote(innerMode == "apart"
+                 ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
+                 : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
+                 : "开启后显示角色每轮话语背后的想法。")
+        }
+    }
+
+    @ViewBuilder private var narrationSections: some View {
+        Section {
+            Toggle("旁白", isOn: $narration)
+        } footer: {
+            HelpNote("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
+        }
+        Section {
+            Toggle("我也写旁白", isOn: $userNarration)
+        } footer: {
+            HelpNote("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
+        }
+    }
+
+    @ViewBuilder private var translateSection: some View {
+        Section {
+            Toggle("翻译这段对话", isOn: Binding(
+                get: { !translateTo.trimmingCharacters(in: .whitespaces).isEmpty },
+                set: { translateTo = $0 ? (translateTo.isEmpty ? "中文" : translateTo) : ""; save() }))
+            if !translateTo.trimmingCharacters(in: .whitespaces).isEmpty {
+                TextField("译成什么语言", text: $translateTo)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: Theme.sp2) {
+                        ForEach(Self.commonLangs, id: \.self) { l in
+                            Button(l) { translateTo = l; save() }
+                                .font(.system(size: 13))
+                                .foregroundStyle(translateTo == l ? Theme.onAccent : Theme.text)
+                                .padding(.horizontal, Theme.sp3).padding(.vertical, 5)
+                                .background(translateTo == l ? Theme.accent : Theme.surface2, in: Capsule())
+                                .buttonStyle(.plain)
+                        }
+                    }
+                }
+                TextField("额外的翻译要求（例如：保留原文中的称呼）", text: $translateRules, axis: .vertical).lineLimit(1...4)
+            }
+        } header: {
+            Text("翻译")
+        } footer: {
+            Text("回复变长，用量随之增加。")
+            HelpNote("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
+        }
+    }
+
+    @ViewBuilder private var presetSections: some View {
+        Section {
+            Picker("预设", selection: $presetId) {
+                Text("跟随全局").tag("")
+                ForEach(presets) { p in Text(p.name).tag(p.id) }
+            }
+        } footer: {
+            HelpNote("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
+        }
+        Section {
+            TextField("尚无摘要", text: $summary, axis: .vertical).lineLimit(3...20)
+        } header: {
+            Text("更早之前发生过什么")
+        } footer: {
+            HelpNote("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
+        }
+    }
+
+    @ViewBuilder private var summarySection: some View {
+        Section {
+            LabeledContent("未总结的消息", value: "\(backlog) 条")
+            Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2 || chat?.isGroup == true)
+            Button("全部标为已总结") {
+                do { let n = try MemorySummary.markCaughtUp(chatId: chatId); summaryNote = "已将 \(n) 条标为已总结。"; refreshBacklog() }
+                catch { problem = "未能保存：\(error.localizedDescription)" }
+            }
+            .disabled(summarizing || backlog == 0)
+            if let summaryNote { Text(summaryNote).font(.footnote).foregroundStyle(Theme.secondaryText) }
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } footer: {
+            Text("立即总结调用一次接口。")
+            HelpNote("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
+        }
+    }
+
+    @ViewBuilder private var moreSections: some View {
+        Section {
+            Toggle("置顶", isOn: $pinned)
+            Toggle("免打扰", isOn: $muted)
+        }
+        Section {
+            Button("清空聊天记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
+            Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } footer: {
+            Text("清空与删除均无法撤销。")
+            HelpNote("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
+        }
+        .confirmationDialog("清空后无法恢复。", isPresented: $confirmClear, titleVisibility: .visible) {
+            Button("清空聊天记录", role: .destructive) {
+                do { try Database.shared.deleteAll(Collections.messages, where: chatId) }
+                catch { problem = "清空失败：\(error.localizedDescription)" }
+            }
+        }
+        .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除这段会话", role: .destructive) {
+                do { try People.deleteChat(chatId); onDeleted() }
+                catch { problem = "删除失败：\(error.localizedDescription)" }
+            }
+        }
+    }
+
     /// 只在这段会话里换头像（网页版 4.437）：角色卡与主页上换的才是所有会话一起换
+    private func facePage(_ c: Chat) -> some View {
+        MenuPage("头像") {
+            faceSection(c)
+            if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
+        }
+        .photosPicker(isPresented: $pickingFace, selection: $facePhoto, matching: .images)
+    }
+
     @ViewBuilder
     private func faceSection(_ c: Chat) -> some View {
         let faces = ChatFaces.faces(c)
@@ -646,5 +730,22 @@ struct TiesSection: View {
         } catch {
             problem = "未能保存：\(error.localizedDescription)"
         }
+    }
+}
+
+/// 会话菜单点进去的一页：一个表单，标题写在顶栏
+struct MenuPage<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: () -> Content
+
+    init(_ title: String, @ViewBuilder content: @escaping () -> Content) {
+        self.title = title
+        self.content = content
+    }
+
+    var body: some View {
+        Form { content() }
+            .navigationTitle(title)
+            .navigationBarTitleDisplayMode(.inline)
     }
 }

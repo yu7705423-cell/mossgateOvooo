@@ -70,6 +70,8 @@ struct AppHost: View {
         }
         .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
         .persistentSystemOverlays(.hidden)
+        // 左缘右滑：关掉弹出来的那一层，或者在第一页时回到主屏
+        .background(EdgeBack(close: close))
     }
 
     @ViewBuilder private var content: some View {
