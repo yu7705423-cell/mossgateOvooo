@@ -112,6 +112,17 @@ struct ChatSettingsView: View {
                     }
                 }
             }
+            Section {
+                NavigationLink {
+                    SkinPageView(chatId: chatId)
+                } label: {
+                    HStack {
+                        Text("美化")
+                        Spacer()
+                        Text(Skins.get(chat?.row.string("skinId") ?? "")?.string("name") ?? "未使用").foregroundStyle(Theme.text3)
+                    }
+                }
+            }
             ShowSection()
             Section {
                 Toggle("旁白", isOn: $narration)

@@ -53,6 +53,8 @@ struct ConversationView: View {
     @State private var openStacks: Set<String> = []
     /// 这段会话的背景与上下栏（chat.look）
     @State private var look = ChatLook.Look()
+    /// 这段会话挂着的美化里原生版画得出来的那几格（气泡、头像、间距）
+    @State private var skin = Skins.Look()
     @State private var showLook = false
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
@@ -167,6 +169,9 @@ struct ConversationView: View {
     private func withPanels<V: View>(_ base: V) -> some View {
         base
         .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in checkDue() }
+        .onReceive(NotificationCenter.default.publisher(for: .eiraSkinChanged)) { _ in
+            skin = Skins.look(Skins.of(try? Repo.chat(chatId)))
+        }
         .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
             Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
             Button("保留图片，只重新生成文字") { generate(regenerate: true, imageKeep: .keep) }
@@ -850,7 +855,7 @@ struct ConversationView: View {
         let prev: Message? = ctx.prevOf[m.id]
         let sep: Bool = ctx.stampMode == "gap" && Receipt.needSep(prev: prev, cur: m)
         let tight: Bool = !sep && Receipt.cont(prev: prev, cur: m)
-        let top: CGFloat = prev == nil ? 0 : (tight ? 5 : Theme.sp4)
+        let top: CGFloat = prev == nil ? 0 : (tight ? skin.gapIn : skin.gap)
         VStack(spacing: 0) {
             if sep {
                 Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
@@ -886,6 +891,7 @@ struct ConversationView: View {
                           narrColor: look.narr,
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
+                          skin: skin,
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -1222,6 +1228,7 @@ struct ConversationView: View {
         do {
             chat = try Repo.chat(chatId)
             look = chat.map(ChatLook.of) ?? ChatLook.Look()
+            skin = Skins.look(Skins.of(chat))
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
             me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()
             if let chat, chat.isGroup {
@@ -1431,6 +1438,8 @@ struct MessageRow: View {
     var charFace = ""
     /// 被拒收时气泡下那一行（好友与拉黑）
     var rejectNote = ""
+    /// 美化里的气泡、头像
+    var skin = Skins.Look()
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1585,7 +1594,8 @@ struct MessageRow: View {
     }
 
     private func avatarView(_ mine: Bool) -> some View {
-        Avatar(imageId: mine ? meAvatar : (charFace.isEmpty ? (char?.avatar ?? "") : charFace), name: mine ? meName : (char?.displayName ?? ""))
+        Avatar(imageId: mine ? meAvatar : (charFace.isEmpty ? (char?.avatar ?? "") : charFace), name: mine ? meName : (char?.displayName ?? ""),
+               size: skin.avatarSize, radius: skin.radius(skin.avatarSize))
             .onTapGesture {
                 guard !mine else { return }
                 if innerCard { onAction?(.innerCard); return }
@@ -1609,7 +1619,7 @@ struct MessageRow: View {
     private var bubbleRow: some View {
         HStack(alignment: .top, spacing: Theme.gap) {
             if mine { Spacer(minLength: 48) }
-            if !mine { avatarView(false) }
+            if !mine && skin.showFace(false) { avatarView(false) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
                 if showName && !mine {
                     Text(speakerName.isEmpty ? (char?.displayName ?? "某人") : speakerName).font(.caption).foregroundStyle(Theme.secondaryText)
@@ -1650,7 +1660,7 @@ struct MessageRow: View {
                     Text("命中禁写：\(ban.compactMap(\.string).joined(separator: "、"))").font(.caption).foregroundStyle(Theme.danger)
                 }
             }
-            if mine { avatarView(true) }
+            if mine && skin.showFace(true) { avatarView(true) }
             if !mine { Spacer(minLength: 48) }
         }
         .padding(.horizontal, Theme.pad)
@@ -1765,14 +1775,16 @@ struct MessageRow: View {
     }
 
     /// 气泡（.bubble）：角色的是白底加一道很淡的阴影，自己的是黑底白字；14 号字，行高 1.6
+    /// 美化里写了的按美化来
     private func bubble(_ text: String) -> some View {
-        Text(text)
-            .font(.system(size: Theme.bubbleFont))
-            .lineSpacing(Theme.bubbleFont * 0.4)
+        let b = skin.bubble(mine)
+        return Text(text)
+            .font(.system(size: b.font))
+            .lineSpacing(b.font * 0.4)
             .textSelection(.disabled)
-            .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
-            .foregroundStyle(mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)
-            .background(mine ? Theme.bubbleMine : Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+            .padding(.horizontal, b.padX).padding(.vertical, b.padY)
+            .foregroundStyle(b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText))
+            .background(b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), in: RoundedRectangle(cornerRadius: b.radius, style: .continuous))
             .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
     }
 

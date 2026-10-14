@@ -187,6 +187,8 @@ struct Avatar: View {
     let imageId: String
     let name: String
     var size: CGFloat = Theme.avatarSize
+    /// 圆角（nil 为默认的 14/44）
+    var radius: CGFloat?
 
     var body: some View {
         Group {
@@ -197,7 +199,7 @@ struct Avatar: View {
             }
         }
         .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: size * 14 / 44, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: radius ?? size * 14 / 44, style: .continuous))
         .accessibilityLabel(name)
     }
 }
