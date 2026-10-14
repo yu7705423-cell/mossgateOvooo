@@ -67,16 +67,12 @@ struct ImportView: View {
             }
         }
         .navigationTitle("导入网页版备份")
-        .fileImporter(isPresented: $picking, allowedContentTypes: [.zip, .json, .data, .item]) { result in
-            switch result {
-            case .success(let url):
-                file = url
-                report = nil
-                failure = nil
-                needPass = isSealed(url)
-            case .failure(let error):
-                failure = error.localizedDescription
-            }
+        .documentPicker(isPresented: $picking, types: [.zip, .json, .item]) { urls in
+            guard let url = urls.first else { return }
+            file = url
+            report = nil
+            failure = nil
+            needPass = isSealed(url)
         }
     }
 

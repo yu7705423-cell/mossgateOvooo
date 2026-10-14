@@ -136,20 +136,14 @@ struct PresetListView: View {
         }
         .navigationTitle("预设")
         .navigationDestination(item: $opening) { t in PresetEditView(presetId: t.id) }
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.json]) { result in
-            switch result {
-            case .success(let url):
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-                do {
-                    let data = try Data(contentsOf: url)
-                    var failure: Error?
-                    model.update { do { _ = try Presets.importData(&$0, data) } catch { failure = error } }
-                    if let failure { model.problem = failure.localizedDescription }
-                } catch { model.problem = "无法读取文件：\(error.localizedDescription)" }
-            case .failure(let e):
-                model.problem = e.localizedDescription
-            }
+        .documentPicker(isPresented: $importing, types: [.json]) { urls in
+            guard let url = urls.first else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                var failure: Error?
+                model.update { do { _ = try Presets.importData(&$0, data) } catch { failure = error } }
+                if let failure { model.problem = failure.localizedDescription }
+            } catch { model.problem = "无法读取文件：\(error.localizedDescription)" }
         }
         .onAppear { model.reload() }
     }

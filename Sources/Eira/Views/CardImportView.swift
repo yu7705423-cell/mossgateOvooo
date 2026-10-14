@@ -33,11 +33,8 @@ struct CardImportView: View {
         }
         .navigationTitle("从资料读取角色卡")
         .navigationBarTitleDisplayMode(.inline)
-        .fileImporter(isPresented: $picking, allowedContentTypes: Self.types) { result in
-            switch result {
-            case .success(let url): read(url)
-            case .failure(let e): problem = e.localizedDescription
-            }
+        .documentPicker(isPresented: $picking, types: Self.types) { urls in
+            if let url = urls.first { read(url) }
         }
     }
 

@@ -347,11 +347,8 @@ struct LibraryView: View {
             }
         }
         .navigationTitle("本机曲库")
-        .fileImporter(isPresented: $importing, allowedContentTypes: [.audio], allowsMultipleSelection: true) { result in
-            guard case .success(let urls) = result else { return }
+        .documentPicker(isPresented: $importing, types: [.audio], multiple: true) { urls in
             for u in urls {
-                let ok = u.startAccessingSecurityScopedResource()
-                defer { if ok { u.stopAccessingSecurityScopedResource() } }
                 do {
                     let data = try Data(contentsOf: u)
                     try MusicLibrary.addLocal(title: u.deletingPathExtension().lastPathComponent, artist: "", data: data, ext: u.pathExtension)
