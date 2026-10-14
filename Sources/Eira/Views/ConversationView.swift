@@ -575,11 +575,18 @@ struct ConversationView: View {
                           latestTurn: ctx.latestTurn,
                           translateLang: chat?.row.string("translateTo") ?? "",
                           quoteName: quoteName(of: m),
+                          nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
                           onRetry: retry,
                           onOpenImage: { viewing = ViewingImage(id: $0) },
                           onAction: { act($0, m) })
+    }
+
+    private func reactorName(_ id: String) -> String {
+        if id == "me" || id.isEmpty { return me?.name ?? "我" }
+        if let c = members[id] { return c.displayName }
+        return char?.id == id ? (char?.displayName ?? "对方") : "对方"
     }
 
     /// 引用块上写的名字：引的是我说的就写我的名字，否则写那位角色
@@ -1006,6 +1013,8 @@ struct MessageRow: View {
     var translateLang = ""
     /// 引用的那一条是谁说的
     var quoteName = ""
+    /// 回应是谁贴的：id 换成名字（me 为我）
+    var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
     var picking = false
     var picked = false
@@ -1365,12 +1374,15 @@ struct MessageRow: View {
                 ForEach(order, id: \.self) { e in
                     let n = groups[e]?.count ?? 0
                     let mineToo = groups[e]?.contains { $0.1 == "me" } ?? false
+                    let who = (groups[e] ?? []).map { nameOf?($0.1) ?? $0.1 }.joined(separator: "、")
                     Button { onAction?(.react(e)) } label: {
                         Text(n > 1 ? "\(e) \(n)" : e).font(.footnote)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(mineToo ? Theme.placeholder : Theme.bubbleTheirs, in: Capsule())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu { Text("回应者：\(who)") }
+                    .accessibilityLabel("\(e)，\(who)")
                 }
             }
         }
