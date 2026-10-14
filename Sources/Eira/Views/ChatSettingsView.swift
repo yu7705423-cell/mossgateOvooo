@@ -48,6 +48,7 @@ struct ChatSettingsView: View {
         Form {
             if chat?.isGroup == true { GroupMembersSection(chatId: chatId) }
             if let c = chat { faceSection(c) }
+            TiesSection(chatId: chatId)
             if let onSearch {
                 Section {
                     Button(action: onSearch) {
@@ -553,5 +554,77 @@ struct PaceSection: View {
         c.row.touch()
         do { try Repo.save(c); chat = c; problem = nil }
         catch { problem = "未能保存：\(error.localizedDescription)" }
+    }
+}
+
+
+/// 好友与拉黑（网页版 4.306、4.475）：我这一边拉黑、删除；角色拉黑了我时强制解除；角色删了我时发好友申请。单聊才有
+struct TiesSection: View {
+    let chatId: String
+    @State private var chat: Chat?
+    @State private var confirmBlock = false
+    @State private var confirmRemove = false
+    @State private var requesting = false
+    @State private var requestNote = ""
+    @State private var problem: String?
+
+    var body: some View {
+        if let c = chat, Ties.pair(c) != nil {
+            let mine = Ties.userRejects(c)
+            let theirs = Ties.charRejects(c)
+            Section {
+                if mine == "blocked" {
+                    Button("解除拉黑") { act { try Ties.userSet(c, blocked: false) } }
+                } else {
+                    Button("拉黑", role: .destructive) { confirmBlock = true }
+                }
+                if mine == "removed" {
+                    Button("重新添加") { act { try Ties.userSet(c, removed: false) } }
+                } else {
+                    Button("删除好友", role: .destructive) { confirmRemove = true }
+                }
+                if theirs == "blocked" {
+                    Button("强制解除角色的拉黑") { act { _ = try Ties.forceUnblock(c) } }
+                }
+                if theirs == "removed" {
+                    Button(Ties.pendingRequest(c) == nil ? "发送好友申请" : "重新发送好友申请") { requestNote = ""; requesting = true }
+                }
+                if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+            } header: {
+                Text("好友与拉黑")
+            } footer: {
+                Text("拉黑或删除后，你仍可发消息，角色仍可回复与主动发起对话，角色发来的每一条标为被拒收；角色从第一条被拒收起才知道。"
+                     + (theirs == "blocked" ? "角色已将你拉黑：强制解除不经过角色，对话中留下一行提示，角色下一轮看得到。" : "")
+                     + (theirs == "removed" ? "角色已将你删除：发送好友申请后点回复键，角色在那一次回复中决定是否通过，未通过的那一轮不送达。" : ""))
+            }
+            .confirmationDialog("拉黑后，角色发来的消息都标为被拒收。可以随时解除。", isPresented: $confirmBlock, titleVisibility: .visible) {
+                Button("拉黑", role: .destructive) { act { try Ties.userSet(c, blocked: true) } }
+            }
+            .confirmationDialog("删除后，角色发来的消息都标为未送达。可以随时重新添加。", isPresented: $confirmRemove, titleVisibility: .visible) {
+                Button("删除好友", role: .destructive) { act { try Ties.userSet(c, removed: true) } }
+            }
+            .alert("发送好友申请", isPresented: $requesting) {
+                TextField("附言（可不填）", text: $requestNote)
+                Button("发送") { act { _ = try Ties.request(c, text: requestNote) } }
+                Button("取消", role: .cancel) {}
+            } message: {
+                Text("角色在下一次回复中决定是否通过。")
+            }
+        } else {
+            Color.clear.frame(height: 0).onAppear(perform: load)
+        }
+    }
+
+    private func load() { chat = try? Repo.chat(chatId) }
+
+    private func act(_ f: () throws -> Void) {
+        do {
+            try f()
+            load()
+            problem = nil
+            NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+        } catch {
+            problem = "未能保存：\(error.localizedDescription)"
+        }
     }
 }

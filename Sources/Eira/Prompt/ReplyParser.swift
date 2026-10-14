@@ -17,6 +17,8 @@ enum ReplyParser {
         case listen, pick, song, newlist
         // 群里单独发给你的一句（落进私聊）；撤回自己最近一条动态
         case dm, recallPost
+        // 好友与拉黑：角色改自己这一方对某人的状态（extra 是 block / unblock / remove / add / accept，text 是名字）
+        case tie
     }
 
     struct Part: Equatable, Sendable {
@@ -216,6 +218,10 @@ enum ReplyParser {
                     p.extra = songs
                     push(p)
                 }
+            case "拉黑", "解除拉黑", "删除好友", "添加好友", "通过好友申请":
+                var p = Part(type: .tie, text: body.trimmingCharacters(in: .whitespaces))
+                p.extra = Ties.kinds[kind] ?? ""
+                push(p)
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"

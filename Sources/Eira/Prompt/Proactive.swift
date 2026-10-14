@@ -225,6 +225,8 @@ enum Proactive {
             // 先排下一次，再发：失败也要再等一个完整的间隔
             setNext(char.id, now + roll(c.minutes))
             guard let chat else { continue }
+            // 它把你从联系人里删了：发不出来，不调接口（网页版 ties.canReachUser）
+            if !Ties.canReachUser(char.id, personaId: chat.personaId) { continue }
             fired.append(char.id)
             do { try await send(chatId: chat.id, charId: char.id) }
             catch {

@@ -24,7 +24,8 @@ enum ChatPrompt {
         var chat = chat0
         // 通话里不让模型在台词后面夹译文：拼提示词时把这段对话的翻译摘掉（网页版 call.js 的 plain）
         if call != nil { chat.row["translateTo"] = .string("") }
-        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
+        // 我发的被角色拒收的不进历史（网页版 ties.keepDelivered）
+        let all = Ties.keepDelivered(chat, try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) })
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let charName = char.name.isEmpty ? "对方" : char.name
@@ -57,6 +58,7 @@ enum ChatPrompt {
             "day": DayPlan.block(char, at: now),
             "music": Netease.block(char, now: now.millis),
             "moments": Moments.block(char: char, userName: me?.name ?? "对方", now: now),
+            "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -317,7 +319,7 @@ enum ChatPrompt {
     /// 能力一节。原生版只开回复解析认得的那几项。
     /// 顺序照网页版 CAPS 数组：图片、语音、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
-    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner"]
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner", "ties"]
 
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
@@ -349,6 +351,11 @@ enum ChatPrompt {
         }
         // 一起听、点歌、分享歌曲与歌单（网页版 capabilities.js 的 listen）。原生版直连网易云，曲库空着也能搜
         let listening = MusicListen.active(chat.id)
+        // 好友与拉黑（网页版 capabilities.js 的 ties）：改自己这一方，群聊也可用
+        cap("ties", on: true, hot: used(#"[\[【](拉黑|解除拉黑|删除好友|添加好友|通过好友申请)"#),
+            line: "Block someone or remove them from your contacts: write a line on its own, [拉黑：name] or [删除好友：name]; undo with [解除拉黑：name] or [添加好友：name]") {
+            Templates.get("skeleton.ties", settings: s)
+        }
         cap("listen", on: char.row["canListen"]?.bool != false, hot: listening || used(#"^(listen|song)$|[\[【](一起听|点歌|建歌单|加入歌单|分享歌曲)"#),
             line: "Music: [一起听] to listen together, [点歌：song title - artist] to change the track, [分享歌曲：song title - artist] to send a song, [加入歌单：playlist | song - artist] to keep songs") {
             Templates.get("skeleton.listen", settings: s)

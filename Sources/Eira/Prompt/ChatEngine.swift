@@ -43,6 +43,14 @@ enum ChatEngine {
             old = t
         }
         let settings = AppSettings.load().forChat(chat)
+        // 好友与拉黑：角色拉黑了你，或者把你删了、你又没发好友申请，消息送不到，一次接口都不调（网页版 ties）
+        let rejected = Ties.charRejects(chat)
+        if rejected == "blocked" {
+            throw StoreError(message: "对方已将你拉黑，消息不会送达，未调用接口。可在会话设置中强制解除。")
+        }
+        if rejected == "removed" && Ties.pendingRequest(chat) == nil {
+            throw StoreError(message: "对方已将你从联系人中删除，消息不会送达，未调用接口。可在会话设置中发送好友申请。")
+        }
         // 已读：角色动笔这一瞬，把悬着的那几条标成已读（网页版 receipt.markRead）
         try? Receipt.markRead(chatId: chatId)
         // 角色在听什么：登录了网易云、到了间隔才读一次（只调网易云，不调模型）
@@ -83,6 +91,11 @@ enum ChatEngine {
             throw error
         }
 
+        // 发了好友申请：这一轮没写通过就不送达，申请作废（照微信）
+        if rejected == "removed", !Ties.accepts(result.text, char: char, chat: chat) {
+            try? Ties.clearRequest(chat.id)
+            throw StoreError(message: "对方没有通过好友申请，这一轮回复未送达。")
+        }
         try markRecalled(built.recalled)
         // 交给模型看过的图标成看过，往后不再重传
         for id in built.seenImages {
@@ -168,6 +181,7 @@ enum ChatEngine {
     private static func removeRows(_ rows: [Message], turnId: String, chatId: String) throws {
         for m in rows { try Interact.drop(m) }
         try Interact.undoReactions(chatId: chatId, turnId: turnId)
+        try Ties.undoTurn(turnId)
         // 群里这一轮发进私聊的私信一起撤掉（网页版 clearTurn）
         if let chat = try Repo.chat(chatId), chat.isGroup {
             for c in try Repo.chats() where !c.isGroup {
@@ -355,6 +369,9 @@ enum ChatEngine {
                   let mo = Moments.by(char.id).first(where: { !$0.recalled }) else { return nil }
             try Moments.update(mo.id, ["recalled": .number(Date().millis)])
             return nil
+        case .tie:
+            // 好友与拉黑：改它自己这一方的状态。拉黑、删除不落提示（照微信）；通过你的好友申请落一行
+            return try Ties.fromMark(char: char, chat: chat, kind: p.extra ?? "", name: p.text, turnId: turnId)?.note
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -450,7 +467,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

@@ -344,6 +344,7 @@ struct ConversationView: View {
                 }
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
+            tieBar
             paceBar
             mentionBar
             narrTabs
@@ -382,6 +383,39 @@ struct ConversationView: View {
             }
         }
         .modifier(BottomBarLook(bar: look.bottom))
+    }
+
+    /// 好友与拉黑的说明条（网页版 .tie-bar）：谁挡着谁；我这一边的可以当场解除
+    @ViewBuilder private var tieBar: some View {
+        if let c = chat, let text = Self.tieText(c) {
+            HStack(spacing: Theme.sp3) {
+                Text(text).font(.system(size: 12)).foregroundStyle(Theme.text2).fixedSize(horizontal: false, vertical: true)
+                Spacer()
+                if let mineSide = Ties.userRejects(c) {
+                    Button(mineSide == "blocked" ? "解除拉黑" : "重新添加") {
+                        do {
+                            if mineSide == "blocked" { try Ties.userSet(c, blocked: false) } else { try Ties.userSet(c, removed: false) }
+                            chat = try Repo.chat(chatId)
+                            reload()
+                        } catch { problem = "未能保存：\(error.localizedDescription)" }
+                    }
+                    .font(.system(size: 12))
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, Theme.sp4).padding(.top, Theme.sp2)
+        }
+    }
+
+    static func tieText(_ c: Chat) -> String? {
+        switch (Ties.charRejects(c), Ties.userRejects(c)) {
+        case ("blocked", _): return "对方已将你拉黑，你发的消息不会送达。可在会话设置中强制解除。"
+        case ("removed", _):
+            return Ties.pendingRequest(c) != nil ? "已发送好友申请，点击回复键看对方是否通过。" : "对方已将你从联系人中删除，你发的消息不会送达。可在会话设置中发送好友申请。"
+        case (_, "blocked"): return "你已拉黑该角色。角色仍可发来消息，每一条都标为被拒收。"
+        case (_, "removed"): return "你已删除该角色。角色仍可发来消息，每一条都标为未送达。"
+        default: return nil
+        }
     }
 
     /// 延迟回复在等着时，输入栏上方一行：对方在做什么、约多久后回复；可以立即回复或取消
@@ -782,6 +816,8 @@ struct ConversationView: View {
         var sbarByTurn: [String: Message] = [:]
         var firstOfTurn: [String: String] = [:]
         var statusItems: [String: StatusBar.Item] = [:]
+        /// 被拒收的那几条下面写的一行（好友与拉黑）
+        var rejects: [String: String] = [:]
     }
 
     private func rowContext() -> RowContext {
@@ -796,7 +832,8 @@ struct ConversationView: View {
             sbarByTurn: Dictionary(messages.filter { !$0.turnId.isEmpty && $0.row["sbar"]?.object != nil }.map { ($0.turnId, $0) },
                                    uniquingKeysWith: { _, b in b }),
             firstOfTurn: Dictionary(messages.filter { !$0.turnId.isEmpty }.map { ($0.turnId, $0.id) }, uniquingKeysWith: { a, _ in a }),
-            statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }))
+            statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
+            rejects: Ties.notes(messages, chat: chat))
     }
 
     /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
@@ -848,6 +885,7 @@ struct ConversationView: View {
                           innerCard: chat.map { InnerVoice.style($0) == "card" } ?? false,
                           narrColor: look.narr,
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
+                          rejectNote: ctx.rejects[m.id] ?? "",
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -1053,6 +1091,8 @@ struct ConversationView: View {
     /// 发出去之后：按这段会话的节奏，发完就回、排一个延迟回复，或者什么都不做（网页版 afterSend）
     private func afterSend(_ text: String) {
         guard let c = try? Repo.chat(chatId) else { return }
+        // 角色拉黑了你或把你删了：发出去的标成被拒收，不回、不排延迟回复、不调接口
+        if Ties.charRejects(c) != nil { return }
         // 角色在忙或在休息、开着自动回复：先收到一句（随日程写好，不调接口）。延迟回复档照常排，其余档不再立即回
         let autos = (try? AutoReply.fire(chatId, AutoReply.hers)) ?? []
         if !autos.isEmpty { messages += autos; turn = nil }
@@ -1389,6 +1429,8 @@ struct MessageRow: View {
     var narrColor = ""
     /// 只在这段会话里用的角色头像（空为角色自己的那张）
     var charFace = ""
+    /// 被拒收时气泡下那一行（好友与拉黑）
+    var rejectNote = ""
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -1597,6 +1639,10 @@ struct MessageRow: View {
                     Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
                 }
                 reactions
+                if !rejectNote.isEmpty {
+                    Label(rejectNote, systemImage: "exclamationmark.circle.fill")
+                        .font(.caption).foregroundStyle(Theme.danger)
+                }
                 if !mine && message.row.bool("cutOff") {
                     Text("回复在此处中断").font(.caption).foregroundStyle(Theme.text3)
                 }
