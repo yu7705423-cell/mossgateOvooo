@@ -48,6 +48,8 @@ struct ConversationView: View {
     @State private var dicing = false
     @State private var typingPhoto = false
     @State private var bindingSticker: Message?
+    /// 展开了的那几叠图（按第一张的 id）
+    @State private var openStacks: Set<String> = []
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
@@ -624,8 +626,8 @@ struct ConversationView: View {
             }
             // 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
             let ctx = rowContext()
-            ForEach(messages) { m in
-                messageCell(m, ctx)
+            ForEach(displayRows) { r in
+                displayCell(r, ctx)
             }
             Color.clear.frame(height: 1)
                 .onAppear { atBottom = true; unseen = 0 }
@@ -659,6 +661,57 @@ struct ConversationView: View {
             .buttonStyle(.plain)
             .padding(Theme.sp3)
             .accessibilityLabel(unseen > 0 ? "回到最新，\(unseen) 条新消息" : "回到最新")
+        }
+    }
+
+    /// 列表上的一行：单独一条、摞成一叠的几张图、展开的那一叠最后挂的「收起」
+    private enum DisplayRow: Identifiable {
+        case single(Message)
+        case stack([Message])
+        case fold(String, Int)
+        var id: String {
+            switch self {
+            case .single(let m): return m.id
+            case .stack(let list): return "stack-" + (list.first?.id ?? "")
+            case .fold(let id, _): return "fold-" + id
+            }
+        }
+    }
+
+    /// 连着发的几张图摞成一叠。多选时不摞：摞着就没法单独挑其中一张
+    private var displayRows: [DisplayRow] {
+        guard picking == nil else { return messages.map { .single($0) } }
+        var out: [DisplayRow] = []
+        for g in ImageStacks.group(messages) {
+            guard g.count > 1, let head = g.first else { out += g.map { .single($0) }; continue }
+            if openStacks.contains(head.id) {
+                out += g.map { .single($0) }
+                out.append(.fold(head.id, g.count))
+            } else {
+                out.append(.stack(g))
+            }
+        }
+        return out
+    }
+
+    @ViewBuilder
+    private func displayCell(_ r: DisplayRow, _ ctx: RowContext) -> some View {
+        switch r {
+        case .single(let m):
+            messageCell(m, ctx)
+        case .stack(let list):
+            let head = list[0]
+            ImageStackRow(msgs: list, mine: head.role == .user,
+                          avatar: head.role == .user ? (me?.avatar ?? "") : (speaker(of: head)?.avatar ?? ""),
+                          name: head.role == .user ? (me?.name ?? "我") : (speaker(of: head)?.displayName ?? ""),
+                          onOpen: { viewing = ViewingImage(id: $0) },
+                          onExpand: { openStacks.insert(head.id) })
+                .padding(.top, Theme.sp4)
+                .id(head.id)
+        case .fold(let id, let n):
+            Button("收起这 \(n) 张") { openStacks.remove(id) }
+                .font(.footnote).foregroundStyle(Theme.text3).buttonStyle(.plain)
+                .padding(.top, Theme.sp1)
         }
     }
 
@@ -1031,6 +1084,10 @@ struct ConversationView: View {
 
     /// 跳到某一条：还没画出来就把一次画的条数放大到能盖住它，再滚过去
     private func jump(_ id: String) {
+        // 跳到的那一条摞在一叠里：先摊开
+        for g in ImageStacks.group(messages) where g.count > 1 && g.dropFirst().contains(where: { $0.id == id }) {
+            if let head = g.first { openStacks.insert(head.id) }
+        }
         if !messages.contains(where: { $0.id == id }) {
             guard let all = try? Repo.messages(chatId: chatId), let i = all.firstIndex(where: { $0.id == id }) else {
                 notice = "这条消息已不存在。"

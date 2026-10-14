@@ -194,3 +194,20 @@ final class StickerMatchTests: StoreTestCase {
         XCTAssertEqual(StickerMatch.keywords(try XCTUnwrap(Database.shared.get("stickers", id: "stk_1"))).filter { $0 == "转圈圈" }.count, 1)
     }
 }
+
+/// 连发的图摞成一叠：同一个人、连着的、没挂状态的才算
+final class ImageStackTests: XCTestCase {
+    private func img(_ id: String, role: Message.Role = .user, author: String = "me", media: String = "done") -> Message {
+        var m = Message.new(chatId: "c", role: role, authorId: author, content: "[图片]", kind: "image")
+        m.row["id"] = .string(id)
+        m.row["imageId"] = .string("img_" + id)
+        m.row["media"] = .string(media)
+        return m
+    }
+
+    func testGroup() {
+        let text = Message.new(chatId: "c", role: .user, authorId: "me", content: "看")
+        let g = ImageStacks.group([img("a"), img("b"), text, img("c"), img("d", media: "pending"), img("e", role: .char, author: "x"), img("f", role: .char, author: "x")])
+        XCTAssertEqual(g.map { $0.count }, [2, 1, 1, 1, 2])
+    }
+}
