@@ -369,7 +369,7 @@ enum Interact {
         var hasPicto = false
         for u in t.unicodeScalars {
             let v = u.value
-            if u.properties.isExtendedPictographic || (0x1F1E6...0x1F1FF).contains(v) || v == 0x20E3 { hasPicto = true; continue }
+            if (u.properties.isEmoji && v > 0x7F && v != 0xFE0F && v != 0x200D && v != 0x20E3 && !(0x1F3FB...0x1F3FF).contains(v)) || (0x1F1E6...0x1F1FF).contains(v) || v == 0x20E3 { hasPicto = true; continue }
             if (0x1F3FB...0x1F3FF).contains(v) || v == 0xFE0F || v == 0x200D || (0x30...0x39).contains(v) || v == 0x23 || v == 0x2A { continue }
             return false
         }
