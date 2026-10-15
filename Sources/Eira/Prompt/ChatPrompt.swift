@@ -537,7 +537,8 @@ enum ChatPrompt {
 
     private struct Lore { var before: [String] = []; var after: [String] = []; var deep: [(Int, String)] = [] }
 
-    private static func activateLore(char: Character, scanText: String, budget: Int) -> Lore {
+    /// 这段文字会激活哪些条目（按注入的先后），以及一共估算多少 token。激活预览与拼提示词用同一份
+    static func selectLore(char: Character, scanText: String, budget: Int) -> (items: [LoreEntry], used: Int) {
         let books = ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == "chat" && ($0.global || char.lorebookIds.contains($0.id)) }
         var hits: [LoreEntry] = []
         for book in books {
@@ -551,15 +552,21 @@ enum ChatPrompt {
             if a.priority != b.priority { return a.priority > b.priority }
             return a.order < b.order
         }
-        var lore = Lore()
+        var out: [LoreEntry] = []
         var used = 0
         for e in hits {
+            let cost = TokenEstimate.of(e.content.trimmingCharacters(in: .whitespacesAndNewlines))
+            if budget > 0 && used + cost > budget { continue }
+            used += cost
+            out.append(e)
+        }
+        return (out, used)
+    }
+
+    private static func activateLore(char: Character, scanText: String, budget: Int) -> Lore {
+        var lore = Lore()
+        for e in selectLore(char: char, scanText: scanText, budget: budget).items {
             let text = e.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            if budget > 0 {
-                let cost = TokenEstimate.of(text)
-                if used + cost > budget { continue }
-                used += cost
-            }
             if e.depth > 0 { lore.deep.append((e.depth, text)) }
             else if e.part == "before" { lore.before.append(text) }
             else { lore.after.append(text) }

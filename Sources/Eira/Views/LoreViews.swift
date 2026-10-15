@@ -27,6 +27,7 @@ struct LorebookListView: View {
             }
             if books.isEmpty { Text("暂无世界书。").foregroundStyle(Theme.secondaryText) }
             Section {
+                NavigationLink { LorePreviewView() } label: { Text("激活预览") }
                 Button("从文件批量导入") { importing = true }
                 if !books.isEmpty {
                     Button("导出全部为 txt") {
@@ -405,5 +406,47 @@ struct LoreImportView: View {
                 .disabled(chosen.isEmpty)
             }
         }
+    }
+}
+
+/// 激活预览（网页版 lore/App.js 的 PreviewPage）：输入一段对话，看会激活哪些条目、约占多少 token。不调接口
+struct LorePreviewView: View {
+    @State private var charId = ""
+    @State private var text = ""
+
+    var body: some View {
+        let chars = ((try? Repo.characters()) ?? []).filter { !$0.isNpc }
+        let char = chars.first { $0.id == charId } ?? chars.first
+        let budget = Int(AppSettings.load().num("contextBudget", 0))
+        let r = char.map { ChatPrompt.selectLore(char: $0, scanText: text, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0) }
+        Form {
+            Section {
+                Picker("以哪个角色的视角", selection: Binding(get: { char?.id ?? "" }, set: { charId = $0 })) {
+                    ForEach(chars) { Text($0.displayName).tag($0.id) }
+                }
+                TextField("粘贴最近几条消息", text: $text, axis: .vertical).lineLimit(4...12)
+            } footer: {
+                HelpNote("输入一段对话，看会激活哪些条目、约占多少 token。只算用于对话的世界书：全局生效的，与关联在这个角色上的。设了概率的条目每次结果可能不同。", title: "世界书：激活预览")
+            }
+            if let r {
+                Section("命中 \(r.items.count) 条 · 约 \(r.used) tokens") {
+                    if r.items.isEmpty { Text("无条目被激活").foregroundStyle(Theme.secondaryText) }
+                    ForEach(r.items.indices, id: \.self) { i in
+                        let e = r.items[i]
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack {
+                                Text(e.comment.isEmpty ? String(e.content.prefix(20)) : e.comment)
+                                Spacer()
+                                Text(e.constant ? "常驻" : "命中").font(.caption).foregroundStyle(Theme.secondaryText)
+                            }
+                            Text(e.content).font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(4)
+                        }
+                    }
+                }
+            } else {
+                Text("还没有角色。").foregroundStyle(Theme.secondaryText)
+            }
+        }
+        .navigationTitle("激活预览")
     }
 }
