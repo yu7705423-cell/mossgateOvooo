@@ -372,7 +372,7 @@ struct ChatSettingsView: View {
         Section {
             LabeledContent("未总结的消息", value: "\(backlog) 条")
             LabeledContent("自动总结", value: MemorySummary.autoText())
-            Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2 || chat?.isGroup == true)
+            Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2)
             Button("全部标为已总结") {
                 do { let n = try MemorySummary.markCaughtUp(chatId: chatId); summaryNote = "已将 \(n) 条标为已总结。"; refreshBacklog() }
                 catch { problem = "未能保存：\(error.localizedDescription)" }

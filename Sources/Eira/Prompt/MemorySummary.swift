@@ -325,8 +325,12 @@ enum MemorySummary {
     static func extract(chatId: String) async throws -> Counts {
         let s = AppSettings.load()
         guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "会话不存在") }
-        guard !chat.isGroup else { throw StoreError(message: "群聊的记忆总结原生版尚未提供") }
-        guard let charId = chat.characterIds.first, let char = try Repo.character(charId) else { throw StoreError(message: "这段会话的角色不存在") }
+        // 群聊：记下来的事每个成员各存一份（他们都在场），同一件事的几份共用一个 twin，改一份就一起改（网页版 4.162）
+        let members = chat.isGroup ? GroupChat.members(chat) : []
+        guard let charId = chat.isGroup ? members.first?.id : chat.characterIds.first, let char = try Repo.character(charId) else {
+            throw StoreError(message: "这段会话的角色不存在")
+        }
+        let owners = chat.isGroup ? members : [char]
         let all = try pending(chatId: chatId)
         guard all.count >= 2, let lastMsg = all.last else { throw StoreError(message: "对话太短，暂时不需要总结") }
         let every = int(s, "autoSummarizeInterval")
@@ -341,13 +345,20 @@ enum MemorySummary {
         let personaId = me?.id ?? ""
         let rootId = Repo.rootId(of: personaId, in: personas)
         let key = rootId.isEmpty ? "root" : rootId
-        let existing = try ChatPrompt.visibleMemories(char: char, chat: chat, rootId: rootId, personas: personas)
-            .filter { $0.supersededBy.isEmpty && $0.charId == char.id }
+        var seenTwin = Set<String>()
+        var existing: [Memory] = []
+        for o in owners {
+            for m in try ChatPrompt.visibleMemories(char: o, chat: chat, rootId: rootId, personas: personas)
+                where m.supersededBy.isEmpty && m.charId == o.id {
+                let twin = m.row.string("twin")
+                if seenTwin.insert(twin.isEmpty ? m.id : twin).inserted { existing.append(m) }
+            }
+        }
 
         let pname = (me?.row.string("name") ?? "").trimmingCharacters(in: .whitespaces)
         let isPronoun = pronoun.firstMatch(in: pname, range: NSRange(pname.startIndex..., in: pname)) != nil
         let userLabel = !pname.isEmpty && pname.count <= 24 && !isPronoun ? pname : "User"
-        let who = Templates.render("task.memory-who", ["user": userLabel, "chars": "\"\(char.name)\""], settings: s)
+        let who = Templates.render("task.memory-who", ["user": userLabel, "chars": owners.map { "\"\($0.name)\"" }.joined(separator: ", ")], settings: s)
         // 线下正文前面标一下是见面时的事；群戏里别的角色写的那段署它自己的名字
         let dialogue = timeline(batch) { m in
             let name = m.role == .user ? userLabel
@@ -378,7 +389,7 @@ enum MemorySummary {
         // 自定义互动标识里「模型判断」的那几个搭在这一次上（网页版 4.320），不多调接口
         let badgeSent = BadgeDefs.inSummary(s) ? BadgeDefs.judgeFor(chat) : []
         let system = Templates.render("task.memory-extract", [
-            "today": todayText(), "who": who, "state": stateText(char: char, key: key),
+            "today": todayText(), "who": who, "state": chat.isGroup ? "(not kept for group chats)" : stateText(char: char, key: key),
             "open": openText, "existing": existingText, "dialogue": dialogue,
         ], settings: s) + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
 
@@ -396,7 +407,8 @@ enum MemorySummary {
         guard let result = JSONReply.parse(r.text)?.object else { throw StoreError(message: JSONReply.failure(r.text)) }
 
         let at = batch.last?.createdAt ?? Date().millis
-        let counts = try apply(result, charId: char.id, personaId: personaId, key: key, at: at, existing: existing)
+        let counts = try apply(result, charId: char.id, personaId: personaId, key: key, at: at, existing: existing,
+                               owners: owners.map(\.id), state: !chat.isGroup)
         BadgeDefs.applyJudged(result["badgesEarned"], sent: badgeSent, chatId: chatId)
 
         guard var done = try Repo.chat(chatId) else { return counts }
@@ -411,32 +423,48 @@ enum MemorySummary {
     }
 
     /// 把模型交回来的操作落库（网页版 applyOps，一对一那一半）。
+    /// owners：群里每个成员各存一份（共用 twin）；一对一就是那一个角色。state：群里不记此刻的状态
     static func apply(_ result: [String: JSONValue], charId: String, personaId: String, key: String, at: Double,
-                      existing: [Memory]) throws -> Counts {
+                      existing: [Memory], owners ownerIds: [String]? = nil, state keepState: Bool = true) throws -> Counts {
+        let owners = ownerIds ?? [charId]
         // 改写之前先把整份记忆存一份，改坏了能退回去（网页版 4.560）。和上一份相同不存
-        do { try MemHistory.take(charId, why: "总结记忆") } catch { Diagnostics.shared.record("memhistory-failed", ["error": error.localizedDescription]) }
+        for o in owners {
+            do { try MemHistory.take(o, why: "总结记忆") } catch { Diagnostics.shared.record("memhistory-failed", ["error": error.localizedDescription]) }
+        }
         var n = Counts()
         let byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         func keywords(_ r: JSONValue) -> JSONValue { .array((r["keywords"]?.array ?? []).compactMap(\.string).filter { !$0.isEmpty }.map { JSONValue.string($0) }) }
         func rank(_ r: JSONValue, _ def: String) -> String { ["S", "A", "B", "C"].contains(r["rank"]?.string ?? "") ? r["rank"]!.string! : def }
         func about(_ r: JSONValue) -> String { ["user", "char", "both"].contains(r["about"]?.string ?? "") ? r["about"]!.string! : "" }
         func weight(_ r: JSONValue) -> Double { min(2, max(0, r["weight"]?.number ?? 0)) }
+        // 一条新记忆：群里每个成员各一份，共用一个 twin。返回第一份（替换旧事实时用它的 id）
         func add(_ fields: [String: JSONValue]) throws -> Row {
-            var f: [String: JSONValue] = ["charId": .string(charId), "source": .string("auto"), "personaId": .string(personaId)]
-            f.merge(fields) { _, new in new }
-            var row = Row.new(prefix: "mem", f)
-            // 记的时间是这批消息发生的时间，不是总结的时间
-            row["createdAt"] = .number(at)
-            row["updatedAt"] = .number(at)
-            try Database.shared.put(Collections.memories, row)
+            let twin = owners.count > 1 ? Ids.make("twin") : ""
+            var first: Row?
+            for o in owners {
+                var f: [String: JSONValue] = ["charId": .string(o), "source": .string("auto"), "personaId": .string(personaId)]
+                if !twin.isEmpty { f["twin"] = .string(twin) }
+                f.merge(fields) { _, new in new }
+                var row = Row.new(prefix: "mem", f)
+                // 记的时间是这批消息发生的时间，不是总结的时间
+                row["createdAt"] = .number(at)
+                row["updatedAt"] = .number(at)
+                try Database.shared.put(Collections.memories, row)
+                if first == nil { first = row }
+            }
             n.added += 1
-            return row
+            return first ?? Row.new(prefix: "mem", fields)
         }
+        // 改一份就一起改：同一个 twin 的几份
         func update(_ id: String, _ patch: [String: JSONValue]) throws {
-            guard var row = try Database.shared.get(Collections.memories, id: id) else { return }
-            for (k, v) in patch { row[k] = v }
-            row.touch()
-            try Database.shared.put(Collections.memories, row)
+            guard let row = try Database.shared.get(Collections.memories, id: id) else { return }
+            let twin = row.string("twin")
+            let rows = twin.isEmpty ? [row] : ((try? Database.shared.all(Collections.memories)) ?? []).filter { $0.string("twin") == twin }
+            for var r in rows {
+                for (k, v) in patch { r[k] = v }
+                r.touch()
+                try Database.shared.put(Collections.memories, r)
+            }
         }
         func content(_ r: JSONValue) -> String? {
             let c = (r["content"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -483,7 +511,7 @@ enum MemorySummary {
                             "vec": .null, "vecModel": .string("")])
             n.closed += 1
         }
-        if let state = result["state"]?.object {
+        if keepState, let state = result["state"]?.object {
             n.state = try applyState(charId: charId, key: key, state)
         }
         return n

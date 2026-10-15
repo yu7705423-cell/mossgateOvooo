@@ -155,4 +155,45 @@ extension GroupTests {
         try Interact.unsettle(note)
         XCTAssertEqual(GroupChat.nick(try XCTUnwrap(Repo.chat(group.id)), zhou.id), "周周")
     }
+
+    /// 每个角色单独调用：默认关；开了按开口的成员各一次，@ 了谁只叫谁；名字前缀摘掉、记在本人名下
+    func testPerChar() async throws {
+        XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "groupPerChar" })
+        try setSettings(["groupPerChar": .bool(true)])
+        XCTAssertEqual(GroupChat.stripOwnName("小周：我在\n**小周**：真的", char: zhou, chat: group), "我在\n真的")
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("我在")) }
+        _ = try ChatEngine.send(text: "都在吗", chatId: group.id)
+        try await ChatEngine.reply(chatId: group.id) { _ in }
+        XCTAssertEqual(MockNet.count, 2)
+        let mine = try Repo.messages(chatId: group.id).filter { $0.role == .char }
+        XCTAssertEqual(mine.count, 2)
+        XCTAssertTrue(mine.allSatisfy { $0.content == "我在" })
+        XCTAssertEqual(Set(mine.map(\.authorId)), Set(["char_a", zhou.id]))
+
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("在")) }
+        var m = Message.new(chatId: group.id, role: .user, authorId: "me", content: "@小周 你呢")
+        m.row["mentions"] = .array([.string(zhou.id)])
+        _ = try Repo.append(m)
+        try await ChatEngine.reply(chatId: group.id) { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+    }
+
+    /// 群的记忆总结：每个成员各一份、共用 twin；群里有「私信」那一项，关了就没有
+    func testGroupMemoryAndDm() async throws {
+        let built = try ChatPrompt.buildGroup(chat: group, members: members(), settings: .load())
+        XCTAssertTrue(built.system.contains("[私信："))
+        _ = try ChatEngine.send(text: "明天一起去爬山", chatId: group.id)
+        _ = try Repo.append(Message.new(chatId: group.id, role: .char, authorId: "char_a", content: "好", turnId: "g1"))
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"events":[{"content":"约好明天爬山","rank":"B"}],"facts":[],"ended":[],"open":[],"closed":[]}"#)) }
+        _ = try await MemorySummary.extract(chatId: group.id)
+        let mems = try Database.shared.all(Collections.memories).filter { $0.string("content") == "约好明天爬山" }
+        XCTAssertEqual(Set(mems.map { $0.string("charId") }), Set(["char_a", zhou.id]))
+        XCTAssertEqual(Set(mems.map { $0.string("twin") }).count, 1)
+        XCTAssertFalse(mems[0].string("twin").isEmpty)
+
+        var g = try XCTUnwrap(Repo.chat(group.id))
+        g.row["groupDM"] = .bool(false)
+        try Repo.save(g)
+        XCTAssertFalse(try ChatPrompt.buildGroup(chat: g, members: members(), settings: .load()).system.contains("[私信："))
+    }
 }

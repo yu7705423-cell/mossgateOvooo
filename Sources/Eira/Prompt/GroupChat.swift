@@ -226,6 +226,15 @@ enum GroupChat {
         return "禁言中，还有 " + (mins >= 60 ? "\(mins / 60) 小时" : "\(mins) 分钟")
     }
 
+    /// 单独调用那一档：模型照群里的写法在行首写了自己的名字（「林：在」），落气泡前摘掉。一对一的会话不动
+    static func stripOwnName(_ raw: String, char: Character, chat: Chat) -> String {
+        guard chat.isGroup else { return raw }
+        let names = [char.name, nick(chat, char.id)].filter { !$0.isEmpty }.map { NSRegularExpression.escapedPattern(for: $0) }
+        guard !names.isEmpty else { return raw }
+        let p = "(?m)^\\s*(?:\\*\\*)?[【\\[]?(?:" + names.joined(separator: "|") + ")[】\\]]?(?:\\*\\*)?\\s*[:：]\\s*"
+        return raw.replacingOccurrences(of: p, with: "", options: .regularExpression)
+    }
+
     // MARK: - @
 
     /// 用户这一段连着发的消息里 @ 了谁（网页版 pendingMentions）。

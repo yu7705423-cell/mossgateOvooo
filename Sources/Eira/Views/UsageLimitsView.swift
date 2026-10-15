@@ -87,6 +87,15 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                Toggle("群聊中每个角色单独调用", isOn: model.bool("groupPerChar", false))
+            } header: {
+                Text("群聊")
+            } footer: {
+                Text("开启后群里有几人，每轮最多多几次调用。")
+                HelpNote("关闭时，群聊每轮调用一次接口，由模型写出这一轮开口的几位成员。开启后，开口的成员各调用一次：这一轮被 @ 的成员，没有 @ 时全体成员按顺序各说一次，后说的看得见先说的。禁言与封存的成员不开口。重新生成仍按一次调用写整轮。", title: "群聊中每个角色单独调用")
+            }
+
+            Section {
                 Toggle("多人线下每人单独调用", isOn: model.bool("scenePerChar", false))
                 Toggle("线下一场收尾时生成摘要", isOn: model.bool("sceneSummary", false))
                 Toggle("线下把窗口外的段落压成摘要", isOn: model.bool("sceneCompress", false))

@@ -66,6 +66,12 @@ enum ChatEngine {
             let cid = char.id, pid = chat.personaId
             Task.detached { await Bond.autoRun(charId: cid, personaId: pid) }
         }
+        // 群聊「每个角色单独调用」那一档（默认关，登记在 ExtraCalls）：开口的成员各一次请求，后说的看得见先说的。
+        // 重新生成那一轮仍走一次调用写整轮
+        if chat.isGroup && old == nil && settings.raw["groupPerChar"]?.bool == true {
+            try await perChar(chat: chat, settings: settings, onRow: onRow)
+            return
+        }
         let built: ChatPrompt.Built
         if chat.isGroup {
             // 一个能说话的都没有：不调接口。调了写出来的也一句都发不出去
@@ -127,6 +133,27 @@ enum ChatEngine {
         // 我的自动回复：角色这一轮说完，替我回一句固定的（不调接口；重新生成那一轮不回）
         if old == nil, !created.isEmpty {
             for m in (try? AutoReply.fire(chat.id, AutoReply.mine)) ?? [] { onRow(m) }
+        }
+    }
+
+    /// 单独调用那一档：这一轮被 @ 的那几个；没 @ 人就全体按顺序说一遍（禁言、封存的不开口）
+    static func perChar(chat: Chat, settings: AppSettings, onRow: @escaping OnRow) async throws {
+        let members = GroupChat.members(chat)
+        let speaking = GroupChat.speaking(chat, members: members)
+        guard !speaking.isEmpty else { throw StoreError(message: "群成员都在禁言中，本轮不调用接口") }
+        let called = GroupChat.pendingMentions(try Repo.messages(chatId: chat.id)).compactMap { id in speaking.first { $0.id == id } }
+        for c in called.isEmpty ? speaking : called {
+            guard let fresh = try Repo.chat(chat.id) else { return }
+            let built = try ChatPrompt.buildGroup(chat: fresh, members: [c], settings: settings)
+            let r = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages)
+            let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if raw.isEmpty { continue }
+            // 这一位的话只记在这一位名下：拆分时群里只有它
+            var solo = fresh
+            solo.row["characterIds"] = .array([.string(c.id)])
+            let served: JSONValue = .object(["id": .string(r.presetId), "name": .string(r.presetName)])
+            _ = try await write(raw: raw, chat: solo, char: c, turnId: Ids.make("turn"),
+                                versions: Versions(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         }
     }
 
@@ -213,8 +240,8 @@ enum ChatEngine {
     static func plan(raw: String, chat: Chat, char: Character) -> (plan: Plan, think: String, stamp: String?) {
         // 状态块不落成气泡：拆分之前先摘掉（网页版 statusbar.lift）
         let raw = StatusBar.lift(raw).text
-        guard chat.isGroup else {
-            let parsed = ReplyParser.split(raw, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
+        guard chat.isGroup && chat.characterIds.count > 1 else {
+            let parsed = ReplyParser.split(GroupChat.stripOwnName(raw, char: char, chat: chat), autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             return (parsed.parts.map { (part: $0, char: char) }, parsed.think, parsed.stamp)
         }
         let members = GroupChat.members(chat)

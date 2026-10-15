@@ -92,10 +92,11 @@ struct GroupMembersSection: View {
                 }
                 TextField("我在群里的昵称", text: $myNick).onSubmit(saveMyNick)
                 Toggle("全员禁言", isOn: Binding(get: { chat?.row.bool("muteAll") ?? false }, set: { v in act { try GroupChat.setMuteAll(chatId, v) } }))
+                Toggle("成员可以给你发私信", isOn: Binding(get: { chat?.row["groupDM"]?.bool != false }, set: { v in setDM(v) }))
             } header: {
                 Text("群资料")
             } footer: {
-                HelpNote("全员禁言开启后，只有管理员可以发言。改名、禁言、设管理员都会在群里留下一行提示，角色下一轮看得到。", title: "群资料")
+                HelpNote("全员禁言开启后，只有管理员可以发言。改名、禁言、设管理员都会在群里留下一行提示，角色下一轮看得到。成员可以给你发私信：开启时，成员可以在群里写 [私信：…]，这句落进与该成员的私聊，群里不显示；关闭后提示词中不出现这一项。不另调用接口。", title: "群资料")
             }
             Section {
                 if let chat {
@@ -179,6 +180,15 @@ struct GroupMembersSection: View {
     }
 
     private func setMembers(_ ids: [String]) { act { try GroupChat.setMembers(chatId, ids) } }
+
+    private func setDM(_ on: Bool) {
+        act {
+            guard var c = try Repo.chat(chatId) else { return }
+            c.row["groupDM"] = .bool(on)
+            c.row.touch()
+            try Repo.save(c)
+        }
+    }
 
     private func setAvatar(_ id: String) {
         act {

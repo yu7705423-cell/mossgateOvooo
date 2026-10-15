@@ -401,11 +401,11 @@ enum ChatPrompt {
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
-    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "narration", "inner", "ties"]
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties"]
 
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
@@ -441,6 +441,12 @@ enum ChatPrompt {
         }
         // 一起听、点歌、分享歌曲与歌单（网页版 capabilities.js 的 listen）。原生版直连网易云，曲库空着也能搜
         let listening = MusicListen.active(chat.id)
+        // 群里给你发私信（网页版 capabilities.js 的 dm）：群里、而且这个群开着「成员可以给你发私信」时才有（开关在群资料）
+        let dmUser = (((try? Repo.personas()) ?? []).first(where: { $0.id == chat.personaId })?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "the user"
+        cap("dm", on: chat.isGroup && chat.row["groupDM"]?.bool != false, hot: used(#"[\[【]私信"#),
+            line: "Send \(dmUser) a private message from the group: under the member's name, a line on its own, [私信：content]; it goes to their private chat and the group does not see it") {
+            Templates.render("skeleton.group-dm", ["userName": dmUser], settings: s)
+        }
         // 群昵称与群管理（网页版 capabilities.js 的 groupnick、groupadmin）：群里才有；群管理要群里有管理员
         cap("groupnick", on: chat.isGroup, hot: used("群昵称"),
             line: "Change your own group nickname: under your name, a line on its own, [改群昵称：new nickname]") {
