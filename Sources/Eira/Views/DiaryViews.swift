@@ -395,8 +395,19 @@ struct CharDiaryView: View {
             Section {
                 Button(writing ? "正在写" : "现在写一篇") { write() }.disabled(writing)
                 if let note { Text(note).font(.footnote).foregroundStyle(noteIsError ? Theme.danger : Theme.secondaryText) }
-                if let err = char?.row.string("diaryAutoError"), !err.isEmpty {
-                    Text("今天自动写日记失败：\(err)。明天到点后自动再试。").font(.footnote).foregroundStyle(Theme.danger)
+                if let c = char {
+                    let today = Diary.todayOf(c)
+                    let triedToday = c.row.string("diaryAutoAt") == today
+                    let err = c.row.string("diaryAutoError")
+                    if !Diary.isAuto(c) {
+                        Text("未开启每天自动写，开关在与该角色的会话设置中。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                    } else if triedToday && !err.isEmpty {
+                        Text("今天自动写日记失败：\(err)。明天到点后自动再试。").font(.footnote).foregroundStyle(Theme.danger)
+                    } else if triedToday && !entries.contains(where: { $0.date == today }) {
+                        Text("今天已到点给过一次机会，角色选择不写。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                    } else {
+                        Text("每天 \(Diary.hour(c)) 点之后自动写一篇（应用打开时）。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                    }
                 }
             } footer: {
                 Text("调用一次接口。")
