@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Combine
 import Foundation
 import UIKit
 import UserNotifications
@@ -6,6 +7,16 @@ import UserNotifications
 extension Notification.Name {
     /// 某段会话在界面之外多了消息（主动发起对话、后台消息取回）。正开着的页面据此刷新。
     static let eiraChatChanged = Notification.Name("eira.chatChanged")
+}
+
+extension NotificationCenter {
+    /// 不在看那段会话的地方（主屏角标、会话列表、小组件）用这一路：一轮回复里连着发好几次，
+    /// 停下来 0.3 秒再刷新一次，不每次都把整张列表重读一遍
+    static var chatChangesSettled: AnyPublisher<Notification, Never> {
+        NotificationCenter.default.publisher(for: .eiraChatChanged)
+            .debounce(for: .milliseconds(300), scheduler: RunLoop.main)
+            .eraseToAnyPublisher()
+    }
 }
 
 /// 本地通知（路线图阶段 4）。

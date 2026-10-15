@@ -469,7 +469,7 @@ struct RecentChatsWidget: View {
         .contentShape(Rectangle())
         .onTapGesture { open("chat") }
         .task { load() }
-        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in load() }
+        .onReceive(NotificationCenter.chatChangesSettled) { _ in load() }
     }
 
     private func load() {

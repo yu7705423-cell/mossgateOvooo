@@ -112,7 +112,7 @@ struct ChatListView: View {
             }
             .onAppear(perform: reload)
             .refreshable { reload() }
-            .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
+            .onReceive(NotificationCenter.chatChangesSettled) { _ in reload() }
             .confirmationDialog("删除这段会话及其全部消息，角色的记忆保留。无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { chat in
                 Button("删除", role: .destructive) {

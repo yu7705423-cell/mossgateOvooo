@@ -43,7 +43,7 @@ struct RootView: View {
         .fullScreenCover(isPresented: $onboarding, onDismiss: refresh) {
             OnboardingView { onboarding = false; settings.reload() }.eiraLook()
         }
-        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in unread = Shell.chatUnread() }
+        .onReceive(NotificationCenter.chatChangesSettled) { _ in unread = Shell.chatUnread() }
         .preferredColorScheme(AppearanceView.scheme(settings.s))
     }
 

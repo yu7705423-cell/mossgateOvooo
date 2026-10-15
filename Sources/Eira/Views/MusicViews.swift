@@ -872,10 +872,15 @@ struct MusicCharSection: View {
 /// 会话里的一张歌曲卡片：点一下就放。
 struct SongCard: View {
     let message: Message
-    @ObservedObject private var player = MusicPlayer.shared
+    /// 歌只在 songId 变了时读一次库：放歌时播放器每秒一变，不让每张卡跟着查库
+    @State private var song: MusicLibrary.Song?
+
+    init(message: Message) {
+        self.message = message
+        _song = State(initialValue: MusicLibrary.song(message.row.string("songId")))
+    }
 
     var body: some View {
-        let song = MusicLibrary.song(message.row.string("songId"))
         let state = message.row.string("songState")
         let q = MusicLibrary.splitQuery(message.row.string("songQuery"))
         HStack(spacing: Theme.gap) {
@@ -886,17 +891,26 @@ struct SongCard: View {
                     .font(.footnote).foregroundStyle(Theme.secondaryText).lineLimit(1)
             }
             Spacer(minLength: 0)
-            if let song {
-                Button { player.playOne(song) } label: {
-                    Image(systemName: player.current?.id == song.id && player.playing ? "pause.circle" : "play.circle").font(.title2)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("播放")
-            }
+            if let song { SongCardPlay(song: song) }
         }
         .padding(Theme.pad)
         .frame(minWidth: 200, alignment: .leading)
         .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        .task(id: message.row.string("songId") + "|" + state) { song = MusicLibrary.song(message.row.string("songId")) }
+    }
+}
+
+/// 卡片上的播放键：只有它观察播放器
+private struct SongCardPlay: View {
+    let song: MusicLibrary.Song
+    @ObservedObject private var player = MusicPlayer.shared
+
+    var body: some View {
+        Button { player.playOne(song) } label: {
+            Image(systemName: player.current?.id == song.id && player.playing ? "pause.circle" : "play.circle").font(.title2)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("播放")
     }
 }
 

@@ -54,7 +54,7 @@ struct ChatAppView: View {
             notifier.openChat = nil
             open(id)
         }
-        .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in unread = Shell.chatUnread() }
+        .onReceive(NotificationCenter.chatChangesSettled) { _ in unread = Shell.chatUnread() }
     }
 
     private func open(_ chatId: String) {

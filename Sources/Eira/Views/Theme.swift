@@ -145,6 +145,13 @@ struct LocalImage: View {
     var fit = false
     @State private var image: UIImage?
 
+    init(id: String, maxPixel: CGFloat = 600, fit: Bool = false) {
+        self.id = id
+        self.maxPixel = maxPixel
+        self.fit = fit
+        _image = State(initialValue: Images.cached(id, maxPixel: maxPixel))
+    }
+
     var body: some View {
         Group {
             if let image {
@@ -154,7 +161,10 @@ struct LocalImage: View {
                 Theme.placeholder
             }
         }
-        .task(id: id) { image = await Images.load(id, maxPixel: maxPixel) }
+        .task(id: id) {
+            if let hit = Images.cached(id, maxPixel: maxPixel) { image = hit; return }
+            image = await Images.load(id, maxPixel: maxPixel)
+        }
     }
 }
 

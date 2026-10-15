@@ -485,7 +485,7 @@ struct ConversationView: View {
     /// 群里输入「@」时，输入框上方一排可以提到的成员
     @ViewBuilder private var mentionBar: some View {
         if let chat, chat.isGroup {
-            let list = GroupChat.mentionCandidates(draft, chat: chat, members: GroupChat.members(chat))
+            let list = GroupChat.mentionCandidates(draft, chat: chat, members: chat.characterIds.compactMap { members[$0] })
             if !list.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: Theme.sp2) {

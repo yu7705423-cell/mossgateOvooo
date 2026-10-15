@@ -78,6 +78,11 @@ enum Images {
         return c
     }()
 
+    /// 已经解码过的那一张。画的时候先拿它，不用等一帧、也不先闪一下占位
+    static func cached(_ id: String, maxPixel: CGFloat) -> UIImage? {
+        id.isEmpty ? nil : cache.object(forKey: "\(id)@\(Int(maxPixel))" as NSString)
+    }
+
     /// 按 maxPixel 缩小着解码。读不到返回 nil。
     static func load(_ id: String, maxPixel: CGFloat) async -> UIImage? {
         guard !id.isEmpty else { return nil }
