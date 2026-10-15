@@ -120,7 +120,8 @@ struct LorebookView: View {
                         }
                     }
                 }
-                Button("添加条目", action: addEntry)
+                Button("添加条目") { addEntry(card: false) }
+                if book?.purpose == "chat" { Button("添加卡片") { addEntry(card: true) } }
             }
             Section {
                 Button("删除这本世界书", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
@@ -162,10 +163,10 @@ struct LorebookView: View {
         }
     }
 
-    private func addEntry() {
+    private func addEntry(card: Bool) {
         do {
             saveHeader()
-            let id = try Knowledge.addEntry(bookId: bookId)
+            let id = try Knowledge.addEntry(bookId: bookId, card: card)
             reload()
             editingEntry = Target(id: id)
         } catch {
@@ -184,7 +185,7 @@ enum LoreEntryText {
     static func summary(_ e: LoreEntry) -> String {
         var parts: [String] = []
         if !e.enabled { parts.append("已关闭") }
-        if e.isCard { parts.append("网页卡片") }
+        if e.isCard { parts.append("卡片") }
         parts.append(e.constant ? "常驻" : (e.keys.isEmpty ? "未填关键词" : "关键词触发"))
         parts.append(e.part == "before" ? "角色卡前" : "角色卡后")
         if e.depth > 0 { parts.append("插在倒数第 \(e.depth) 条之前") }
@@ -212,15 +213,28 @@ struct LoreEntryEditView: View {
     @State private var depth = 0
     @State private var confirmDelete = false
     @State private var problem: String?
+    // HTML 卡片（type 为 card 的条目）
+    @State private var card: [String: JSONValue] = [:]
+    @State private var cardHtml = ""
+    @State private var sample = ""
+    @State private var preview = ""
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
         Form {
             if entry?.isCard == true {
-                Section { Text("这是网页版的网页卡片条目，不作为设定注入。原生版暂不支持编辑卡片内容。").foregroundStyle(Theme.secondaryText) }
-            }
-            Section {
-                TextField("标题（只给自己看）", text: $comment)
-                TextField("内容", text: $content, axis: .vertical).lineLimit(4...30)
+                Section {
+                    TextField("卡片名（角色写 [卡片：卡片名]）", text: $comment)
+                    TextField("说明（写进提示词，告诉角色这张卡片是什么）", text: $content, axis: .vertical).lineLimit(2...10)
+                } footer: {
+                    HelpNote("卡片条目不作为设定注入。常驻的或最近几条消息里出现关键词时，卡片名、说明与字段写进提示词，角色按字段填写，应用按模板画出来。模板本身不进提示词。", title: "HTML 卡片")
+                }
+                cardSections
+            } else {
+                Section {
+                    TextField("标题（只给自己看）", text: $comment)
+                    TextField("内容", text: $content, axis: .vertical).lineLimit(4...30)
+                }
             }
             Section {
                 Toggle("启用", isOn: $enabled)
@@ -236,6 +250,7 @@ struct LoreEntryEditView: View {
             } footer: {
                 HelpNote("常驻的每轮都注入。其余的在最近几条消息里出现任一关键词时注入；填了次要关键词的，还要再出现其中一个。")
             }
+            if entry?.isCard != true {
             Section {
                 Picker("位置", selection: $part) {
                     Text("角色卡前").tag("before")
@@ -248,6 +263,7 @@ struct LoreEntryEditView: View {
                 Text("位置")
             } footer: {
                 HelpNote("优先级大的排在前面；优先级相同时按顺序从小到大。")
+            }
             }
             Section { Button("删除这条设定", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
@@ -274,8 +290,84 @@ struct LoreEntryEditView: View {
             comment = e.comment; keys = e.keys.joined(separator: "、"); secondaryKeys = e.secondaryKeys.joined(separator: "、")
             content = e.content; enabled = e.enabled; constant = e.constant; caseSensitive = e.caseSensitive
             probability = Int(e.probability); priority = Int(e.priority); order = Int(e.order); part = e.part; depth = e.depth
+            card = e.json["card"]?.object ?? [:]
+            cardHtml = card["html"]?.string ?? ""
+            sample = card["sampleText"]?.string ?? ""
         } catch {
             problem = error.localizedDescription
+        }
+    }
+
+    // MARK: - 卡片
+
+    private var cardFields: [HtmlCard.Field] { HtmlCard.fields(cardHtml, card["fields"]?.object ?? [:]) }
+
+    private var cardToSave: [String: JSONValue] {
+        var c = card
+        c["html"] = .string(cardHtml)
+        c["sampleText"] = .string(sample)
+        return c
+    }
+
+    private func cfg(_ key: String) -> [String: JSONValue] { card["fields"]?[key]?.object ?? [:] }
+
+    private func setCfg(_ key: String, _ name: String, _ v: JSONValue?) {
+        var all = card["fields"]?.object ?? [:]
+        var one = all[key]?.object ?? [:]
+        one[name] = v
+        all[key] = .object(one)
+        card["fields"] = .object(all)
+    }
+
+    @ViewBuilder private var cardSections: some View {
+        Section {
+            TextField("模板（HTML 与 CSS）", text: $cardHtml, axis: .vertical)
+                .lineLimit(6...40)
+                .font(.system(.footnote, design: .monospaced))
+                .autocorrectionDisabled()
+                .textInputAutocapitalization(.never)
+            ForEach(HtmlCard.problems(cardHtml, images: card["images"]?.bool == true), id: \.self) { p in
+                Text(p).font(.footnote).foregroundStyle(Theme.danger)
+            }
+            Picker("宽度", selection: Binding(get: { card["width"]?.string == "full" ? "full" : "bubble" }, set: { card["width"] = .string($0) })) {
+                Text("气泡宽").tag("bubble")
+                Text("整行宽").tag("full")
+            }
+            Picker("比例", selection: Binding(get: { card["ratio"]?.string ?? "4:3" }, set: { card["ratio"] = .string($0) })) {
+                Text("4:3").tag("4:3"); Text("1:1").tag("1:1"); Text("3:4").tag("3:4")
+                Text("横条").tag("strip"); Text("长条").tag("long"); Text("自定高度").tag("custom")
+            }
+            if card["ratio"]?.string == "custom" {
+                Stepper("高度 \(Int(card["height"]?.number ?? 300))", value: Binding(get: { Int(card["height"]?.number ?? 300) }, set: { card["height"] = .number(Double($0)) }), in: 40...1200, step: 10)
+            }
+            Toggle("允许外部图片", isOn: Binding(get: { card["images"]?.bool == true }, set: { card["images"] = .bool($0) }))
+        } header: { Text("模板") } footer: {
+            HelpNote("占位符：{{字段}}；列表 {{#列表}}…{{/列表}}，列表里的 {{.}} 或 {{子字段}}；为空时显示 {{^字段}}…{{/字段}}。应用自己填的有 {{char}} {{user}} {{char_avatar}} {{user_avatar}}。卡片只显示 HTML 与 CSS，不运行脚本、不联网；占位符不能放在网址、样式表里。允许外部图片后，模板里写死的 https 图片可以显示，占位符仍不能放进网址。", title: "卡片模板")
+        }
+        let fields = cardFields
+        if !fields.isEmpty {
+            Section {
+                ForEach(fields, id: \.name) { f in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(f.list ? "\(f.name)（列表\(f.sub.isEmpty ? "" : "：" + f.sub.joined(separator: "｜"))）" : f.name).font(.footnote)
+                        TextField("说明（英文，写进提示词）", text: Binding(get: { cfg(f.name)["desc"]?.string ?? "" }, set: { setCfg(f.name, "desc", $0.isEmpty ? nil : .string($0)) }))
+                        TextField("字数上限（不填为不限）", text: Binding(get: { cfg(f.name)["max"]?.number.map { String(Int($0)) } ?? "" },
+                                                                 set: { setCfg(f.name, "max", Int($0).map { .number(Double($0)) }) }))
+                            .keyboardType(.numberPad)
+                    }
+                }
+            } header: { Text("字段") }
+        }
+        Section {
+            TextField("示例（一行一个「字段：值」）", text: $sample, axis: .vertical).lineLimit(3...12)
+            let size = HtmlCard.size(card)
+            CardWebView(html: preview).frame(width: size.w, height: size.h).frame(maxWidth: .infinity)
+        } header: { Text("预览") }
+        .task(id: "\(cardHtml)|\(sample)|\(card["width"]?.string ?? "")|\(card["ratio"]?.string ?? "")|\(card["images"]?.bool == true)|\(scheme == .dark)") {
+            var c = cardToSave
+            c["fields"] = card["fields"]
+            let values = HtmlCard.parseValues(sample, fields: HtmlCard.fields(cardHtml, card["fields"]?.object ?? [:]))
+            preview = HtmlCard.doc(c, values: values, sys: ["char": "角色", "user": "我"], dark: scheme == .dark)
         }
     }
 
@@ -289,7 +381,7 @@ struct LoreEntryEditView: View {
                 "caseSensitive": .bool(caseSensitive), "probability": .number(Double(probability)),
                 "priority": .number(Double(priority)), "order": .number(Double(order)),
                 "part": .string(part), "depth": .number(Double(depth)),
-            ])
+            ].merging(entry?.isCard == true ? ["card": .object(cardToSave)] : [:]) { a, _ in a })
             dismiss()
         } catch {
             problem = "保存失败：\(error.localizedDescription)"

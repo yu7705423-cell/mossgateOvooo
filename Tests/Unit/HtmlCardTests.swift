@@ -116,4 +116,23 @@ final class HtmlCardTests: StoreTestCase {
         XCTAssertEqual(filled["昵称"], .string("林"))
         XCTAssertEqual(filled["正文"], .string("下雨"))
     }
+
+    /// 世界书里新建一张卡片：带着网页版的默认值，改模板时其余字段原样留着；挂上角色、关键词命中才进提示词，模板不进
+    func testCreateCardEntry() throws {
+        let b = try Knowledge.createBook(name: "卡片本")
+        let id = try Knowledge.addEntry(bookId: b.id, card: true)
+        try Knowledge.updateEntry(bookId: b.id, entryId: id, [
+            "comment": .string("便签"), "content": .string("A sticky note."), "keys": .array([.string("便签")]),
+            "card": .object(["html": .string("<div class=n>{{内容}}</div>"), "fields": .object(["内容": .object(["max": .number(20)])]),
+                             "width": .string("bubble"), "ratio": .string("strip"), "images": .bool(false), "sampleText": .string("")]),
+        ])
+        let e = try XCTUnwrap(Knowledge.book(b.id)?.entries.first { $0.id == id })
+        XCTAssertTrue(e.isCard)
+        try Knowledge.setAttached(true, bookId: b.id, charId: "char_a")
+        _ = try Repo.append(Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "写个便签"))
+        let built = try ChatPrompt.build(chat: XCTUnwrap(Repo.chat("chat_a")), char: XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue(built.system.contains("· 便签: A sticky note."))
+        XCTAssertTrue(built.system.contains("内容 (up to 20 characters)"))
+        XCTAssertFalse(built.system.contains("class=n"))
+    }
 }

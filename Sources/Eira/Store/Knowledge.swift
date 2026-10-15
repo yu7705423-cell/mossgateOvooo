@@ -98,13 +98,20 @@ enum Knowledge {
     }
 
     /// 新条目，默认值照网页版 blankEntry。
-    static func addEntry(bookId: String) throws -> String {
+    /// card：新建一张 HTML 卡片（网页版 lorefile 的 card 默认值），不作为设定注入
+    static func addEntry(bookId: String, card: Bool = false) throws -> String {
         let id = Ids.make("e")
-        let entry: JSONValue = .object([
+        var o: [String: JSONValue] = [
             "id": .string(id), "comment": .string(""), "keys": .array([]), "secondaryKeys": .array([]), "content": .string(""),
             "enabled": .bool(true), "constant": .bool(false), "priority": .number(100), "order": .number(0),
             "part": .string("before"), "depth": .number(0), "caseSensitive": .bool(false), "probability": .number(100),
-        ])
+        ]
+        if card {
+            o["type"] = .string("card")
+            o["card"] = .object(["html": .string(""), "fields": .object([:]), "width": .string("bubble"), "ratio": .string("4:3"),
+                                 "images": .bool(false), "sampleText": .string("")])
+        }
+        let entry: JSONValue = .object(o)
         try mutateEntries(bookId) { $0.append(entry) }
         return id
     }
