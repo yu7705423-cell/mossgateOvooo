@@ -22,6 +22,7 @@ struct DailyHomeView: View {
             } header: { GroupTitle("今天") }
             .listRowSeparator(.hidden)
             Section {
+                NavigationLink { UserSchedView() } label: { IconRow(title: "我的日程", icon: "calendar") }
                 NavigationLink { FoodRegionsView() } label: { IconRow(title: "吃什么", icon: "cup") }
                 NavigationLink { EventLibraryView() } label: { IconRow(title: "事件库", icon: "spark", value: "共 \(eventCount) 条") }
             } footer: {

@@ -259,6 +259,9 @@ enum DayPlan {
                 }.joined(separator: "\n"))
             }
         }
+        // 你今天的日程（网页版 4.321）：开关在「我的日程」页，默认关；不给这个角色看的不带
+        let mine = UserSched.forDayPlan(char, personaId: chat?.personaId ?? "", settings: s)
+        if !mine.isEmpty { parts.append(mine) }
         return parts.isEmpty ? "" : "## Where things stand\n" + parts.joined(separator: "\n\n")
     }
 

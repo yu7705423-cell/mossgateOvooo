@@ -62,6 +62,13 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "我的日程往前读几天", value: model.number("userSchedBack", 1), unit: "天", placeholder: "0")
+                NumberRow(title: "我的日程往后读几天", value: model.number("userSchedAhead", 0), unit: "天", placeholder: "0")
+            } footer: {
+                HelpNote("「日常 - 我的日程」写进对话时读哪几天：今天总在里面，另加往前与往后这么多天。天数越多，提示词越长。")
+            }
+
+            Section {
                 NumberRow(title: "日记带最近几天", value: model.number("diaryDays", 2), unit: "天", placeholder: "全部")
             } footer: {
                 HelpNote("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
