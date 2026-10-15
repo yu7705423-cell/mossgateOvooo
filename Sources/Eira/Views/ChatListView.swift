@@ -183,10 +183,18 @@ func shortTime(_ millis: Double) -> String {
     guard millis > 0 else { return "" }
     let d = Date(millis: millis)
     let cal = Calendar.current
-    let f = DateFormatter()
-    f.locale = Locale(identifier: "zh_CN")
-    if cal.isDateInToday(d) { f.dateFormat = "HH:mm" }
-    else if cal.isDate(d, equalTo: Date(), toGranularity: .year) { f.dateFormat = "M月d日" }
-    else { f.dateFormat = "yyyy年M月d日" }
-    return f.string(from: d)
+    if cal.isDateInToday(d) { return ShortTime.hm.string(from: d) }
+    if cal.isDate(d, equalTo: Date(), toGranularity: .year) { return ShortTime.md.string(from: d) }
+    return ShortTime.ymd.string(from: d)
+}
+
+/// 列表每一行都要算，格式化器各建一个就够
+private enum ShortTime {
+    static func make(_ fmt: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = fmt
+        return f
+    }
+    static let hm = make("HH:mm"), md = make("M月d日"), ymd = make("yyyy年M月d日")
 }

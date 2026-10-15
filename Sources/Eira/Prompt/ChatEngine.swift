@@ -156,9 +156,19 @@ enum ChatEngine {
 
     /// 最后一轮：最后一条是角色说的、带 turnId 时，末尾连着的、同一个 turnId 的那几条。失败的那一条不算。
     static func lastTurn(chatId: String) throws -> Turn? {
-        let all = try Repo.messages(chatId: chatId).filter { !$0.isError }
-        guard let last = all.last, last.role == .char, !last.turnId.isEmpty else { return nil }
-        let rows = Array(all.reversed().prefix { $0.turnId == last.turnId }.reversed())
+        // 只读末尾一段：最后一轮多半就几条。读到的整段都是这一轮时再往前多读，读到头为止
+        var limit = 120
+        var all: [Message] = []
+        var rows: [Message] = []
+        while true {
+            let raw = try Repo.messages(chatId: chatId, limit: limit)
+            all = raw.filter { !$0.isError }
+            guard let last = all.last, last.role == .char, !last.turnId.isEmpty else { return nil }
+            rows = Array(all.reversed().prefix { $0.turnId == last.turnId }.reversed())
+            if raw.count < limit || rows.count < all.count { break }
+            limit *= 4
+        }
+        guard let last = all.last else { return nil }
         guard let head = rows.first(where: { $0.row["swipes"] != nil || $0.row["raw"] != nil }) ?? rows.first else { return nil }
         var swipes = head.row["swipes"]?.array?.compactMap(\.string) ?? []
         if swipes.isEmpty, let raw = head.row["raw"]?.string { swipes = [raw] }

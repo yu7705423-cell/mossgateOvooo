@@ -71,9 +71,20 @@ enum RegexRules {
     static func compile(_ r: Rule) -> (NSRegularExpression?, String) {
         guard !r.find.isEmpty else { return (nil, "") }
         let pattern = r.isRegex ? r.find : NSRegularExpression.escapedPattern(for: r.find)
-        do { return (try NSRegularExpression(pattern: pattern, options: r.caseSensitive ? [] : [.caseInsensitive]), "") }
-        catch { return (nil, error.localizedDescription) }
+        // 每一行消息、每次画都要套一遍：编译过的按「写法 + 大小写」记住，不重复编译
+        let key = (r.caseSensitive ? "1" : "0") + pattern
+        cacheLock.lock(); defer { cacheLock.unlock() }
+        if let hit = cache[key] { return hit }
+        let out: (NSRegularExpression?, String)
+        do { out = (try NSRegularExpression(pattern: pattern, options: r.caseSensitive ? [] : [.caseInsensitive]), "") }
+        catch { out = (nil, error.localizedDescription) }
+        if cache.count > 200 { cache.removeAll() }
+        cache[key] = out
+        return out
     }
+
+    private static let cacheLock = NSLock()
+    nonisolated(unsafe) private static var cache: [String: (NSRegularExpression?, String)] = [:]
 
     /// 套一条。普通文字那一档，替换里的 $ 原样写出，不当成引用；正则那一档 $& 换成整段（JS 的写法）。
     static func apply(_ r: Rule, _ text: String) -> String {

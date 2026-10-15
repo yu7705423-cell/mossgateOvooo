@@ -25,12 +25,15 @@ enum Receipt {
         return cur.createdAt - prev.createdAt >= sepGap
     }
 
-    private static func hm(_ d: Date) -> String {
+    // 每一行消息都要算一次，格式化器只建一个（建一个 DateFormatter 的开销比格式化本身大得多）
+    private static let hmFormatter: DateFormatter = {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm"
-        return f.string(from: d)
-    }
+        return f
+    }()
+
+    private static func hm(_ d: Date) -> String { hmFormatter.string(from: d) }
 
     /// 分隔行上的时间：今天只写时分，昨天写「昨天」，一周内写星期，今年写月日，更早的带年份
     static func sepOf(_ ms: Double, now: Date = Date()) -> String {

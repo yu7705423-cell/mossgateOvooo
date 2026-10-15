@@ -33,6 +33,10 @@ final class Database: @unchecked Sendable {
 
     private var handle: OpaquePointer?
     private let queue = DispatchQueue(label: "eira.database")
+    /// kv 与媒体登记的内存副本，只在 queue 上读写。设置每画一次界面要读好几次，每次都查库、解析整份 JSON 太慢；
+    /// 所有写 kv 与 media 的路径都在本文件里，写的时候一并更新或清掉
+    private var kvCache: [String: JSONValue?] = [:]
+    private var mediaCache: [String: String?] = [:]
 
     init(url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -207,8 +211,10 @@ final class Database: @unchecked Sendable {
                 try exec("DELETE FROM media")
                 try run("DELETE FROM kv WHERE k IN (?, ?)", [KVKey.persona, KVKey.layout])
                 try exec("COMMIT")
+                kvCache = [:]; mediaCache = [:]
             } catch {
                 try? exec("ROLLBACK")
+                kvCache = [:]; mediaCache = [:]
                 throw error
             }
         }
@@ -218,16 +224,20 @@ final class Database: @unchecked Sendable {
 
     func kv(_ key: String) throws -> JSONValue? {
         try queue.sync {
-            try query("SELECT v FROM kv WHERE k = ?", [key]) { stmt in
+            if let hit = kvCache[key] { return hit }
+            let v = try query("SELECT v FROM kv WHERE k = ?", [key]) { stmt in
                 try JSONValue.parse(Self.blob(stmt, 0))
             }.first
+            kvCache[key] = .some(v)
+            return v
         }
     }
 
     func setKV(_ key: String, _ value: JSONValue) throws {
         let data = try value.encoded()
         try queue.sync {
-            try run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", [key, data])
+            do { try run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", [key, data]); kvCache[key] = .some(value) }
+            catch { kvCache[key] = nil; throw error }
         }
     }
 
@@ -235,9 +245,14 @@ final class Database: @unchecked Sendable {
 
     func mediaExt(kind: String, id: String) throws -> String? {
         try queue.sync {
-            try query("SELECT ext FROM media WHERE kind = ? AND id = ?", [kind, id]) { stmt in
+            let key = kind + "/" + id
+            if let hit = mediaCache[key] { return hit }
+            let v = try query("SELECT ext FROM media WHERE kind = ? AND id = ?", [kind, id]) { stmt in
                 Self.text(stmt, 0)
             }.first
+            // 没登记的不记：图片可能下一刻就存进来
+            if let v { mediaCache[key] = .some(v) }
+            return v
         }
     }
 
@@ -245,6 +260,7 @@ final class Database: @unchecked Sendable {
     func registerMedia(kind: String, id: String, ext: String, bytes: Int) throws {
         try queue.sync {
             try run("INSERT OR REPLACE INTO media (kind, id, ext, bytes) VALUES (?, ?, ?, ?)", [kind, id, ext, bytes])
+            mediaCache[kind + "/" + id] = .some(ext)
         }
     }
 
@@ -258,10 +274,13 @@ final class Database: @unchecked Sendable {
             do {
                 try exec("DELETE FROM records")
                 try exec("DELETE FROM media")
+                kvCache = [:]; mediaCache = [:]
                 try body(Batch(db: self))
                 try exec("COMMIT")
+                kvCache = [:]; mediaCache = [:]
             } catch {
                 try? exec("ROLLBACK")
+                kvCache = [:]; mediaCache = [:]
                 throw error
             }
         }

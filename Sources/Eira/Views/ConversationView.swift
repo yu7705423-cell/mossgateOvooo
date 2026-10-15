@@ -22,7 +22,7 @@ struct ConversationView: View {
     /// 一次画多少条：设置里的 chatPage（默认 60，0 为全画），往上翻按同样的数继续（网页版第 13 条：默认值不是上限）
     @State private var pageSize = ConversationView.pageStep
     static var pageStep: Int {
-        let n = Int(AppSettings.load().num("chatPage", 60))
+        let n = Int(SettingsModel.shared.s.num("chatPage", 60))
         return n > 0 ? n : 1_000_000
     }
     @State private var hasMore = false
@@ -83,11 +83,11 @@ struct ConversationView: View {
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
-    @ObservedObject private var music = MusicPlayer.shared
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
+    private let dueTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
         withEditors(withPanels(page))
@@ -174,7 +174,7 @@ struct ConversationView: View {
     /// 会话页上弹出的那几样（拆开写：整页挂在一个表达式上，编译器推断不过来）
     private func withPanels<V: View>(_ base: V) -> some View {
         base
-        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in checkDue() }
+        .onReceive(dueTimer) { _ in checkDue() }
         .onReceive(NotificationCenter.default.publisher(for: .eiraSkinChanged)) { _ in
             skin = Skins.look(Skins.of(try? Repo.chat(chatId)))
         }
@@ -358,7 +358,8 @@ struct ConversationView: View {
 
     private var composer: some View {
         VStack(spacing: 0) {
-            if music.listenChat == chatId { ListenBar(chatId: chatId) }
+            // 一起听那一条单独观察播放器：整页观察的话，放歌时每秒整页消息重画一遍
+            ListenBarIfOn(chatId: chatId)
             if let q = quoting {
                 HStack {
                     Text("\(q.role == .user ? (me?.name ?? "我") : (speaker(of: q)?.displayName ?? "对方"))：\(q.content)")
@@ -549,7 +550,7 @@ struct ConversationView: View {
             // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
             if chat?.isGroup == false {
                 panelButton("headphone", "一起听") {
-                    do { try music.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
+                    do { try MusicPlayer.shared.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
                 }
                 panelButton("wallet", "转账") { composing = .transfer }
                 panelButton("gift", "礼物") { composing = .gift }
@@ -847,6 +848,8 @@ struct ConversationView: View {
         var statusItems: [String: StatusBar.Item] = [:]
         /// 被拒收的那几条下面写的一行（好友与拉黑）
         var rejects: [String: String] = [:]
+        var innerCard = false
+        var meAvatar = ""
     }
 
     private func rowContext() -> RowContext {
@@ -862,7 +865,9 @@ struct ConversationView: View {
                                    uniquingKeysWith: { _, b in b }),
             firstOfTurn: Dictionary(messages.filter { !$0.turnId.isEmpty }.map { ($0.turnId, $0.id) }, uniquingKeysWith: { a, _ in a }),
             statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
-            rejects: Ties.notes(messages, chat: chat))
+            rejects: Ties.notes(messages, chat: chat),
+            innerCard: chat.map { InnerVoice.style($0, settings: st) == "card" } ?? false,
+            meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""))
     }
 
     /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
@@ -887,7 +892,8 @@ struct ConversationView: View {
             }
             let status = statusFor(m, ctx)
             if let status, status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.bottom, Theme.sp2) }
-            messageRow(m, ctx)
+            // 行的内容没变就不重画（打字、计时器等让整页重算时，几十行气泡不跟着重算）
+            messageRow(m, ctx).equatable()
             if let status, !status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.top, Theme.sp2) }
         }
         // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
@@ -906,12 +912,12 @@ struct ConversationView: View {
                           stamp: stamp,
                           stampBelow: ctx.stampMode == "below",
                           read: read,
-                          meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""), meName: me?.name ?? "我",
+                          meAvatar: ctx.meAvatar, meName: me?.name ?? "我",
                           latestTurn: ctx.latestTurn,
                           translateLang: chat?.row.string("translateTo") ?? "",
                           quoteName: quoteName(of: m),
                           speakerName: groupName(of: m),
-                          innerCard: chat.map { InnerVoice.style($0) == "card" } ?? false,
+                          innerCard: ctx.innerCard,
                           narrColor: look.narr,
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
@@ -1436,7 +1442,17 @@ struct EditMessageView: View {
 
 /// 一条消息。按 kind 画；不认识的 kind 居中显示它的 content（协议文字，和网页版旧版的兜底一致）。
 /// 长按出菜单（系统的上下文菜单，贴着这一条弹出，网页版第 23 条）。
-struct MessageRow: View {
+struct MessageRow: View, Equatable {
+    /// 只比较画面用到的数据；回调每次都是新的闭包，比不了，也不影响画出来的样子
+    static func == (a: MessageRow, b: MessageRow) -> Bool {
+        a.message == b.message && a.char == b.char && a.showName == b.showName && a.stamp == b.stamp
+            && a.stampBelow == b.stampBelow && a.read == b.read && a.meAvatar == b.meAvatar && a.meName == b.meName
+            && a.latestTurn == b.latestTurn && a.translateLang == b.translateLang && a.quoteName == b.quoteName
+            && a.speakerName == b.speakerName && a.innerCard == b.innerCard && a.narrColor == b.narrColor
+            && a.charFace == b.charFace && a.rejectNote == b.rejectNote && a.skin == b.skin
+            && a.picking == b.picking && a.picked == b.picked && (a.onRetry == nil) == (b.onRetry == nil)
+    }
+
     enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum }
 
     let message: Message
@@ -2068,4 +2084,14 @@ struct StickerView: View {
 extension Notification.Name {
     /// 点了角色头像：展开或收起那一轮的心声（object 是 turnId，没有 turnId 时是消息 id）
     static let eiraInnerToggle = Notification.Name("eira.innerToggle")
+}
+
+/// 一起听时输入栏上方那一条。单独观察播放器，播放进度每秒一变只重画这一小条
+private struct ListenBarIfOn: View {
+    let chatId: String
+    @ObservedObject private var music = MusicPlayer.shared
+
+    var body: some View {
+        if music.listenChat == chatId { ListenBar(chatId: chatId) }
+    }
 }
