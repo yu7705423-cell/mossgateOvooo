@@ -34,14 +34,14 @@ final class HolidayTests: StoreTestCase {
         XCTAssertEqual(Holidays.dateOf(try rule("intl", "valentine"), 2027), "2027-02-14")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "national"), 2026), "2026-10-01")
         // 农历
-        XCTAssertEqual(Holidays.dateOf(try rule("cn", "spring"), 2027), "2027-02-07")
+        XCTAssertEqual(Holidays.dateOf(try rule("cn", "spring"), 2027), "2027-02-06", "朔在北京时间 2 月 6 日 23:56；浏览器的 ICU 算成 2 月 7 日，系统日历是对的")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "spring"), 2026), "2026-02-17")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "dragon"), 2026), "2026-06-19")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "midautumn"), 2028), "2028-10-03")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "laba"), 2027), "2027-01-15")
         XCTAssertEqual(Holidays.dateOf(try rule("kr", "buddha"), 2026), "2026-05-24")
         // 除夕：正月初一的前一天
-        XCTAssertEqual(Holidays.dateOf(try rule("cn", "eve"), 2027), "2027-02-06")
+        XCTAssertEqual(Holidays.dateOf(try rule("cn", "eve"), 2027), "2027-02-05")
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "eve"), 2028), "2028-01-25")
         // 清明、复活节、第几个星期几
         XCTAssertEqual(Holidays.dateOf(try rule("cn", "qingming"), 2026), "2026-04-05")
@@ -55,7 +55,7 @@ final class HolidayTests: StoreTestCase {
         XCTAssertEqual(Holidays.dateOf(try rule("us", "memorial"), 2027), "2027-05-31")
         XCTAssertEqual(Holidays.dateOf(try rule("jp", "seijin"), 2028), "2028-01-10")
         // 界面上的农历写法，含闰月
-        XCTAssertEqual(Holidays.lunarLabel("2027-02-06"), "农历腊月三十")
+        XCTAssertEqual(Holidays.lunarLabel("2027-02-06"), "农历正月初一")
         XCTAssertEqual(Holidays.lunarLabel("2025-07-25"), "农历闰六月初一")
     }
 
@@ -66,14 +66,14 @@ final class HolidayTests: StoreTestCase {
         Holidays.setRegion("kr", true, &s)
         XCTAssertEqual(Holidays.cfg(s).regions, ["intl", "cn", "kr"])
         let today = try XCTUnwrap(Holidays.Day.parse("2027-02-03"))
-        XCTAssertEqual(Holidays.around(today, s).map(\.name), ["除夕（中国）"])
-        let hits = Holidays.around(try XCTUnwrap(Holidays.Day.parse("2027-02-07")), s)
-        XCTAssertEqual(hits.first, Holidays.Hit(name: "春节（中国、韩国）", date: "2027-02-07", left: 0))
+        XCTAssertEqual(Holidays.around(today, s).map(\.name), ["除夕（中国）", "春节（中国、韩国）"])
+        let hits = Holidays.around(try XCTUnwrap(Holidays.Day.parse("2027-02-06")), s)
+        XCTAssertEqual(hits.first, Holidays.Hit(name: "春节（中国、韩国）", date: "2027-02-06", left: 0))
         // 关掉一项：存成「地区.节日」
         let spring = try XCTUnwrap(Holidays.regions[1].list.first(where: { $0.id == "spring" }))
         Holidays.setItem("cn", spring, false, &s)
         XCTAssertEqual(s.raw["holidayOff"], .array([.string("cn.spring")]))
-        XCTAssertEqual(Holidays.around(try XCTUnwrap(Holidays.Day.parse("2027-02-07")), s).first?.name, "春节（韩国）")
+        XCTAssertEqual(Holidays.around(try XCTUnwrap(Holidays.Day.parse("2027-02-06")), s).first?.name, "春节（韩国）")
         // 自定义：无效的不写
         XCTAssertNil(Holidays.addCustom(name: " ", month: 2, day: 9, lunar: false, &s))
         XCTAssertNil(Holidays.addCustom(name: "x", month: 2, day: 31, lunar: true, &s))
@@ -84,25 +84,25 @@ final class HolidayTests: StoreTestCase {
     }
 
     func testBlockOnTheDay() throws {
-        let text = try promptText(now: at(2027, 2, 7))
+        let text = try promptText(now: at(2027, 2, 6))
         XCTAssertTrue(text.contains("[节日与纪念日]\nToday is 春节（中国）."), text)
     }
 
     func testBlockFollowingDaysAndCustom() throws {
         let custom: JSONValue = .array([.object(["id": .string("hd_x"), "name": .string("社团成立日"), "month": .number(2),
                                                  "day": .number(9), "lunar": .bool(false)])])
-        let text = try promptText(now: at(2027, 2, 4), ["holidayCustom": custom])
-        XCTAssertTrue(text.contains("[节日与纪念日]\n除夕（中国） is in 2 days, on 2027-02-06.\n春节（中国） is in 3 days, on 2027-02-07."), text)
+        let text = try promptText(now: at(2027, 2, 3), ["holidayCustom": custom])
+        XCTAssertTrue(text.contains("[节日与纪念日]\n除夕（中国） is in 2 days, on 2027-02-05.\n春节（中国） is in 3 days, on 2027-02-06."), text)
         let later = try promptText(now: at(2027, 2, 7), ["holidayCustom": custom])
         XCTAssertTrue(later.contains("社团成立日 is in 2 days, on 2027-02-09."), later)
     }
 
     func testRegionOffMeansNoBlock() throws {
-        XCTAssertFalse(try promptText(now: at(2027, 2, 7), ["holidayRegions": .array([.string("intl")])]).contains("[节日与纪念日]"))
+        XCTAssertFalse(try promptText(now: at(2027, 2, 6), ["holidayRegions": .array([.string("intl")])]).contains("[节日与纪念日]"))
     }
 
     func testItemOffMeansNoBlock() throws {
-        XCTAssertFalse(try promptText(now: at(2027, 2, 7), ["holidayOff": .array([.string("cn.spring")])]).contains("[节日与纪念日]"))
+        XCTAssertFalse(try promptText(now: at(2027, 2, 6), ["holidayOff": .array([.string("cn.spring")])]).contains("[节日与纪念日]"))
     }
 
     func testTimeOffMeansNoBlock() throws {
