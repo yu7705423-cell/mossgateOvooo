@@ -35,7 +35,10 @@ enum ChatPrompt {
 
         let scanText = scanTextOf(all, window: Int(s.num("scanWindow", 6)))
         let budget = Int(s.num("contextBudget", 0))
-        let lore = activateLore(char: char, scanText: scanText, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0)
+        // 见面时（4.269）这段会话关掉的、额外挂上的书
+        let face = Face.on(chat) && call == nil
+        let lore = activateLore(char: char, scanText: scanText, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0,
+                                books: face ? Face.books(chat) : nil)
         let memories = try visibleMemories(char: char, chat: chat, rootId: rootId, personas: personas)
         let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
         let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
@@ -47,7 +50,18 @@ enum ChatPrompt {
         let blocks = dataBlocks(chat: chat, char: char, me: me, msgs: all, lore: lore, memories: memories, recent: recent,
                                 recalled: recalled, rootId: rootId, settings: s, now: now)
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
-        P["opening"] = Templates.render("skeleton.opening", names, settings: s)
+        // 会话切到线下时（见面模式）：开场换成面对面，带上这一场的地点、时刻、情境
+        if face {
+            P["faceOpening"] = Templates.render("skeleton.face-opening", names, settings: s)
+            let info = Face.info(chat)
+            let lines = [("地点", info["place"]?.string ?? ""), ("时刻", info["at"]?.string ?? ""), ("情境", info["note"]?.string ?? "")]
+                .filter { !$0.1.trimmingCharacters(in: .whitespaces).isEmpty }.map { "\($0.0)：\($0.1)" }
+            if !lines.isEmpty { P["faceSetup"] = Templates.render("skeleton.scene-setup", ["lines": lines.joined(separator: "\n")], settings: s) }
+            let style = Templates.fill(Face.toneText(chat, s), names)
+            if !style.isEmpty { P["style"] = Templates.render("skeleton.scene-style", ["text": style], settings: s) }
+        } else {
+            P["opening"] = Templates.render("skeleton.opening", names, settings: s)
+        }
         let gender = genderPiece(char: char, me: me, names: names, settings: s)
         P["gender"] = gender
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
@@ -162,7 +176,19 @@ enum ChatPrompt {
         var out: [AIMessage] = []
         var prev: Message?
         let lastFile = ChatFiles.lastWithText(window)
+        // 线上 / 线下的分界（4.269）：窗口把分隔线裁掉了、而剩下的第一条已经是当面的，就在最前面补一条
+        if let f = window.first, !Face.isMark(f), f.kind != "beat", Face.sideOf(f) == Face.FACE {
+            out.append(AIMessage(role: .user, content: Face.markText(Face.info(chat), settings: s)))
+        }
         for raw in window {
+            // 切换那一刻落的分隔线读成标记：「以下当面」或「以下在手机上」
+            if Face.isMark(raw) {
+                out.append(AIMessage(role: .user, content: Face.sideOf(raw) == Face.FACE
+                    ? Face.markText(raw.row["face"]?.object ?? [:], settings: s)
+                    : Templates.get("skeleton.phone-mark", settings: s)))
+                prev = raw
+                continue
+            }
             // 线下正文：一律放在对方那一侧，写成「谁：正文」；进出线下各标一行（放在角色那一侧，它会照着在线上写大段散文）
             if raw.kind == "beat" {
                 if prev?.kind != "beat" || prev?.row.string("sceneId") != raw.row.string("sceneId") {
@@ -396,6 +422,8 @@ enum ChatPrompt {
             guard on, !off.contains(id) || protocolCaps.contains(id) || ownSwitchCaps.contains(id) else { return }
             guard NewFeat.capOn(id, s) else { return }
             if chat.isGroup && !groupCaps.contains(id) { return }
+            // 见面时只给当面说得通的那几样（网页版 face.CAPS）
+            if Face.on(chat) && !Face.caps.contains(id) { return }
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
         }
 
@@ -511,8 +539,8 @@ enum ChatPrompt {
             line: "Withdraw a message: write [撤回] on its own line directly after that message.") {
             Templates.render("skeleton.recall", ["post": ""], settings: s)
         }
-        // 旁白：这段会话打开了才有（网页版 capabilities.js 的 narration）
-        cap("narration", on: chat.row.bool("narration"), hot: true, line: nil) {
+        // 旁白：这段会话打开了，或者正在见面（见面时旁白必开：那是线下的写法）
+        cap("narration", on: chat.row.bool("narration") || Face.on(chat), hot: true, line: nil) {
             Templates.render("skeleton.narration", ["least": narrationLeast(s.raw["narrationMin"]?.number ?? 1)], settings: s)
         }
         let stampOn = Clock.stampOn(s)

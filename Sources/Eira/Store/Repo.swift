@@ -38,6 +38,8 @@ enum Repo {
     @discardableResult
     static func append(_ m: Message) throws -> Message {
         var out = m
+        // 会话切到线下时（见面模式，网页版 4.269）发出与生成的每条都记 side：历史里靠它分出哪段是当面
+        if out.row["side"] == nil, out.kind != "side", let c = try chat(m.chatId), Face.on(c) { out.row["side"] = .string(Face.FACE) }
         let last = try db.last(Collections.messages, where: m.chatId, limit: 1).first?.created ?? 0
         let at = max(Date().millis, last + 1)
         out.row["createdAt"] = .number(at)

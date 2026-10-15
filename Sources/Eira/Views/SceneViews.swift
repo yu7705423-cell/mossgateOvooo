@@ -830,3 +830,116 @@ struct StageLookView: View {
         }
     }
 }
+
+// MARK: - 见面模式（网页版 FaceBits，4.269）
+
+/// 在这段对话里切到线下：地点、时刻、情境，线下时的文风与世界书。都记在会话上
+struct FaceSetupView: View {
+    let chatId: String
+    var onDone: (Message?) -> Void = { _ in }
+
+    @State private var place = ""
+    @State private var at = ""
+    @State private var note = ""
+    @State private var tones: [String] = []
+    @State private var toneText = ""
+    @State private var off: [String] = []
+    @State private var extra: [String] = []
+    @State private var bar = true
+    @State private var live = false
+    @State private var presets: [Tone.Preset] = []
+    @State private var books: [Lorebook] = []
+    @State private var attached: Set<String> = []
+    @State private var problem: String?
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("地点，例如 楼下的便利店", text: $place)
+                TextField("时刻，例如 2026-01-01 周三 21:30", text: $at)
+                TextField("情境", text: $note, axis: .vertical).lineLimit(2...6)
+                HelpNote("切到线下后，这段对话里你与角色在同一处，仍然一条一条发；角色每轮至少写一行旁白，描写此刻看得见的。地点、时刻、情境作为事实写进提示词。切换那一刻在聊天里落一条分隔线，线上与线下在提示词里分开标明。转账、外卖、表情、图片、语音这些手机上的动作在线下不提供。不另外调用接口。", title: "见面")
+            } header: { Text("这一场") }
+            Section {
+                ForEach(presets) { t in
+                    Button {
+                        if tones.contains(t.id) { tones.removeAll { $0 == t.id } } else { tones.append(t.id) }
+                    } label: {
+                        HStack { Text(t.name).foregroundStyle(Theme.text); Spacer(); if tones.contains(t.id) { Image(systemName: "checkmark") } }
+                    }
+                }
+                Button {
+                    if tones.contains("custom") { tones.removeAll { $0 == "custom" } } else { tones.append("custom") }
+                } label: {
+                    HStack { Text("自己写").foregroundStyle(Theme.text); Spacer(); if tones.contains("custom") { Image(systemName: "checkmark") } }
+                }
+                if tones.contains("custom") {
+                    TextField("写这段见面要的文风", text: $toneText, axis: .vertical).lineLimit(3...8)
+                }
+                HelpNote("见面时写进提示词的文风，只管怎么写，不管角色是什么人。默认不设定。线上聊天不写入文风。", title: "见面：文风")
+            } header: { Text("文风") }
+            if !books.isEmpty {
+                Section {
+                    ForEach(books, id: \.id) { b in
+                        let mine = b.global || attached.contains(b.id)
+                        Toggle(isOn: Binding(get: { mine ? !off.contains(b.id) : extra.contains(b.id) }, set: { v in
+                            if mine { if v { off.removeAll { $0 == b.id } } else { off.append(b.id) } }
+                            else { if v { extra.append(b.id) } else { extra.removeAll { $0 == b.id } } }
+                        })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(b.name.isEmpty ? "未命名" : b.name)
+                                Text(mine ? (b.global ? "全局" : "角色已挂") : "只在见面时挂上").font(.footnote).foregroundStyle(Theme.text2)
+                            }
+                        }
+                    }
+                    HelpNote("见面时生效的世界书。角色已挂的与全局的默认生效，可以在见面时关掉；其余的书可以只在见面时挂上。", title: "见面：世界书")
+                } header: { Text("世界书") }
+            }
+            Section {
+                Toggle("顶部提示条", isOn: $bar)
+                HelpNote("见面期间在聊天顶部显示一条写着地点与时刻的提示条，可以从这里修改或回到线上。关闭只影响显示。", title: "见面：提示条")
+            }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle(live ? "这一场" : "就在这里见面")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) { Button(live ? "保存" : "开始", action: save) }
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        guard let chat = (try? Repo.chat(chatId)) ?? nil else { return }
+        let info = Face.info(chat)
+        place = info["place"]?.string ?? ""
+        at = info["at"]?.string ?? ""
+        note = info["note"]?.string ?? ""
+        live = Face.on(chat)
+        tones = chat.row.strings("faceTones")
+        toneText = chat.row.string("faceToneText")
+        off = chat.row.strings("faceOffBookIds")
+        extra = chat.row.strings("faceBookIds")
+        bar = Face.barShown(chat)
+        presets = Tone.list()
+        books = ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == "chat" }
+        attached = Set(chat.characterIds.compactMap { (try? Repo.character($0)) ?? nil }.flatMap(\.lorebookIds))
+    }
+
+    private func save() {
+        do {
+            if var chat = try Repo.chat(chatId) {
+                chat.row["faceTones"] = .array(tones.map { .string($0) })
+                chat.row["faceToneText"] = .string(toneText)
+                chat.row["faceOffBookIds"] = .array(off.map { .string($0) })
+                chat.row["faceBookIds"] = .array(extra.map { .string($0) })
+                chat.row["faceBar"] = .bool(bar)
+                try Repo.save(chat)
+            }
+            let m = try Face.enter(chatId, place: place, at: at, note: note)
+            onDone(m)
+            dismiss()
+        } catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+}

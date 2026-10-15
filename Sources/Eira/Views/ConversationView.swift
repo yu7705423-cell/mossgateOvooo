@@ -86,6 +86,9 @@ struct ConversationView: View {
     @State private var showScenes = false
     @State private var showLore = false
     @State private var showGeo = false
+    /// 线下：就在这里见面，还是写成长文
+    @State private var choosingOffline = false
+    @State private var showFace = false
     /// 火花（互动标识）
     @State private var fire: Badges.StreakState?
     @State private var panelMore = false
@@ -108,6 +111,24 @@ struct ConversationView: View {
     /// 页面本身：消息列表、输入栏、顶栏，以及开关这一页时要做的事
     private var page: some View {
         VStack(spacing: 0) {
+            // 见面中：顶上一条写明地点与时刻，点一下修改，旁边回到线上（网页版 4.269 的提示条）
+            if let chat, Face.on(chat), Face.barShown(chat), picking == nil {
+                HStack(spacing: Theme.sp2) {
+                    Button { showFace = true } label: {
+                        Text(Face.label(Face.info(chat))).font(.system(size: 13)).foregroundStyle(Theme.text2).lineLimit(1)
+                    }
+                    .buttonStyle(.plain)
+                    Spacer()
+                    Button("回到线上") {
+                        do { if let m = try Face.leave(chatId) { messages.append(m) }; reload() }
+                        catch { problem = "切换失败：\(error.localizedDescription)" }
+                    }
+                    .font(.system(size: 13))
+                    .disabled(isBusy)
+                }
+                .padding(.horizontal, Theme.sp4).padding(.vertical, Theme.sp2)
+                .background(Theme.surface2)
+            }
             ScrollViewReader { proxy in
                 messageScroll(proxy)
             }
@@ -171,6 +192,23 @@ struct ConversationView: View {
         .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
         .navigationDestination(isPresented: $editingPanel) { PanelEditView() }
         .navigationDestination(isPresented: $showGeo) { GeoView(chatId: chatId) }
+        .navigationDestination(isPresented: $showFace) {
+            FaceSetupView(chatId: chatId) { m in if let m { messages.append(m) }; reload() }
+        }
+        .confirmationDialog("线下", isPresented: $choosingOffline, titleVisibility: .hidden) {
+            if let chat, Face.on(chat) {
+                Button("修改这一场的地点与时刻") { showFace = true }
+                Button("回到线上") {
+                    do { if let m = try Face.leave(chatId) { messages.append(m) }; reload() }
+                    catch { problem = "切换失败：\(error.localizedDescription)" }
+                }
+            } else {
+                Button("就在这里见面") { showFace = true }
+            }
+            Button("写成长文") { showScenes = true }
+        } message: {
+            Text("「就在这里见面」在这段对话里切到线下，仍然一条一条发；「写成长文」单开一页写大段正文。")
+        }
         .navigationDestination(isPresented: $showLore) {
             if let char { LoreQuickView(charId: char.id) }
         }
@@ -622,7 +660,7 @@ struct ConversationView: View {
         case "voice": panelButton("mic", "语音") { recordingVoice = true }
         case "dice": panelButton("grid", "骰子") { dicing = true }
         case "song": panelButton("music", "分享音乐") { songPicking = true }
-        case "offline": panelButton("book", "线下") { showScenes = true }
+        case "offline": panelButton("book", "线下") { if chat?.isGroup == true { showScenes = true } else { choosingOffline = true } }
         case "lore": panelButton("book", "世界书") { showLore = true }
         case "listen":
             panelButton("headphone", "一起听") {
