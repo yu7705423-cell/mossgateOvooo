@@ -99,6 +99,8 @@ enum Shell {
         var coverImageId: String
         /// 小组件自己的设置（网页版 cell.config）
         var config: [String: JSONValue]
+        /// 小组件的名字（起了名字就像应用一样显示在下方）
+        var title = ""
     }
 
     struct Page: Identifiable, Sendable, Equatable {
@@ -140,7 +142,8 @@ enum Shell {
                             label: co["label"]?.string ?? "",
                             coverIcon: cfg["icon"]?.string ?? "",
                             coverImageId: cfg["imageId"]?.string ?? "",
-                            config: cfg)
+                            config: cfg,
+                            title: co["title"]?.string ?? "")
             }
             return Page(id: po["id"]?.string ?? "p\(i)", cells: cells)
         }

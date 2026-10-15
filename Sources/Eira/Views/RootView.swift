@@ -27,7 +27,8 @@ struct RootView: View {
             }
             HomeScreen(layout: layout, settings: settings.s.raw, unread: unread, zoom: appZoom,
                        open: { opened = OpenedApp(id: $0) },
-                       openChat: { id in notifier.openChat = id })
+                       openChat: { id in notifier.openChat = id },
+                       changed: { layout = Shell.layout() })
         }
         .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
         // 点了通知或主屏的会话：打开聊天，由会话列表打开那一段

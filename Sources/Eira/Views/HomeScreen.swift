@@ -108,6 +108,8 @@ struct AppTileView: View {
 }
 
 /// 主屏：壁纸、一页页的格子、翻页圆点、底栏。点图标由外面打开 app。
+/// 长按进整理模式（网页版 HomeScreen 的 edit）：点一格出菜单，点空位放东西，按住拖到别处，
+/// 「移动到别处」之后翻页再点目标也可以；底栏同样能放能换。每一步都先读到库里那份再改再存。
 struct HomeScreen: View {
     let layout: Shell.Layout
     let settings: [String: JSONValue]
@@ -115,12 +117,21 @@ struct HomeScreen: View {
     var zoom: Namespace.ID?
     var open: (String) -> Void
     var openChat: (String) -> Void
+    /// 版式改了，外面重读一遍
+    var changed: () -> Void = {}
 
     @Environment(\.colorScheme) private var scheme
     @State private var page = 0
     @State private var folder: Shell.Cell?
     /// 长按图标换图标与名称
     @State private var editingIcon: String?
+    /// 整理模式
+    @State private var editing = false
+    /// 「移动到别处」选中的那一个，等着点目标
+    @State private var picked: HomeLayout.Spot?
+    @State private var target: ArrangeTarget?
+    /// 一屏放得下几行（量出来的，至少 6）
+    @State private var fitRows = HomeLayout.minRows
 
     private var home: HomeLook { HomeLook(wallpaper: !layout.wallpaperHome.isEmpty, dark: scheme == .dark, s: settings) }
     private var cols: Int { Shell.cols(settings) }
@@ -135,19 +146,29 @@ struct HomeScreen: View {
                     let size = cellSize(width: gridW, height: g.size.height)
                     TabView(selection: $page) {
                         ForEach(Array(layout.pages.enumerated()), id: \.offset) { i, p in
-                            grid(p, size: size)
+                            grid(p, index: i, size: size)
                                 .frame(width: g.size.width, height: g.size.height, alignment: .top)
+                                .contentShape(Rectangle())
+                                // 整理时这一手势让开，按住是拖动
+                                .gesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in enterEdit() },
+                                         including: editing ? .subviews : .all)
                                 .tag(i)
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
+                    .task(id: g.size.height) {
+                        let n = Int(((g.size.height + HomeLook.gap) / (byW + HomeLook.gap)).rounded(.down))
+                        fitRows = max(HomeLayout.minRows, n)
+                    }
                 }
                 .padding(.top, 12)
                 dots
+                if editing { editBar }
                 if !layout.dockHidden { dock(tile: min(tile, cellSize(width: gridW, height: .infinity) * HomeLook.tileRatio * home.tileScale), width: geo.size.width) }
             }
         }
         .onAppear { page = min(max(0, layout.currentPage), layout.pages.count - 1) }
+        .onChange(of: layout.pages.count) { _, n in if page >= n { page = max(0, n - 1) } }
         .sheet(item: Binding(get: { editingIcon.map { IconTarget(id: $0) } }, set: { editingIcon = $0?.id })) { t in
             NavigationStack { IconEditView(appId: t.id) { editingIcon = nil } }
         }
@@ -155,12 +176,45 @@ struct HomeScreen: View {
             FolderSheet(cell: f, settings: settings, home: home) { id in folder = nil; open(id) }
                 .presentationDetents([.medium])
         }
+        .sheet(item: $target, onDismiss: changed) { t in
+            ArrangeMenu(target: t, settings: settings, apply: apply, startMove: { picked = $0 }, close: { target = nil })
+                .presentationDetents([.medium, .large])
+        }
     }
 
     struct IconTarget: Identifiable { var id: String }
+    struct DockSlot: Identifiable { var id: Int; var look: Shell.Look? }
 
     @ViewBuilder private func iconMenu(_ appId: String) -> some View {
+        Button { enterEdit() } label: { Label("整理主屏幕", systemImage: "square.grid.2x2") }
         Button { editingIcon = appId } label: { Label("更换图标与名称", systemImage: "paintbrush") }
+    }
+
+    private func enterEdit() {
+        picked = nil
+        withAnimation(.easeOut(duration: 0.2)) { editing = true }
+    }
+
+    /// 先读到库里那一份再改再存。读不到、改不了的在屏幕上说
+    private func apply(_ f: (inout HomeLayout) throws -> Void) -> Bool {
+        do {
+            var h = try HomeLayout.begin(settings: settings, cap: fitRows)
+            try f(&h)
+            try h.save()
+            changed()
+            return true
+        } catch let e as HomeLayout.Failure {
+            Problems.report(e.reason)
+        } catch {
+            Problems.report("主屏版式未能保存：\(error.localizedDescription)")
+        }
+        return false
+    }
+
+    /// 在网格里最多用到几行；整理时多留一行（已经到一屏放得下的行数就不多留）
+    private func neededRows(_ p: Shell.Page) -> Int {
+        let need = p.cells.map { $0.y + $0.h }.max() ?? 0
+        return max(HomeLayout.minRows, need + (editing && need < fitRows ? 1 : 0))
     }
 
     /// 格子边长（网页版 HomeScreen 的 measure）：先按宽度均分，再看这个高度放不放得下所有页里最高的那一页。
@@ -169,25 +223,141 @@ struct HomeScreen: View {
         let byW = (width - gap * CGFloat(cols - 1)) / CGFloat(cols)
         guard height.isFinite, height > 0 else { return max(44, byW.rounded(.down)) }
         let fitRows = max(4, Int(((height + gap) / (byW + gap)).rounded(.down)))
-        let need = layout.pages.map { p in max(6, p.cells.map { $0.y + $0.h }.max() ?? 0) }.max() ?? 6
+        let need = layout.pages.map(neededRows).max() ?? 6
         let rows = max(need, fitRows)
         let byH = (height - gap * CGFloat(rows - 1)) / CGFloat(rows)
         return max(44, min(byW, byH).rounded(.down))
     }
 
-    private func grid(_ p: Shell.Page, size: CGFloat) -> some View {
+    private func grid(_ p: Shell.Page, index: Int, size: CGFloat) -> some View {
         let gap = HomeLook.gap
         let total = CGFloat(cols) * size + CGFloat(cols - 1) * gap
         return ZStack(alignment: .topLeading) {
             Color.clear.frame(width: total, height: 1)
+            if editing {
+                ForEach(freeSlots(p), id: \.self) { xy in
+                    slot(page: index, x: xy[0], y: xy[1], size: size)
+                        .offset(x: CGFloat(xy[0]) * (size + gap), y: CGFloat(xy[1]) * (size + gap))
+                }
+            }
             ForEach(p.cells.filter { $0.x + $0.w <= cols }) { c in
-                cell(c, size: size)
-                    .frame(width: CGFloat(c.w) * size + CGFloat(c.w - 1) * gap,
-                           height: CGFloat(c.h) * size + CGFloat(c.h - 1) * gap, alignment: .top)
-                    .offset(x: CGFloat(c.x) * (size + gap), y: CGFloat(c.y) * (size + gap))
+                Group {
+                    if editing { editCell(c, page: index, size: size) } else { cell(c, size: size) }
+                }
+                .frame(width: CGFloat(c.w) * size + CGFloat(c.w - 1) * gap,
+                       height: CGFloat(c.h) * size + CGFloat(c.h - 1) * gap, alignment: .top)
+                .offset(x: CGFloat(c.x) * (size + gap), y: CGFloat(c.y) * (size + gap))
             }
         }
         .frame(width: total, alignment: .topLeading)
+    }
+
+    private func freeSlots(_ p: Shell.Page) -> [[Int]] {
+        var taken = Set<String>()
+        for c in p.cells { for dy in 0..<c.h { for dx in 0..<c.w { taken.insert("\(c.x + dx),\(c.y + dy)") } } }
+        var out: [[Int]] = []
+        for y in 0..<neededRows(p) { for x in 0..<cols where !taken.contains("\(x),\(y)") { out.append([x, y]) } }
+        return out
+    }
+
+    // MARK: - 整理模式
+
+    private func slot(page: Int, x: Int, y: Int, size: CGFloat) -> some View {
+        RoundedRectangle(cornerRadius: size * 0.2, style: .continuous)
+            .strokeBorder(home.subText.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+            .overlay(Image(systemName: "plus").font(.system(size: 13)).foregroundStyle(home.subText))
+            .frame(width: size * HomeLook.tileRatio * home.tileScale, height: size * HomeLook.tileRatio * home.tileScale)
+            .frame(width: size, height: size, alignment: .top)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let picked { move(picked, to: .slot(page: page, x: x, y: y)) } else { target = .slot(page: page, x: x, y: y) }
+            }
+            .dropDestination(for: String.self) { items, _ in drop(items.first, to: .slot(page: page, x: x, y: y)) }
+            .accessibilityLabel("空位")
+    }
+
+    private func editCell(_ c: Shell.Cell, page: Int, size: CGFloat) -> some View {
+        let isPicked = picked == .cell(c.id)
+        return cell(c, size: size)
+            .allowsHitTesting(false)
+            .scaleEffect(isPicked ? 0.86 : 0.94)
+            .overlay {
+                if isPicked {
+                    RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(home.text, lineWidth: 1.5)
+                }
+            }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let p = picked {
+                    if p == .cell(c.id) { picked = nil } else { move(p, to: .cell(c.id)) }
+                } else {
+                    target = .cell(c, page: page)
+                }
+            }
+            .draggable("cell:\(c.id)")
+            .dropDestination(for: String.self) { items, _ in drop(items.first, to: .cell(c.id)) }
+    }
+
+    private func spot(_ payload: String?) -> HomeLayout.Spot? {
+        guard let payload else { return nil }
+        if payload.hasPrefix("cell:") { return .cell(String(payload.dropFirst(5))) }
+        if payload.hasPrefix("dock:"), let i = Int(payload.dropFirst(5)) { return .dock(i) }
+        return nil
+    }
+
+    private func drop(_ payload: String?, to dest: HomeLayout.Spot) -> Bool {
+        guard let src = spot(payload), src != dest else { return false }
+        move(src, to: dest)
+        return true
+    }
+
+    /// 挪过去。应用落在文件夹上就装进去
+    private func move(_ src: HomeLayout.Spot, to dest: HomeLayout.Spot) {
+        picked = nil
+        _ = apply { h in
+            if case .cell(let tid) = dest, let t = h.locate(tid), HomeLayout.kind(t.cell) == "folder" {
+                var app: String?
+                if case .cell(let sid) = src, let s = h.locate(sid), HomeLayout.kind(s.cell) == "app" { app = HomeLayout.ref(s.cell) }
+                if case .dock(let i) = src { app = h.dock[i] }
+                if let app { try h.putInFolder(tid, app: app); return }
+            }
+            try h.move(src, to: dest)
+        }
+    }
+
+    private var editBar: some View {
+        VStack(spacing: 8) {
+            Text(picked == nil
+                 ? "按住拖到想放的位置，停在文件夹上可装入。点一下更换内容、移动或移除，点空位放应用、小组件或文件夹。"
+                 : "点目标位置完成移动，翻页后再点也可以。")
+                .font(.system(size: 12)).foregroundStyle(home.subText).multilineTextAlignment(.center)
+            HStack(spacing: 18) {
+                if picked != nil {
+                    Button("取消移动") { picked = nil }
+                }
+                Button {
+                    if apply({ _ = $0.addPage() }) { page = layout.pages.count }
+                } label: { Image(systemName: "plus.rectangle.on.rectangle") }
+                    .accessibilityLabel("新建一页")
+                if page > 0, layout.pages.indices.contains(page), layout.pages[page].cells.isEmpty {
+                    Button(role: .destructive) {
+                        let i = page
+                        if apply({ $0.removePage(i) }) { page = max(0, i - 1) }
+                    } label: { Image(systemName: "trash") }
+                        .accessibilityLabel("删除这一页")
+                }
+                Spacer()
+                Button("完成") {
+                    picked = nil
+                    _ = apply { $0.heal() }
+                    withAnimation(.easeOut(duration: 0.2)) { editing = false }
+                }
+                .buttonStyle(.bordered)
+            }
+            .foregroundStyle(home.text)
+        }
+        .padding(.horizontal, HomeLook.sidePad)
+        .padding(.bottom, 4)
     }
 
     @ViewBuilder private func cell(_ c: Shell.Cell, size: CGFloat) -> some View {
@@ -197,7 +367,7 @@ struct HomeScreen: View {
             if let look = Shell.look(c.ref, settings: settings) {
                 Button { open(c.ref) } label: {
                     labeled(AppTileView(look: look, size: tile, badge: c.ref == "chat" ? unread : 0, home: home).zoomSource(c.ref, zoom),
-                            name: look.name, show: Shell.showLabel(look.label, settings: settings))
+                            name: look.name, show: Shell.showLabel(c.label.isEmpty ? look.label : c.label, settings: settings))
                 }
                 .buttonStyle(TilePress())
                 .accessibilityLabel(look.name)
@@ -209,8 +379,15 @@ struct HomeScreen: View {
                         name: c.name.isEmpty ? "文件夹" : c.name, show: Shell.showLabel(c.label, settings: settings))
             }
             .buttonStyle(TilePress())
+            .contextMenu { Button { enterEdit() } label: { Label("整理主屏幕", systemImage: "square.grid.2x2") } }
         default:
-            HomeWidget(cell: c, home: home, open: open, openChat: openChat)
+            VStack(spacing: 5) {
+                HomeWidget(cell: c, home: home, open: open, openChat: openChat)
+                if !c.title.isEmpty {
+                    Text(c.title).font(.system(size: 11)).lineLimit(1).foregroundStyle(home.nameColor)
+                }
+            }
+            .contextMenu { Button { enterEdit() } label: { Label("整理主屏幕", systemImage: "square.grid.2x2") } }
         }
     }
 
@@ -241,26 +418,16 @@ struct HomeScreen: View {
         .opacity(layout.pages.count > 1 ? 1 : 0)
     }
 
-    /// 底栏（网页版 Dock）：只排有 app 的几格，胶囊按个数收窄、居中。
+    /// 底栏（网页版 Dock）：只排有 app 的几格，胶囊按个数收窄、居中。整理时四格都画出来，空的也能放
     private func dock(tile: CGFloat, width: CGFloat) -> some View {
-        let shown = layout.dock.compactMap { $0 }.compactMap { Shell.look($0, settings: settings) }
+        let slots = layout.dock.enumerated().map { i, id in DockSlot(id: i, look: id.flatMap { Shell.look($0, settings: settings) }) }
+        let shown = editing ? slots : slots.filter { $0.look != nil }
         let inner = width - HomeLook.sidePad * 2
         let slotW = (inner - 24 - 2 - 3 * 8) / 4
         let n = CGFloat(max(1, shown.count))
-        let named = shown.map { Shell.showLabel($0.label, inDock: true, settings: settings) }
         return HStack(spacing: 8) {
-            ForEach(Array(shown.enumerated()), id: \.offset) { i, look in
-                Button { open(look.id) } label: {
-                    VStack(spacing: 5) {
-                        AppTileView(look: look, size: tile, badge: look.id == "chat" ? unread : 0, home: home)
-                            .zoomSource(look.id, zoom)
-                        if named[i] { Text(look.name).font(.system(size: 11)).lineLimit(1).foregroundStyle(home.nameColor) }
-                    }
-                    .frame(width: slotW)
-                }
-                .buttonStyle(TilePress())
-                .accessibilityLabel(look.name)
-                .contextMenu { iconMenu(look.id) }
+            ForEach(shown) { d in
+                dockSlot(d.id, look: d.look, tile: tile, slotW: slotW)
             }
         }
         .padding(.vertical, 8)
@@ -271,6 +438,47 @@ struct HomeScreen: View {
         .opacity(shown.isEmpty ? 0 : 1)
         .padding(.top, 8)
         .padding(.bottom, 8)
+    }
+
+    @ViewBuilder private func dockSlot(_ i: Int, look: Shell.Look?, tile: CGFloat, slotW: CGFloat) -> some View {
+        if editing {
+            let isPicked = picked == .dock(i)
+            Group {
+                if let look {
+                    AppTileView(look: look, size: tile, home: home)
+                        .scaleEffect(isPicked ? 0.86 : 0.94)
+                        .overlay { if isPicked { RoundedRectangle(cornerRadius: tile * 0.24).strokeBorder(home.text, lineWidth: 1.5) } }
+                        .draggable("dock:\(i)")
+                } else {
+                    RoundedRectangle(cornerRadius: tile * 0.24, style: .continuous)
+                        .strokeBorder(home.subText.opacity(0.6), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                        .frame(width: tile, height: tile)
+                }
+            }
+            .frame(width: slotW, height: tile)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let p = picked {
+                    if p == .dock(i) { picked = nil } else { move(p, to: .dock(i)) }
+                } else if let look {
+                    target = .dock(i, app: look.id)
+                }
+            }
+            .dropDestination(for: String.self) { items, _ in drop(items.first, to: .dock(i)) }
+        } else if let look {
+            let named = Shell.showLabel(look.label, inDock: true, settings: settings)
+            Button { open(look.id) } label: {
+                VStack(spacing: 5) {
+                    AppTileView(look: look, size: tile, badge: look.id == "chat" ? unread : 0, home: home)
+                        .zoomSource(look.id, zoom)
+                    if named { Text(look.name).font(.system(size: 11)).lineLimit(1).foregroundStyle(home.nameColor) }
+                }
+                .frame(width: slotW)
+            }
+            .buttonStyle(TilePress())
+            .accessibilityLabel(look.name)
+            .contextMenu { iconMenu(look.id) }
+        }
     }
 }
 
