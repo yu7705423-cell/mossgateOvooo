@@ -5,7 +5,7 @@ import Foundation
 /// 和线上共用角色卡、世界书、记忆、人设 —— 那是同一段关系的两面，所以一场戏挂在一段会话上（scenes，按 chatId 查）。
 /// 正文一段一行（beats，按 sceneId 查）。role 是 char / me / director（场外指示：作为指令进提示词，不占一张）。
 /// 一段有几个版本（swipes）：重写不删旧的，往后添一版。字段与网页版一致，两边导入导出互通。
-enum Scene {
+enum Scenes {
     static let scenes = "scenes"
     static let beats = "beats"
     static let CHAR = "char", ME = "me", DIRECTOR = "director"

@@ -88,7 +88,7 @@ enum SceneRun {
 
     private static func alias(_ row: Row) -> [String: String] {
         var out: [String: String] = [:]
-        for id in row.strings("castIds") { if let a = Scene.castAs(row, id), !a.name.isEmpty { out[id] = a.name } }
+        for id in row.strings("castIds") { if let a = Scenes.castAs(row, id), !a.name.isEmpty { out[id] = a.name } }
         return out
     }
 
@@ -100,29 +100,29 @@ enum SceneRun {
         let (stamped, stamp) = ReplyParser.stripStamps(thought)
         let at = stampInner(stamp)
         let body0 = StatusBar.lift(stamped).text
-        guard let fresh = Scene.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
-        let ex = takeExits(body0, allowed: Scene.enterable(fresh), alias: alias(fresh))
+        guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+        let ex = takeExits(body0, allowed: Scenes.enterable(fresh), alias: alias(fresh))
         if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty { throw StoreError(message: "模型返回了空内容") }
         var notes: [String] = []
         var done: Row?
         if !ex.text.isEmpty {
-            let last = Scene.told(sceneId).last
+            let last = Scenes.told(sceneId).last
             if !rewrite.isEmpty {
-                done = try Scene.addSwipe(rewrite, text: ex.text, raw: raw, think: think, at: at)
+                done = try Scenes.addSwipe(rewrite, text: ex.text, raw: raw, think: think, at: at)
             } else if more, let last {
-                done = try Scene.appendBeat(last.id, text: ex.text, raw: raw, at: at)
+                done = try Scenes.appendBeat(last.id, text: ex.text, raw: raw, at: at)
             } else {
-                done = try Scene.addBeat(sceneId: sceneId, role: Scene.CHAR, authorId: char.id, text: ex.text, raw: raw, think: think, at: at)
+                done = try Scenes.addBeat(sceneId: sceneId, role: Scenes.CHAR, authorId: char.id, text: ex.text, raw: raw, think: think, at: at)
             }
         }
         if let d = done, ex.leave || !ex.enter.isEmpty {
-            done = try Scene.updateBeat(d.id, ["cast": .object([
+            done = try Scenes.updateBeat(d.id, ["cast": .object([
                 "left": .array(ex.leave ? [.string(char.id)] : []),
                 "entered": .array(ex.enter.map { .string($0.id) }),
             ])]) ?? d
         }
-        for c in ex.enter { try Scene.enter(sceneId, c.id); notes.append("\(c.name)进场") }
-        if ex.leave { try Scene.leave(sceneId, char.id); notes.append("\(char.name)离场") }
+        for c in ex.enter { try Scenes.enter(sceneId, c.id); notes.append("\(c.name)进场") }
+        if ex.leave { try Scenes.leave(sceneId, char.id); notes.append("\(char.name)离场") }
         if !ex.unknown.isEmpty {
             Diagnostics.shared.record("scene-enter-unknown", ["names": ex.unknown.joined(separator: "、")])
         }
@@ -140,22 +140,22 @@ enum SceneRun {
     /// rewrite：重写那一段（只关乎那一段的作者）；more：续写最后那一段
     static func writeRound(sceneId: String, more: Bool = false, rewrite: String = "",
                            onDraft: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Round {
-        guard let row = Scene.get(sceneId), let chat = try Repo.chat(row.string("chatId")) else {
+        guard let row = Scenes.get(sceneId), let chat = try Repo.chat(row.string("chatId")) else {
             throw StoreError(message: "这一场已经不在了")
         }
-        let present = Scene.presentOf(row)
-        let all = Scene.beatsOf(sceneId)
-        let told = all.filter { $0.string("role") != Scene.DIRECTOR }
+        let present = Scenes.presentOf(row)
+        let all = Scenes.beatsOf(sceneId)
+        let told = all.filter { $0.string("role") != Scenes.DIRECTOR }
         var round = Round()
         let buffer = Draft()
 
         func one(_ char: Character, more: Bool = false, omitFrom: String = "") async throws {
-            guard let fresh = Scene.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
-            var list = Scene.beatsOf(sceneId)
+            guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+            var list = Scenes.beatsOf(sceneId)
             if !omitFrom.isEmpty, let i = list.firstIndex(where: { $0.id == omitFrom }) { list = Array(list[..<i]) }
             let s = AppSettings.load()
             let built = try ChatPrompt.buildScene(scene: fresh, chat: chat, char: char, list: list, more: more, settings: s)
-            let label = Scene.presentOf(fresh).count > 1 && !more && omitFrom.isEmpty ? "【\(Scene.nameIn(fresh, char))】\n" : ""
+            let label = Scenes.presentOf(fresh).count > 1 && !more && omitFrom.isEmpty ? "【\(Scenes.nameIn(fresh, char))】\n" : ""
             let base = buffer.base
             let result = try await AIService.shared.send(task: "scene.write", system: built.system, messages: built.messages,
                                                          maxTokens: ChatPrompt.sceneMax(s), retries: 1) { d in
@@ -185,7 +185,7 @@ enum SceneRun {
         if present.count == 1 || perCharOn() {
             for char in present {
                 // 这一轮里前面写了 [离场] 的，后面的人看得见；离开了的不再写
-                if let v = Scene.get(sceneId).flatMap({ Scene.leftMap($0)[char.id] }), v != .null { continue }
+                if let v = Scenes.get(sceneId).flatMap({ Scenes.leftMap($0)[char.id] }), v != .null { continue }
                 try await one(char)
             }
             return round
@@ -198,18 +198,18 @@ enum SceneRun {
                                                      maxTokens: ChatPrompt.sceneMax(s), retries: 1) { d in onDraft(buffer.add(d)) }
         try? ChatEngine.markRecalled(built.recalled)
         let text = ReplyParser.stripThink(result.text).0
-        guard let fresh = Scene.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
-        let pool = present + Scene.enterable(fresh).filter { c in !present.contains { $0.id == c.id } }
+        guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+        let pool = present + Scenes.enterable(fresh).filter { c in !present.contains { $0.id == c.id } }
         let sections = splitSections(text, pool, alias: alias(fresh))
         guard !sections.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         for sg in sections {
-            let cur = Scene.get(sceneId)
+            let cur = Scenes.get(sceneId)
             var away = false
             if let cur {
-                let gone = Scene.leftMap(cur)[sg.char.id].map { v in v != .null } ?? false
+                let gone = Scenes.leftMap(cur)[sg.char.id].map { v in v != .null } ?? false
                 away = !cur.strings("castIds").contains(sg.char.id) || gone
             }
-            if away { try Scene.enter(sceneId, sg.char.id); round.notes.append("\(sg.char.name)进场") }
+            if away { try Scenes.enter(sceneId, sg.char.id); round.notes.append("\(sg.char.name)进场") }
             let r = try settle(sg.text, sceneId: sceneId, char: sg.char, more: false, rewrite: "")
             if let b = r.beat { round.beats.append(b) }
             round.notes += r.notes
@@ -243,9 +243,9 @@ extension SceneRun {
     static func transcript(_ list: [Row], chat: Chat?) -> String {
         let ps = (try? Repo.personas()) ?? []
         let me = ps.first { $0.id == chat?.personaId } ?? ((try? Repo.activePersona()) ?? nil)
-        return list.filter { $0.string("role") != Scene.DIRECTOR && !$0.string("text").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return list.filter { $0.string("role") != Scenes.DIRECTOR && !$0.string("text").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             .map { b -> String in
-                let who = b.string("role") == Scene.ME ? (me?.name ?? "我") : (((try? Repo.character(b.string("authorId"))) ?? nil)?.name ?? "对方")
+                let who = b.string("role") == Scenes.ME ? (me?.name ?? "我") : (((try? Repo.character(b.string("authorId"))) ?? nil)?.name ?? "对方")
                 let at = b.string("at").isEmpty ? "" : "（\(b.string("at"))）"
                 return "\(who)\(at)：\n\(b.string("text").trimmingCharacters(in: .whitespacesAndNewlines))"
             }.joined(separator: "\n\n")
@@ -273,9 +273,9 @@ extension SceneRun {
     @discardableResult
     static func wrap(_ sceneId: String) async throws -> String {
         guard summaryOn() else { return "" }
-        guard let row = Scene.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
-        let text = try await summarize(row, Scene.beatsOf(sceneId), maxTokens: 1200)
-        if !text.isEmpty { try Scene.update(sceneId, ["summary": .string(text), "wrappedAt": .number(Date().millis)]) }
+        guard let row = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+        let text = try await summarize(row, Scenes.beatsOf(sceneId), maxTokens: 1200)
+        if !text.isEmpty { try Scenes.update(sceneId, ["summary": .string(text), "wrappedAt": .number(Date().millis)]) }
         return text
     }
 
@@ -286,19 +286,19 @@ extension SceneRun {
         let s = AppSettings.load()
         guard compressOn(s) else { return false }
         let n = max(0, Int(s.num("sceneWindow", 0)))
-        guard n > 0, let row = Scene.get(sceneId) else { return false }
-        let body = Scene.told(sceneId)
+        guard n > 0, let row = Scenes.get(sceneId) else { return false }
+        let body = Scenes.told(sceneId)
         let out = Array(body.prefix(max(0, body.count - n)))
         guard let edge = out.last?.id, row.string("compressedTo") != edge else { return false }
         let since = row.string("compressedTo").isEmpty ? 0 : ((out.firstIndex { $0.id == row.string("compressedTo") } ?? -1) + 1)
         let fresh = Array(out[min(since, out.count)...])
-        guard !fresh.isEmpty else { try Scene.update(sceneId, ["compressedTo": .string(edge)]); return false }
+        guard !fresh.isEmpty else { try Scenes.update(sceneId, ["compressedTo": .string(edge)]); return false }
         let failedAt = row.string("compressFailedAt")
         if !failedAt.isEmpty, let at = out.firstIndex(where: { $0.id == failedAt }), out.count - 1 - at < n { return false }
-        try Scene.update(sceneId, ["compressFailedAt": .string(edge)])
+        try Scenes.update(sceneId, ["compressFailedAt": .string(edge)])
         let text = try await summarize(row, fresh, maxTokens: 900)
         guard !text.isEmpty else { return false }
-        try Scene.update(sceneId, ["summary": .string(text), "compressedTo": .string(edge), "compressFailedAt": .string("")])
+        try Scenes.update(sceneId, ["summary": .string(text), "compressedTo": .string(edge), "compressFailedAt": .string("")])
         return true
     }
 }

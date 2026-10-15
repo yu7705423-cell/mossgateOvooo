@@ -122,7 +122,7 @@ enum ChatPrompt {
                                 tail: String, tailDepth: Int, lore: [(Int, String)],
                                 group: [String: String]? = nil) -> ([AIMessage], [String]) {
         // 线下那几场的正文按时间排进来，一起算条数与轮次（网页版 4.375）。场外指示不进
-        let beats = Scene.beatsAsMessages(chatId: chat.id)
+        let beats = Scenes.beatsAsMessages(chatId: chat.id)
         let timeline = beats.isEmpty ? all : (all + beats).enumerated().sorted { a, b in
             a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
         }.map(\.element)
@@ -162,7 +162,7 @@ enum ChatPrompt {
             // 线下正文：一律放在对方那一侧，写成「谁：正文」；进出线下各标一行（放在角色那一侧，它会照着在线上写大段散文）
             if raw.kind == "beat" {
                 if prev?.kind != "beat" || prev?.row.string("sceneId") != raw.row.string("sceneId") {
-                    out.append(AIMessage(role: .user, content: Scene.markText(raw.row.string("sceneId"), settings: s)))
+                    out.append(AIMessage(role: .user, content: Scenes.markText(raw.row.string("sceneId"), settings: s)))
                 }
                 let who = raw.role == .user ? meName : (((try? Repo.character(raw.authorId)) ?? nil)?.name ?? char.name)
                 out.append(AIMessage(role: .user, content: "\(who)：\(raw.content)"))

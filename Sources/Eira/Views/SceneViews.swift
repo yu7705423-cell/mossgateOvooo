@@ -50,14 +50,14 @@ struct SceneListView: View {
         .confirmationDialog("删除这一场及其全部正文。无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             titleVisibility: .visible, presenting: deleting) { r in
             Button("删除", role: .destructive) {
-                do { try Scene.remove(r.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
+                do { try Scenes.remove(r.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
             }
         }
     }
 
     private func row(_ r: Row) -> some View {
         let title = r.string("title").isEmpty ? (r.string("place").isEmpty ? "未命名的一场" : r.string("place")) : r.string("title")
-        let count = Scene.told(r.id).count
+        let count = Scenes.told(r.id).count
         let sub = [Self.date(r.number("updatedAt") ?? r.created ?? 0), "\(count) 段",
                    (r.number("endedAt") ?? 0) > 0 ? "已收场" : ""].filter { !$0.isEmpty }.joined(separator: " · ")
         return VStack(alignment: .leading, spacing: 3) {
@@ -74,7 +74,7 @@ struct SceneListView: View {
         return "\(c.month ?? 0)月\(c.day ?? 0)日"
     }
 
-    private func reload() { rows = Scene.ofChat(chatId) }
+    private func reload() { rows = Scenes.ofChat(chatId) }
 }
 
 // MARK: - 这一场的设置
@@ -85,7 +85,7 @@ struct SceneSetupView: View {
     let sceneId: String?
     var onDone: (String) -> Void = { _ in }
 
-    @State private var draft = Scene.Draft()
+    @State private var draft = Scenes.Draft()
     @State private var left: [String: JSONValue] = [:]
     @State private var chatChars: [Character] = []
     @State private var others: [Character] = []
@@ -116,8 +116,8 @@ struct SceneSetupView: View {
             if !editing {
                 Section("谁先写") {
                     Picker("谁先写", selection: $draft.opening) {
-                        Text("角色先写").tag(Scene.CHAR)
-                        Text("我先写").tag(Scene.ME)
+                        Text("角色先写").tag(Scenes.CHAR)
+                        Text("我先写").tag(Scenes.ME)
                     }
                     .pickerStyle(.segmented)
                 }
@@ -272,14 +272,14 @@ struct SceneSetupView: View {
         others = ((try? Repo.characters()) ?? []).filter { !mineIds.contains($0.id) && !$0.isNpc }
         books = ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == "chat" }
         tones = Tone.list()
-        if let sceneId, let r = Scene.get(sceneId) {
+        if let sceneId, let r = Scenes.get(sceneId) {
             draft.title = r.string("title"); draft.place = r.string("place"); draft.at = r.string("at"); draft.note = r.string("note")
             draft.castIds = r.strings("castIds")
             draft.tones = Tone.ids(r); draft.toneText = r.string("toneText")
             draft.offBookIds = r.strings("offBookIds"); draft.bookIds = r.strings("bookIds")
             draft.autoEnter = r["autoEnter"]?.bool != false
             draft.enterIds = r["enterIds"]?.array?.compactMap(\.string)
-            left = Scene.leftMap(r)
+            left = Scenes.leftMap(r)
             // 这一场拉进来的会话外的角色也要列出来
             for id in draft.castIds where !chatChars.contains(where: { $0.id == id }) && !others.contains(where: { $0.id == id }) {
                 if let c = (try? Repo.character(id)) ?? nil { others.append(c) }
@@ -309,12 +309,12 @@ struct SceneSetupView: View {
                     "autoEnter": .bool(draft.autoEnter),
                 ]
                 patch["enterIds"] = draft.enterIds.map { .array($0.map { .string($0) }) } ?? .null
-                try Scene.update(sceneId, patch)
+                try Scenes.update(sceneId, patch)
                 SettingsModel.shared.reload()
                 onDone(sceneId)
                 dismiss()
             } else {
-                let row = try Scene.create(chatId: chatId, draft)
+                let row = try Scenes.create(chatId: chatId, draft)
                 SettingsModel.shared.reload()
                 onDone(row.id)
             }
@@ -452,7 +452,7 @@ struct SceneReadView: View {
         .onDisappear { job?.cancel() }
         .confirmationDialog("收场后输入框关闭，正文保留，可以随时重新开场。", isPresented: $confirmEnd, titleVisibility: .visible) {
             Button("收场") {
-                do { try Scene.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)"; return }
+                do { try Scenes.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)"; return }
                 // 收场摘要是另一个开关（设置 - 用量与上限），开着才写
                 guard SceneRun.summaryOn() else { return }
                 let id = sceneId
@@ -468,7 +468,7 @@ struct SceneReadView: View {
         .confirmationDialog("删除这一段及其之后的全部正文。无法恢复。", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } }),
                             titleVisibility: .visible, presenting: dropping) { b in
             Button("删除", role: .destructive) {
-                do { try Scene.dropFrom(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
+                do { try Scenes.dropFrom(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
             }
         }
         .sheet(item: Binding(get: { editing.map { EditKey(id: $0.id) } }, set: { if $0 == nil { editing = nil } })) { _ in
@@ -481,7 +481,7 @@ struct SceneReadView: View {
                         ToolbarItem(placement: .confirmationAction) {
                             Button("保存") {
                                 if let b = editing {
-                                    do { try Scene.editBeat(b.id, editText); reload() } catch { problem = "保存失败：\(error.localizedDescription)" }
+                                    do { try Scenes.editBeat(b.id, editText); reload() } catch { problem = "保存失败：\(error.localizedDescription)" }
                                 }
                                 editing = nil
                             }
@@ -505,8 +505,8 @@ struct SceneReadView: View {
     // MARK: 刊头
 
     private var header: some View {
-        let facts = [scene?.string("place") ?? "", Scene.timeOf(sceneId)].filter { !$0.isEmpty }
-        let cast = scene.map { sc in Scene.presentOf(sc).map { Scene.nameIn(sc, $0) } } ?? []
+        let facts = [scene?.string("place") ?? "", Scenes.timeOf(sceneId)].filter { !$0.isEmpty }
+        let cast = scene.map { sc in Scenes.presentOf(sc).map { Scenes.nameIn(sc, $0) } } ?? []
         return VStack(alignment: .leading, spacing: 6) {
             if !facts.isEmpty { Text(facts.joined(separator: " · ")).font(.system(size: 13)).foregroundStyle(look.dim) }
             if !cast.isEmpty { Text("在场：\(cast.joined(separator: "、"))").font(.system(size: 13)).foregroundStyle(look.dim) }
@@ -519,7 +519,7 @@ struct SceneReadView: View {
 
     @ViewBuilder
     private func beatView(_ b: Row) -> some View {
-        if b.string("role") == Scene.DIRECTOR {
+        if b.string("role") == Scenes.DIRECTOR {
             HStack(alignment: .top, spacing: 6) {
                 Text(b.bool("hold") ? "场外指示 · 一直有效" : "场外指示").font(.system(size: 12)).foregroundStyle(look.mark)
                 Text(b.string("text")).font(.system(size: 13)).foregroundStyle(look.dim)
@@ -536,9 +536,9 @@ struct SceneReadView: View {
                 Button("删除", role: .destructive) { dropOne(b) }
             }
         } else {
-            let sign = scene.map { Scene.signOf(b, scene: $0, chat: chat, me: me) } ?? Scene.Sign()
-            let versions = Scene.versions(b)
-            let idx = Scene.swipeIndex(b)
+            let sign = scene.map { Scenes.signOf(b, scene: $0, chat: chat, me: me) } ?? Scenes.Sign()
+            let versions = Scenes.versions(b)
+            let idx = Scenes.swipeIndex(b)
             VStack(alignment: .leading, spacing: Theme.sp2) {
                 if look.sign != "none" {
                     HStack(spacing: Theme.sp2) {
@@ -554,7 +554,7 @@ struct SceneReadView: View {
                     .lineSpacing(look.lineSpacing)
                     .textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                let castLine = Scene.castLine(b)
+                let castLine = Scenes.castLine(b)
                 if !castLine.isEmpty { Text(castLine).font(.system(size: 12)).foregroundStyle(look.dim) }
                 if versions.count > 1 {
                     HStack(spacing: Theme.sp3) {
@@ -573,8 +573,8 @@ struct SceneReadView: View {
 
     @ViewBuilder
     private func beatMenu(_ b: Row, versions: Int) -> some View {
-        let mine = b.string("role") == Scene.ME
-        let last = beats.last(where: { $0.string("role") != Scene.DIRECTOR })?.id == b.id
+        let mine = b.string("role") == Scenes.ME
+        let last = beats.last(where: { $0.string("role") != Scenes.DIRECTOR })?.id == b.id
         Button("复制") { UIPasteboard.general.string = b.string("text") }
         Button("改写") { editText = b.string("text"); editing = b }
         if !mine && !ended {
@@ -582,11 +582,11 @@ struct SceneReadView: View {
             if last { Button("接着写") { write(more: true) }.disabled(writing) }
         }
         Button(b.bool("pinned") ? "取消钉住" : "钉住") {
-            do { try Scene.togglePin(b.id); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
+            do { try Scenes.togglePin(b.id); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
         }
         if versions > 1 {
             Button("删除当前这一版", role: .destructive) {
-                do { try Scene.dropSwipe(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
+                do { try Scenes.dropSwipe(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
             }
         }
         Button("删除这一段", role: .destructive) { dropOne(b) }
@@ -644,11 +644,11 @@ struct SceneReadView: View {
     // MARK: 动作
 
     private func reload() {
-        scene = Scene.get(sceneId)
+        scene = Scenes.get(sceneId)
         chat = scene.flatMap { (try? Repo.chat($0.string("chatId"))) ?? nil }
         let ps = (try? Repo.personas()) ?? []
         me = ps.first { $0.id == chat?.personaId } ?? ((try? Repo.activePersona()) ?? nil)
-        beats = Scene.beatsOf(sceneId)
+        beats = Scenes.beatsOf(sceneId)
         look = Stage.look(Stage.forScene(scene))
     }
 
@@ -656,23 +656,23 @@ struct SceneReadView: View {
     private func openIfDue() {
         guard !opened else { return }
         opened = true
-        if let scene, beats.isEmpty, scene.string("opening") != Scene.ME, !ended { write() }
+        if let scene, beats.isEmpty, scene.string("opening") != Scenes.ME, !ended { write() }
     }
 
     private func reopen() {
-        do { try Scene.update(sceneId, ["endedAt": .number(0)]); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
+        do { try Scenes.update(sceneId, ["endedAt": .number(0)]); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
     }
 
     private func setHold(_ b: Row, _ on: Bool) {
-        do { try Scene.updateBeat(b.id, ["hold": .bool(on)]); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
+        do { try Scenes.updateBeat(b.id, ["hold": .bool(on)]); reload() } catch { problem = "操作失败：\(error.localizedDescription)" }
     }
 
     private func dropOne(_ b: Row) {
-        do { try Scene.dropBeat(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
+        do { try Scenes.dropBeat(b.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
     }
 
     private func pick(_ b: Row, _ i: Int) {
-        do { try Scene.pickSwipe(b.id, i); reload() } catch { problem = "切换失败：\(error.localizedDescription)" }
+        do { try Scenes.pickSwipe(b.id, i); reload() } catch { problem = "切换失败：\(error.localizedDescription)" }
     }
 
     private func send() {
@@ -680,12 +680,12 @@ struct SceneReadView: View {
         guard !text.isEmpty else { return }
         do {
             if director {
-                try Scene.addBeat(sceneId: sceneId, role: Scene.DIRECTOR, text: text, hold: hold)
+                try Scenes.addBeat(sceneId: sceneId, role: Scenes.DIRECTOR, text: text, hold: hold)
                 draft = ""
                 reload()
                 return
             }
-            try Scene.addBeat(sceneId: sceneId, role: Scene.ME, authorId: "me", text: text)
+            try Scenes.addBeat(sceneId: sceneId, role: Scenes.ME, authorId: "me", text: text)
             draft = ""
             reload()
             write()
@@ -696,7 +696,7 @@ struct SceneReadView: View {
 
     private func write(more: Bool = false, rewrite: String = "") {
         guard !writing else { return }
-        if let c = scene.map(Scene.presentOf), c.contains(where: \.archived), rewrite.isEmpty, !more {
+        if let c = scene.map(Scenes.presentOf), c.contains(where: \.archived), rewrite.isEmpty, !more {
             notice = "封存的角色不再回复。"
             return
         }
@@ -734,7 +734,7 @@ struct StageLookView: View {
     @ObservedObject private var model = SettingsModel.shared
 
     private var cfg: [String: JSONValue] { Stage.config(model.s) }
-    private var look: Stage.Look { Stage.look(Stage.forScene(sceneId.flatMap(Scene.get), model.s)) }
+    private var look: Stage.Look { Stage.look(Stage.forScene(sceneId.flatMap(Scenes.get), model.s)) }
 
     var body: some View {
         Form {

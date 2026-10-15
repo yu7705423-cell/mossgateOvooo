@@ -11,14 +11,14 @@ extension ChatPrompt {
 
     /// 世界书与 B 级记忆按最近几段正文扫：该被这一场勾起来的是这一场的字
     static func sceneScan(_ list: [Row], _ s: AppSettings) -> String {
-        let body = list.filter { $0.string("role") != Scene.DIRECTOR }
+        let body = list.filter { $0.string("role") != Scenes.DIRECTOR }
         let n = Int(s.num("sceneScan", 4))
         return (n > 0 ? Array(body.suffix(n)) : body).map { $0.string("text") }.joined(separator: "\n")
     }
 
     /// 这一场里换了身份就按换过的来（4.283）
     static func sceneChar(_ scene: Row, _ c: Character) -> Character {
-        guard let a = Scene.castAs(scene, c.id) else { return c }
+        guard let a = Scenes.castAs(scene, c.id) else { return c }
         var out = c
         if !a.name.isEmpty { out.row["name"] = .string(a.name) }
         if !a.persona.isEmpty { out.row["persona"] = .string(a.persona) }
@@ -54,10 +54,10 @@ extension ChatPrompt {
     static func directorLines(_ list: [Row]) -> [String] {
         var fresh: [Row] = []
         for b in list.reversed() {
-            guard b.string("role") == Scene.DIRECTOR else { break }
+            guard b.string("role") == Scenes.DIRECTOR else { break }
             if !b.bool("hold") { fresh.insert(b, at: 0) }
         }
-        let held = list.filter { $0.string("role") == Scene.DIRECTOR && $0.bool("hold") }
+        let held = list.filter { $0.string("role") == Scenes.DIRECTOR && $0.bool("hold") }
         return (held + fresh).map { $0.string("text").trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 
@@ -65,12 +65,12 @@ extension ChatPrompt {
     private static func sceneSetup(_ scene: Row, others: [Character], settings s: AppSettings) -> String {
         var lines: [String] = []
         if !scene.string("place").isEmpty { lines.append("地点：\(scene.string("place"))") }
-        let now = Scene.timeOf(scene.id)
+        let now = Scenes.timeOf(scene.id)
         if !now.isEmpty { lines.append("时刻：\(now)") }
         if !others.isEmpty { lines.append("在场：\(others.map(\.name).joined(separator: "、"))") }
-        let gone = Scene.leftOf(scene)
+        let gone = Scenes.leftOf(scene)
         if !gone.isEmpty { lines.append("已离开：\(gone.map(\.name).joined(separator: "、"))") }
-        let may = Scene.enterable(scene).filter { c in !gone.contains { $0.id == c.id } }
+        let may = Scenes.enterable(scene).filter { c in !gone.contains { $0.id == c.id } }
         if !may.isEmpty { lines.append("可进场：\(may.map(\.name).joined(separator: "、"))") }
         if !scene.string("note").isEmpty { lines.append("情境：\(scene.string("note"))") }
         guard !lines.isEmpty else { return "" }
@@ -79,7 +79,7 @@ extension ChatPrompt {
 
     /// 离场与进场的写法：不止一个人在场、或者有人可以进来时才给。只说标记怎么写，不说什么时候该用（第 16 条）
     private static func sceneExits(_ scene: Row, settings s: AppSettings) -> String {
-        guard Scene.presentOf(scene).count > 1 || !Scene.enterable(scene).isEmpty else { return "" }
+        guard Scenes.presentOf(scene).count > 1 || !Scenes.enterable(scene).isEmpty else { return "" }
         return "\n\n" + Templates.get("skeleton.scene-exits", settings: s)
     }
 
@@ -98,7 +98,7 @@ extension ChatPrompt {
         let (me0, personas) = try meOf(chat, s)
         let char = sceneChar(scene, char0)
         let me = sceneMe(scene, me0)
-        let others = Scene.presentOf(scene).filter { $0.id != char.id }
+        let others = Scenes.presentOf(scene).filter { $0.id != char.id }
         let names = ["charName": char.name.isEmpty ? "对方" : char.name, "userName": (me?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "对方"]
         let rootId = Repo.rootId(of: me0?.id ?? "", in: personas)
         let budget = sceneBudget(s)
@@ -212,7 +212,7 @@ extension ChatPrompt {
     static func sceneHistory(_ scene: Row, chat: Chat, char: Character?, me: Persona?, list: [Row], settings s: AppSettings,
                              volatile: String, recall: String, more: Bool, ensemble: Bool) -> [AIMessage] {
         let isGroup = scene.strings("castIds").count > 1
-        let body = list.filter { $0.string("role") != Scene.DIRECTOR }
+        let body = list.filter { $0.string("role") != Scenes.DIRECTOR }
         let n = max(0, Int(s.num("sceneWindow", 0)))
         let scope = n > 0 ? Array(body.suffix(n)) : body
         // 预算按 token 从后往前收
@@ -232,12 +232,12 @@ extension ChatPrompt {
         let charIds = scene.strings("castIds")
         var out: [AIMessage] = all.map { b in
             // 正则替换里「两边都改」「只改发给角色的」那几条（存着的原文不动）
-            let text = RegexRules.forPrompt(b.string("text"), .init(who: b.string("role") == Scene.ME ? "user" : "char",
+            let text = RegexRules.forPrompt(b.string("text"), .init(who: b.string("role") == Scenes.ME ? "user" : "char",
                                                                      whereIs: "offline", charIds: charIds), settings: s)
-            if b.string("role") == Scene.ME { return AIMessage(role: .user, content: text) }
+            if b.string("role") == Scenes.ME { return AIMessage(role: .user, content: text) }
             let who = (try? Repo.character(b.string("authorId"))) ?? nil
             if ensemble {
-                let name = who.map { Scene.nameIn(scene, $0) } ?? "某人"
+                let name = who.map { Scenes.nameIn(scene, $0) } ?? "某人"
                 return AIMessage(role: .assistant, content: "【\(name)】\n\(text)")
             }
             if isGroup && b.string("authorId") != char?.id {
