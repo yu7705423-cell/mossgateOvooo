@@ -78,7 +78,7 @@ struct BadgeDefEditView: View {
             }
             Section {
                 Picker("达成方式", selection: $how) {
-                    ForEach(BadgeDefs.hows.filter { $0.id != "judge" || how == "judge" }, id: \.id) { Text($0.label).tag($0.id) }
+                    ForEach(BadgeDefs.hows, id: \.id) { Text($0.label).tag($0.id) }
                 }
                 if how == "rule" {
                     Picker("条件", selection: $metric) {
@@ -96,10 +96,10 @@ struct BadgeDefEditView: View {
                     TextField("数值", value: $value, format: .number).keyboardType(.numberPad)
                 } else if how == "judge" {
                     TextField("达成的条件", text: $cond, axis: .vertical)
-                    Text("原生版暂不自动判断这一类，可在「互动标识」中手动颁发。").font(.footnote).foregroundStyle(Theme.text2)
+                    Text("随记忆总结顺带判断，不另调接口。不总结记忆时不判断，可在「互动标识」中手动颁发。").font(.footnote).foregroundStyle(Theme.text2)
                 }
             } footer: {
-                HelpNote("按条件：按聊天记录在本机计算，达到数值时自动得到，不调用接口。手动颁发：在会话的「互动标识」中点「颁发」。", title: "达成方式")
+                HelpNote("按条件：按聊天记录在本机计算，达到数值时自动得到，不调用接口。模型判断：写一句达成的条件，总结记忆时由模型顺带判断，不另调接口。手动颁发：在会话的「互动标识」中点「颁发」。", title: "达成方式")
             }
             Section("对哪些角色生效") {
                 ForEach(chars, id: \.id) { c in

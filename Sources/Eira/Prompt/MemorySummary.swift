@@ -364,10 +364,12 @@ enum MemorySummary {
             return "(id:\(m.id)) [\(tag)] \(m.content)"
         }.joined(separator: "\n")
 
+        // 自定义互动标识里「模型判断」的那几个搭在这一次上（网页版 4.320），不多调接口
+        let badgeSent = BadgeDefs.inSummary(s) ? BadgeDefs.judgeFor(chat) : []
         let system = Templates.render("task.memory-extract", [
             "today": todayText(), "who": who, "state": stateText(char: char, key: key),
             "open": openText, "existing": existingText, "dialogue": dialogue,
-        ], settings: s)
+        ], settings: s) + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
 
         // 先记「试过到哪一条」再发：失败也算试过，自动那一档要再攒够一个间隔才重试
         var tried = chat
@@ -384,6 +386,7 @@ enum MemorySummary {
 
         let at = batch.last?.createdAt ?? Date().millis
         let counts = try apply(result, charId: char.id, personaId: personaId, key: key, at: at, existing: existing)
+        BadgeDefs.applyJudged(result["badgesEarned"], sent: badgeSent, chatId: chatId)
 
         guard var done = try Repo.chat(chatId) else { return counts }
         if let lastMark = markList.last {

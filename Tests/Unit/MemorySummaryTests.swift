@@ -189,4 +189,20 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertEqual(try MemorySummary.pending(chatId: "chat_a").count, before)
         XCTAssertEqual(MockNet.count, 1)
     }
+
+    /// 自定义标识里「模型判断」的那几个随这一次顺带判断：只多几行清单，不多调接口；模型编出来的 id 不算数
+    func testJudgedBadgesRideAlong() async throws {
+        let def = try BadgeDefs.save(id: nil, ["name": .string("一起看过日出"), "how": .string("judge"), "cond": .string("两人一起看了日出"),
+                                               "charIds": .array([.string("char_a")])], personaId: "me_root")
+        _ = try ChatEngine.send(text: "今天一起看了日出", chatId: "chat_a")
+        _ = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "很美", turnId: "tb"))
+        reply(#"{"events":[],"facts":[],"ended":[],"open":[],"closed":[],"state":{},"badgesEarned":[{"id":"\#(def.id)"},{"id":"bd_fake"}]}"#)
+        _ = try await MemorySummary.extract(chatId: "chat_a")
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("(id:\(def.id)) badge"))
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        XCTAssertNotNil(chat.row["unlocked"]?[def.unlockId])
+        XCTAssertNil(chat.row["unlocked"]?["custom-bd_fake"])
+    }
 }

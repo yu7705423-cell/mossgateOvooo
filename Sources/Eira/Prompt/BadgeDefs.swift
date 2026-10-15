@@ -5,7 +5,7 @@ import Foundation
 /// 自己定标识：名字、说明、隐藏与否（隐藏的只给一句提示），勾选对哪些角色生效。达成方式：
 ///   · 按条件：按聊天记录本地算，不调接口；
 ///   · 手动颁发：在「互动标识」里自己点；
-///   · 模型判断：网页版随记忆总结顺带判断。原生版的记忆总结还没有接这一项，这类标识照样显示、可以手动颁发。
+///   · 模型判断：写一句条件，随记忆总结顺带判断，不多调接口；
 /// 解锁记在会话自己的 unlocked 里，id 是 custom-<定义 id>，和内置的成就同一处：显示、等级、让角色知道都现成认得。
 /// 定义按身份分（personaId），和网页版同一个数据域 badgeDefs，导入导出原样带着。
 enum BadgeDefs {
@@ -215,6 +215,30 @@ enum BadgeDefs {
         let r = measure(chat, &st, msgs: msgs, now: now)
         let hits = defsFor(chat).filter { $0.how == "rule" && (r.values[$0.id] ?? 0) >= $0.value }.map(\.unlockId)
         return (hits, r.changed)
+    }
+
+    // MARK: - 模型判断（随记忆总结顺带判断，不多调接口；网页版 4.320）
+
+    /// 设置里没关就搭（badgeJudgeInSummary，默认开）
+    static func inSummary(_ s: AppSettings = .load()) -> Bool { s.raw["badgeJudgeInSummary"]?.bool != false }
+
+    /// 这段会话上还没得到的「模型判断」那几个
+    static func judgeFor(_ chat: Chat) -> [Def] {
+        defsFor(chat).filter { $0.how == "judge" && chat.row["unlocked"]?[$0.unlockId] == nil }
+    }
+
+    static func judgeText(_ defs: [Def]) -> String {
+        defs.map { "(id:\($0.id)) badge: \($0.name) | earned when: \($0.cond)" }.joined(separator: "\n")
+    }
+
+    /// 只认这一次交出去的那几个 id（模型编一个出来不算数）
+    static func applyJudged(_ result: JSONValue?, sent: [Def], chatId: String) {
+        let ids = Set(sent.map(\.id))
+        for r in result?.array ?? [] {
+            let id = r.string ?? r["id"]?.string ?? ""
+            guard ids.contains(id) else { continue }
+            do { try grant(chatId, "custom-\(id)") } catch { Diagnostics.shared.record("badge-judge-failed", ["error": error.localizedDescription]) }
+        }
     }
 
     // MARK: - 看
