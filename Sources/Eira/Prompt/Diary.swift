@@ -310,7 +310,7 @@ enum Diary {
             all["source"] = .string("manual")
             all["font"] = .string("")
             all["paper"] = .string("")
-            all["imageIds"] = .array([])
+            if all["imageIds"] == nil { all["imageIds"] = .array([]) }
             all["lock"] = .null
             row = Row.new(prefix: "diary", all)
         }
