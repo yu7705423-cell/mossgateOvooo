@@ -150,21 +150,40 @@ enum ImageGen {
         stylesOn(s).map { Templates.get($0.ask, settings: s) }.filter { !$0.isEmpty }.joined(separator: "\n")
     }
 
-    /// 最终提示词由哪几段拼成：画面描述、点了名的那几位的外貌、角色固定提示词、画风预设、全局提示词。
+    /// 最终提示词由哪几段拼成：画面描述、命中的生图世界书、点了名的那几位的外貌（锁脸时不点名也带）、角色固定提示词、画风预设、全局提示词。
     /// 每一段里单独成行的 Negative 之后摘出来放进负面（网页版 parts）。
-    static func parts(prompt: String, char: Character?, all: [Character], settings s: AppSettings) -> [Part] {
+    /// me：这段对话里的「我」（身份）；lockChar / lockMe：锁脸用到了谁，那一位不点名也带上外貌（读出来的描述或卡上写的）
+    static func parts(prompt: String, char: Character?, all: [Character], settings s: AppSettings,
+                      me: Persona? = nil, lockChar: Bool = false, lockMe: Bool = false) -> [Part] {
         let text = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         var raw: [(String, String)] = [("画面描述", text)]
-        // 描述里点了名（两个字以上）的那几位，各自卡上写的外貌。当前角色先来
+        // 生图世界书（用途为「生图」的书）：拿画面描述去扫，命中的接在描述后面
+        if let char {
+            let lore = ChatPrompt.pickPurpose(char: char, scanText: text, purpose: "image")
+                .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            if !lore.isEmpty { raw.append(("生图世界书", lore.joined(separator: "\n"))) }
+        }
+        func look(_ r: Row) -> String {
+            let a = r.string("appearance").trimmingCharacters(in: .whitespacesAndNewlines)
+            return a.isEmpty ? r.string("faceDesc").trimmingCharacters(in: .whitespacesAndNewlines) : a
+        }
+        // 描述里点了名（两个字以上）的那几位，各自卡上写的外貌。当前角色先来；锁脸时当前角色不点名也带
         var seen = Set<String>()
         for c in ([char].compactMap { $0 } + all) where !seen.contains(c.id) {
             let name = c.row.string("name").trimmingCharacters(in: .whitespaces)
-            let look = c.row.string("appearance").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-                ? c.row.string("faceDesc").trimmingCharacters(in: .whitespacesAndNewlines)
-                : c.row.string("appearance").trimmingCharacters(in: .whitespacesAndNewlines)
-            guard name.count >= 2, !look.isEmpty, text.contains(name) else { continue }
+            let l = look(c.row)
+            let forced = lockChar && c.id == char?.id
+            guard !l.isEmpty, forced || (name.count >= 2 && text.contains(name)) else { continue }
             seen.insert(c.id)
-            raw.append(("「\(name)」的外貌", "\(name): \(look)"))
+            raw.append(("「\(name)」的外貌", "\(name.isEmpty ? "The character" : name): \(l)"))
+        }
+        // 我：点了名，或者锁脸用到了我
+        if let me {
+            let name = me.row.string("name").trimmingCharacters(in: .whitespaces)
+            let l = look(me.row)
+            if !l.isEmpty, lockMe || (name.count >= 2 && text.contains(name)) {
+                raw.append(("「\(name)」的外貌", "\(name.isEmpty ? "The other person" : name): \(l)"))
+            }
         }
         let own = char?.row.string("imagePrompt").trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !own.isEmpty { raw.append(("这个角色的固定提示词", own)) }
@@ -418,13 +437,55 @@ enum ImageGen {
 
     private static func draw(_ row: Row, preset: ImagePreset, settings s: AppSettings) async -> Message? {
         let messageId = row.id
-        let char = try? Repo.character(row.string("authorId"))
+        let char = (try? Repo.character(row.string("authorId"))) ?? nil
+        let chatId = row.string("chatId")
         do {
-            let all = (try? Repo.characters()) ?? []
-            let ps = parts(prompt: row.string("prompt"), char: char, all: all, settings: s)
             guard !row.string("prompt").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
                 throw StoreError(message: "这一张没有提示词，没有可画的内容")
             }
+            // 先把这一句改写成自带全部信息的描述。默认关，开了才多这一次；写不出来就用原话
+            let prompt = await PromptWrite.forImage(row.string("prompt"), chatId: chatId, char: char)
+            let all = (try? Repo.characters()) ?? []
+            let chat = (try? Repo.chat(chatId)) ?? nil
+            let me = chat.flatMap { c in ((try? Repo.personas()) ?? []).first { $0.id == c.personaId } } ?? ((try? Repo.activePersona()) ?? nil)
+            let lockC = char.map { FaceLock.appliesChar($0.row, prompt: prompt) } ?? false
+            let lockM = me.map { FaceLock.appliesMe($0.row, prompt: prompt) } ?? false
+
+            // 先试直传参考图。接口不认（多半是没有 images/edits）才退回读成外貌描述；
+            // 传了几张被拒不自动改成一张再画、也不退回再画（都是第二次调用），记在这条消息上让用户选
+            if (lockC || lockM) && FaceLock.wantsRef(preset) {
+                let ids = (lockC ? FaceLock.refs(char?.row, preset: preset) : []) + (lockM ? FaceLock.refs(me?.row, preset: preset) : [])
+                if !ids.isEmpty {
+                    let ps = parts(prompt: prompt, char: char, all: all, settings: s, me: me)
+                    var got: Data?
+                    do {
+                        got = try await generateWithRef(prompt: compose(ps), refs: ids, preset: preset)
+                    } catch let e as ImageHTTPError {
+                        if ids.count > 1 && [400, 413, 415, 422].contains(e.status) {
+                            return try update(messageId) {
+                                $0["media"] = .string("error")
+                                $0["refMulti"] = .string(preset.id)
+                                $0["mediaError"] = .string("生图接口拒绝了这次请求（传了 \(ids.count) 张参考图）。该接口可能不接受多张参考图：\(e.message.prefix(160))")
+                            }
+                        }
+                        if !e.refUnsupported { throw e }
+                        Diagnostics.shared.record("image-ref-unsupported", ["error": e.message])
+                    }
+                    // 存这一步在外面：存不进去不该把我们送去再画一张
+                    if let got {
+                        let id = try Images.save(got, maxPixel: 1024)
+                        return try update(messageId) { $0["imageId"] = .string(id); $0["media"] = .string("done"); $0["mediaError"] = .string("") }
+                    }
+                }
+            }
+
+            let sample = Vision.sample(chatId: chatId)
+            if lockC, let char { _ = await FaceLock.ensureDesc(.char(char.id), sample: sample) }
+            if lockM, let me { _ = await FaceLock.ensureDesc(.me(me.id), sample: sample) }
+            // 读完再取一次：描述刚写回卡上
+            let c2 = char.flatMap { (try? Repo.character($0.id)) ?? nil } ?? char
+            let m2 = me.flatMap { p in ((try? Repo.personas()) ?? []).first { $0.id == p.id } } ?? me
+            let ps = parts(prompt: prompt, char: c2, all: all, settings: s, me: m2, lockChar: lockC, lockMe: lockM)
             let data = try await generate(prompt: compose(ps), negative: negativeOf(ps), preset: preset)
             // 存这一步失败不再画：图已经画回来了，重画一张也一样存不进去
             let id = try Images.save(data, maxPixel: 1024)
@@ -440,12 +501,80 @@ enum ImageGen {
         }
     }
 
+    /// 带参考图画一张（网页版 generateWithRef）。OpenAI 兼容走 multipart 的 images/edits，几张时写成几个 image[]；
+    /// 对话接口把图和描述放进同一条消息。NovelAI 这一档还不支持，照实报「不支持」，上层退回外貌描述
+    static func generateWithRef(prompt: String, refs ids: [String], preset p: ImagePreset) async throws -> Data {
+        guard p.ready else { throw StoreError(message: "还没有配置生图接口") }
+        if p.kind == "nai" { throw ImageHTTPError(status: 0, message: "NovelAI 这一档还不支持参考图", unsupported: true) }
+        let raw = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !raw.isEmpty else { throw StoreError(message: "这一张没有提示词，没有可画的内容") }
+        let refs = ids.compactMap { FaceLock.shrink($0) }
+        guard !refs.isEmpty else { throw StoreError(message: "锁脸照片已不存在") }
+        let text = await toEnglish(p, raw)
+        try Task.checkCancellation()
+        await Usage.shared.note(task: "image")
+        if p.kind == "chat" {
+            let content: JSONValue = .array([.object(["type": .string("text"), "text": .string(text)])]
+                + refs.map { .object(["type": .string("image_url"), "image_url": .object(["url": .string("data:\($0.type);base64,\($0.data.base64EncodedString())")])]) })
+            let body: [String: JSONValue] = ["model": .string(p.model), "stream": .bool(false),
+                                             "messages": .array([.object(["role": .string("user"), "content": content])])]
+            let (data, _) = try await postRef(p.endpoint("chat/completions"), p, json: body)
+            guard let j = try? JSONValue.parse(data) else { throw StoreError(message: "生图接口返回的不是 JSON") }
+            let got = chatImageOf(j)
+            guard !got.url.isEmpty else { throw StoreError(message: "回复里没有图片：\((j["error"]?["message"]?.string ?? got.text).prefix(160))") }
+            if got.url.lowercased().hasPrefix("data:") { return try base64(got.url) }
+            return try await fetchImage(got.url)
+        }
+        let boundary = "eira-\(UUID().uuidString)"
+        var form = Data()
+        func field(_ name: String, _ value: String) {
+            form.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"\r\n\r\n\(value)\r\n".data(using: .utf8)!)
+        }
+        field("model", p.model)
+        field("prompt", text)
+        field("n", "1")
+        field("size", sizeText(p.size))
+        for (i, r) in refs.enumerated() {
+            let ext = r.type == "image/jpeg" ? "jpg" : r.type == "image/webp" ? "webp" : "png"
+            let name = refs.count > 1 ? "image[]" : "image"
+            form.append("--\(boundary)\r\nContent-Disposition: form-data; name=\"\(name)\"; filename=\"face\(refs.count > 1 ? String(i + 1) : "").\(ext)\"\r\nContent-Type: \(r.type)\r\n\r\n".data(using: .utf8)!)
+            form.append(r.data)
+            form.append("\r\n".data(using: .utf8)!)
+        }
+        form.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        let (data, _) = try await postRef(p.endpoint("images/edits"), p, body: form, type: "multipart/form-data; boundary=\(boundary)")
+        guard let j = try? JSONValue.parse(data) else { throw StoreError(message: "生图接口返回的不是 JSON") }
+        return try await pick(j)
+    }
+
+    /// 带参考图那条路的请求：出错时带着状态码，好判断是「接口不认参考图」还是别的错
+    private static func postRef(_ url: String, _ p: ImagePreset, json: [String: JSONValue]? = nil, body: Data? = nil,
+                                type: String = "application/json") async throws -> (Data, HTTPURLResponse) {
+        guard let u = URL(string: url) else { throw StoreError(message: "生图接口地址无效：\(url)") }
+        var req = URLRequest(url: u)
+        req.httpMethod = "POST"
+        req.setValue(type, forHTTPHeaderField: "content-type")
+        req.setValue("Bearer \(p.apiKey.trimmingCharacters(in: .whitespacesAndNewlines))", forHTTPHeaderField: "authorization")
+        req.httpBody = try json.map { try JSONValue.object($0).encoded() } ?? body
+        req.timeoutInterval = p.timeout > 0 ? p.timeout : 86400
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            guard let http = resp as? HTTPURLResponse else { throw StoreError(message: "生图接口没有返回有效的响应") }
+            if !(200..<300).contains(http.statusCode) { throw ImageHTTPError(status: http.statusCode, message: asError(http.statusCode, data).message) }
+            return (data, http)
+        } catch let e as URLError {
+            if e.code == .cancelled { throw CancellationError() }
+            throw StoreError(message: "连不上生图接口（\(url)）：\(e.localizedDescription)")
+        }
+    }
+
     /// 用户点了「重新生成」：改回 pending 再画一次。旧图不删：原生版不自己删图，留给「存储」里统一清理（网页版第 20 条）。
     static func regenerate(messageId: String) async throws -> Message? {
         guard var row = try Database.shared.get(Collections.messages, id: messageId), row.string("kind") == "image" else { return nil }
         row["imageId"] = .null
         row["media"] = .string("pending")
         row["mediaError"] = .string("")
+        row["refMulti"] = nil
         row.touch()
         try Database.shared.put(Collections.messages, row)
         return await fill(messageId: messageId)
@@ -540,5 +669,21 @@ extension AppSettings {
         var cfg = imageService
         cfg["activeId"] = .string(id)
         setImageService(cfg)
+    }
+}
+
+/// 带参考图那条路的出错：带着状态码（网页版 refUnsupported 按它判断）
+struct ImageHTTPError: LocalizedError {
+    var status: Int
+    var message: String
+    var unsupported = false
+    var errorDescription: String? { message }
+
+    /// 接口不认参考图：没有 edits 这条路（404、405、501），或者 400 一类里写明了不支持图
+    var refUnsupported: Bool {
+        if unsupported { return true }
+        if [404, 405, 501].contains(status) { return true }
+        return [400, 415, 422].contains(status)
+            && message.range(of: "edit|image|multipart|unsupported|not support|不支持|参考图", options: [.regularExpression, .caseInsensitive]) != nil
     }
 }

@@ -38,6 +38,14 @@ enum ExtraCalls {
         ExtraCall(id: "imageTranslate", label: "生图提示词译成英文",
                   isOn: { $0.imageReady && $0.activeImage?.promptLang == "translate" },
                   when: { _ in "选了「生图前翻译」的生图接口，每张含中文的图在生成之前一次（走副用接口）" }),
+        ExtraCall(id: "writeImagePrompt", label: "生图前先写一遍提示词",
+                  isOn: { $0.raw["writeImagePrompt"]?.bool == true },
+                  when: { _ in "角色每写一个 [图片：…]，先多一次接口把它改写成完整描述（走副用接口）" }),
+        // 挂在角色与身份上（有锁脸照片才有）：每组照片读一次，读失败的那一组不再自动读
+        ExtraCall(id: "faceDesc", label: "锁脸照片读成外貌描述",
+                  isOn: { s in s.visionMode != "off" && (((try? Repo.characters()) ?? []).contains { !FaceLock.faces($0.row).isEmpty }
+                      || ((try? Repo.personas()) ?? []).contains { !FaceLock.faces($0.row).isEmpty }) },
+                  when: { _ in "有锁脸照片、这一张用到锁脸且接口不收参考图时，每组照片读一次（走识图那一档），之后用缓存" }),
         // 默认开着：网页版用户明确要求的例外（每通接通过的电话挂断时一次）
         ExtraCall(id: "callSummary", label: "通话结束后写总结",
                   isOn: { $0.raw["callSummary"]?.bool != false },

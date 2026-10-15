@@ -1986,7 +1986,18 @@ struct MessageRow: View, Equatable {
                 Text(err).font(.caption).foregroundStyle(media == "error" ? Theme.danger : Theme.secondaryText)
             }
             if canRedraw && media != "done" {
-                Button("重新生成") { onAction?(.redraw) }.font(.footnote).buttonStyle(.bordered)
+                HStack {
+                    Button("重新生成") { onAction?(.redraw) }.font(.footnote).buttonStyle(.bordered)
+                    // 传了几张参考图被拒：改成这一套接口只传一张（用哪张在锁脸页里选），再画一次
+                    let refMulti = message.row.string("refMulti")
+                    if media == "error" && !refMulti.isEmpty {
+                        Button("改为只传一张并重新生成") {
+                            SettingsModel.shared.update { $0.patchImagePreset(refMulti, ["refOne": .bool(true)]) }
+                            onAction?(.redraw)
+                        }
+                        .font(.footnote).buttonStyle(.bordered)
+                    }
+                }
             }
         }
         .task(id: "\(message.id)|\(media)") {

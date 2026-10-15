@@ -37,6 +37,12 @@ struct ImageSettingsView: View {
                 HelpNote("接在每一张图的提示词末尾。其中单独成行的「Negative」之后的部分作为负面提示词处理，不会当作画面内容发送。")
             }
             Section {
+                Toggle("生图前先写一遍提示词", isOn: model.bool("writeImagePrompt", false))
+            } footer: {
+                Text("开启后每张图多调用一次接口。")
+                HelpNote("角色每写一个 [图片：…]，先调用一次文字接口，参考最近的对话把它改写成一份自带全部信息的画面描述，再交给生图接口（走副用接口）。改写失败时用原话生成。关闭后直接用角色写的那一句。", title: "生图前先写一遍提示词")
+            }
+            Section {
                 ForEach(ImageGen.styles) { st in
                     Toggle(st.label, isOn: styleBinding(st.id))
                 }
@@ -117,6 +123,23 @@ struct ImagePresetEditView: View {
                     Text("参数")
                 } footer: {
                     HelpNote(paramNote(p))
+                }
+                if p.kind != "nai" {
+                    Section {
+                        if p.kind == "openai" {
+                            Picker("锁脸参考图", selection: field("ref")) {
+                                Text("不传").tag("")
+                                Text("传照片（images/edits）").tag("edits")
+                            }
+                        }
+                        Toggle("只传一张", isOn: boolField("refOne"))
+                    } header: {
+                        Text("锁脸")
+                    } footer: {
+                        HelpNote(p.kind == "chat"
+                             ? "对话接口把锁脸照片和描述放在同一条消息里发出。只传一张：接口不接受多张时开启，每人只传选定的那一张（在锁脸页里选）。"
+                             : "传照片：锁脸时把照片随请求发到 images/edits，接口支持时比外貌描述更像；接口不支持参考图时退回外貌描述，不额外调用。只传一张：接口不接受多张时开启，每人只传选定的那一张（在锁脸页里选）。", title: "生图接口的锁脸")
+                    }
                 }
                 if p.kind != "chat" {
                     Section {

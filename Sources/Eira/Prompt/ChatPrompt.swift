@@ -632,6 +632,18 @@ enum ChatPrompt {
 
     /// 这段文字会激活哪些条目（按注入的先后），以及一共估算多少 token。激活预览与拼提示词用同一份
     /// books：线下一场自己关掉的（off）与额外挂上的（on）几本（网页版 4.268）。不给时按角色挂的与全局的
+    /// 某一用途（生图、语音）的世界书命中的条目：挂在角色上的与全局的，常驻或扫到关键词的。不设预算（网页版 activateImage / activateVoice）
+    static func pickPurpose(char: Character, scanText: String, purpose: String) -> [LoreEntry] {
+        let books = ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == purpose && ($0.global || char.lorebookIds.contains($0.id)) }
+        var hits: [LoreEntry] = []
+        for book in books {
+            for e in book.entries where e.enabled && !e.isCard && !e.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if hit(e, scanText) { hits.append(e) }
+            }
+        }
+        return hits.sorted { a, b in a.priority != b.priority ? a.priority > b.priority : a.order < b.order }
+    }
+
     static func selectLore(char: Character, scanText: String, budget: Int,
                            books pick: (off: [String], on: [String])? = nil) -> (items: [LoreEntry], used: Int) {
         let books = ((try? Repo.lorebooks()) ?? []).filter { b in

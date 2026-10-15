@@ -77,6 +77,7 @@ struct CharacterEditView: View {
             Section {
                 TextField("外貌", text: $appearance, axis: .vertical).lineLimit(2...10)
                 TextField("这个角色的固定生图提示词", text: $imagePrompt, axis: .vertical).lineLimit(2...10)
+                NavigationLink("锁脸") { FaceLockView(owner: .char(charId)) }
             } header: {
                 Text("生图")
             } footer: {

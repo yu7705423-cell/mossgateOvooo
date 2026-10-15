@@ -124,6 +124,11 @@ struct PersonaEditView: View {
             } footer: {
                 HelpNote("角色在对话中看到的「你是谁」。")
             }
+            Section {
+                NavigationLink("我的锁脸") { FaceLockView(owner: .me(personaId)) }
+            } footer: {
+                HelpNote("图片里出现你时（描述里写了你的名字，或是合照），照片随生图请求发出，或读成外貌描述拼进提示词，和角色的锁脸同一套规则。", title: "我的锁脸")
+            }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
         .navigationTitle("编辑身份")
