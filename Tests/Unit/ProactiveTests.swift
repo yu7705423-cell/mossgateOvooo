@@ -135,4 +135,24 @@ final class ProactiveTests: StoreTestCase {
         XCTAssertFalse(BgPush.shared.problem.isEmpty)
         XCTAssertGreaterThan(Proactive.nextAt("char_a"), Date().millis)
     }
+
+    /// 群里主动开口：默认关；接口一直失败时到点只打一次，落点先挪走；应用在后台时不发
+    func testGroupFailingOncePerInterval() async throws {
+        let z = try People.createCharacter(name: "小周")
+        let g = try GroupChat.create(memberIds: ["char_a", z.id], title: "", personaId: "me_root")
+        XCTAssertFalse(GroupProactive.config(g).on)
+        XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "groupProactive" })
+        try GroupProactive.save(g.id, Proactive.Config(on: true, minutes: 60, quietFrom: 0, quietTo: 0))
+        XCTAssertTrue(ExtraCalls.switchedOn(.load()).contains { $0.id == "groupProactive" })
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        let now = Date().millis
+        Proactive.setNext(GroupProactive.key(g.id), now - 1000)
+        _ = await GroupProactive.tick(now: now, holds: true)
+        XCTAssertEqual(MockNet.count, 0)
+        _ = await GroupProactive.tick(now: now)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertGreaterThan(GroupProactive.nextAt(g.id), now)
+        _ = await GroupProactive.tick(now: now + 1000)
+        XCTAssertEqual(MockNet.count, 1)
+    }
 }

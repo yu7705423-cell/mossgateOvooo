@@ -119,7 +119,7 @@ struct ChatSettingsView: View {
             action: { showSkin = true })
         if c.isGroup {
             add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称",
-                dest: AnyView(MenuPage("群资料") { GroupMembersSection(chatId: chatId) }))
+                dest: AnyView(MenuPage("群资料") { GroupMembersSection(chatId: chatId); GroupProactiveSection(chatId: chatId) }))
             add("face", "这个群", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "成员的头像 我的头像", dest: AnyView(facePage(c)))
         } else if let charId = c.characterIds.first {
             let char = try? Repo.character(charId)

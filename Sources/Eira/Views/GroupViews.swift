@@ -318,3 +318,60 @@ struct AddMembersView: View {
         }
     }
 }
+
+/// 群里主动开口（网页版 GroupBits 的那一段）：开关存在这个群上，默认关
+struct GroupProactiveSection: View {
+    let chatId: String
+    @State private var cfg = Proactive.Config()
+    @State private var loaded = false
+    @State private var sending = false
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            Toggle("群里主动开口", isOn: $cfg.on)
+            if cfg.on {
+                NumberRow(title: "平均间隔", value: $cfg.minutes, unit: "分钟", placeholder: "120", range: 1...100000)
+                Stepper("免打扰开始：\(cfg.quietFrom) 点", value: $cfg.quietFrom, in: 0...23)
+                Stepper("免打扰结束：\(cfg.quietTo) 点", value: $cfg.quietTo, in: 0...23)
+                HStack { Text("下一次预计"); Spacer(); Text(nextText).foregroundStyle(Theme.text2) }
+            }
+            Button(sending ? "正在发起" : "立即发起一次") { sendNow() }.disabled(sending)
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } header: {
+            Text("主动开口")
+        } footer: {
+            Text("每次开口调用一次接口；立即发起点一次调用一次。")
+            HelpNote("开启后，群里一段时间没人说话时，由成员先开口，实际间隔在设定值的一半到一倍半之间。一次触发调用一次接口，模型一次写出开口的几位成员。免打扰时段内不发，开始与结束相同表示不设；群成员都在禁言中、未读消息达到「设置 - 用量与上限」中的条数时不发。只在应用打开时发送，后台消息服务器不代发。", title: "群里主动开口")
+        }
+        .onAppear {
+            cfg = GroupProactive.config((try? Repo.chat(chatId)) ?? nil)
+            loaded = true
+        }
+        .onChange(of: cfg) { _, v in
+            guard loaded else { return }
+            do { try GroupProactive.save(chatId, v); problem = nil } catch { problem = "保存失败：\(error.localizedDescription)" }
+        }
+    }
+
+    private var nextText: String {
+        let t = GroupProactive.nextAt(chatId)
+        guard t > 0 else { return "尚未排定" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Calendar.current.isDateInToday(Date(millis: t)) ? "今天 HH:mm" : "M月d日 HH:mm"
+        return f.string(from: Date(millis: t))
+    }
+
+    private func sendNow() {
+        sending = true
+        problem = nil
+        Task {
+            do {
+                let made = try await GroupProactive.send(chatId: chatId)
+                if made.isEmpty { problem = "这段会话正在生成回复，稍后再试" }
+            } catch { problem = "未能发起：\(error.localizedDescription)" }
+            sending = false
+        }
+    }
+}
