@@ -1,10 +1,16 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 全部世界书。
 struct LorebookListView: View {
     @State private var books: [Lorebook] = []
     @State private var opening: Target?
     @State private var problem: String?
+    @State private var importing = false
+    @State private var batch: LoreBatch?
+    @State private var exported: URL?
+
+    struct LoreBatch: Identifiable { let id = UUID(); let drafts: [LoreFile.Draft]; let failed: [String] }
 
     struct Target: Identifiable, Hashable { let id: String }
 
@@ -20,6 +26,19 @@ struct LorebookListView: View {
                 }
             }
             if books.isEmpty { Text("暂无世界书。").foregroundStyle(Theme.secondaryText) }
+            Section {
+                Button("从文件批量导入") { importing = true }
+                if !books.isEmpty {
+                    Button("导出全部为 txt") {
+                        do { exported = try LoreFile.exportFile(books.map(\.row)) } catch { problem = "未能导出：\(error.localizedDescription)" }
+                    }
+                }
+                if let exported {
+                    ShareLink(item: exported) { Label("存储或发送导出的文件", systemImage: "square.and.arrow.up") }
+                }
+            } footer: {
+                HelpNote("批量导入读 txt、md、docx，以及装有它们的 zip，每个文件一本：有「## 」小标题的一个小标题一条，没有就整篇一条。本应用导出的文件写明了每一条的关键词、常驻、位置与深度，导入时原样还原。读进来先进确认页，逐本确认后才保存。不做 JSON 导入。导出时一本为一个 txt，多本装进一个 zip。", title: "世界书：导入与导出")
+            }
         }
         .navigationTitle("世界书")
         .toolbar {
@@ -27,6 +46,12 @@ struct LorebookListView: View {
                 Button(action: create) { NavIcon("plus") }.accessibilityLabel("新建世界书")
             }
         }
+        .documentPicker(isPresented: $importing, types: ["txt", "md", "docx", "zip"].compactMap { UTType(filenameExtension: $0) }, multiple: true) { urls in
+            guard !urls.isEmpty else { return }
+            let r = LoreFile.readFiles(urls)
+            batch = LoreBatch(drafts: r.drafts, failed: r.failed)
+        }
+        .sheet(item: $batch, onDismiss: reload) { b in NavigationStack { LoreImportView(drafts: b.drafts, failed: b.failed) } }
         .navigationDestination(item: $opening) { t in LorebookView(bookId: t.id) }
         .onAppear(perform: reload)
     }
@@ -316,6 +341,69 @@ struct CharacterLoreView: View {
             if on { attached.insert(id) } else { attached.remove(id) }
         } catch {
             problem = "未能保存：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 批量导入的确认页（网页版 lore/Batch.js）：逐本定名称、用途、全局、启用、常驻、位置，全部确定后一并保存。
+/// 这是「先看一眼再决定存不存」的确认页，所以显示每本的开头几句
+struct LoreImportView: View {
+    let drafts: [LoreFile.Draft]
+    let failed: [String]
+    @Environment(\.dismiss) private var dismiss
+    @State private var opts: [UUID: LoreFile.Options] = [:]
+    @State private var problem: String?
+
+    private static let purposes: [(String, String)] = [("chat", "对话"), ("image", "生图"), ("voice", "语音"), ("memory", "记忆总结"), ("forum", "论坛")]
+
+    var body: some View {
+        let chosen = drafts.filter { opts[$0.id]?.include ?? true }
+        Form {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            if !failed.isEmpty { Text("未能读取：\(failed.joined(separator: "；"))").font(.footnote).foregroundStyle(Theme.danger) }
+            if drafts.isEmpty { Text("没有读到可导入的内容。支持 txt、md、docx，以及装有它们的 zip。").foregroundStyle(Theme.secondaryText) }
+            ForEach(drafts) { d in
+                let o = Binding(get: { opts[d.id] ?? LoreFile.Options(d) }, set: { opts[d.id] = $0 })
+                Section {
+                    Toggle(isOn: o.include) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("导入这一本")
+                            let first = String((d.entries.first?["content"]?.string ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(80))
+                            Text("\(d.entries.count) 个条目\(first.isEmpty ? "" : "。\(first)")").font(.footnote).foregroundStyle(Theme.secondaryText)
+                        }
+                    }
+                    if o.wrappedValue.include {
+                        TextField("名称", text: o.name)
+                        Picker("用途", selection: o.purpose) { ForEach(Self.purposes, id: \.0) { Text($0.1).tag($0.0) } }
+                        if o.wrappedValue.purpose != "forum" { Toggle("全局生效", isOn: o.global) }
+                        if d.own { Toggle("保留文件里每一条的设置", isOn: o.keepOwn) }
+                        if !(d.own && o.wrappedValue.keepOwn) {
+                            Toggle("启用", isOn: o.enabled)
+                            Toggle("常驻", isOn: o.constant)
+                            if o.wrappedValue.purpose == "chat" {
+                                Picker("所属部分", selection: o.part) { Text("角色前").tag("before"); Text("角色后").tag("after") }
+                                Stepper("注入深度 \(o.wrappedValue.depth)", value: o.depth, in: 0...Int(Int32.max))
+                            }
+                        }
+                    }
+                } header: { Text(d.source) } footer: {
+                    HelpNote("全局生效：对所有角色注入，无需单独关联。常驻：每一轮都注入；关闭时条目需有关键词、在对话中提到才注入，从文件读入的条目多半没有关键词。注入深度 0 表示放在设定区，大于 0 表示插在对话中倒数第几条之前。", title: "世界书：导入确认")
+                }
+            }
+        }
+        .navigationTitle("导入世界书")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button(chosen.isEmpty ? "保存" : "保存 \(chosen.count) 本") {
+                    do {
+                        for d in chosen { try LoreFile.save(d, opts[d.id] ?? LoreFile.Options(d)) }
+                        dismiss()
+                    } catch { problem = "未能保存：\(error.localizedDescription)" }
+                }
+                .disabled(chosen.isEmpty)
+            }
         }
     }
 }
