@@ -202,22 +202,38 @@ enum VoiceGen {
 
     // MARK: - 请求
 
-    /// 合成一段，返回 mp3 字节。真正发出去之前记一笔账。
+    /// 合成一句，返回 mp3 字节。真正发出去之前记一笔账。
+    /// 带台本标记的（VoiceScript）按情绪切段，一段一次请求，音频按顺序接上；没有标记就是从前那一次请求
     static func speak(text: String, voiceId: String, speed: Double = 1, prompt: String = "", lang: String = "",
                       preset p: VoicePreset) async throws -> Data {
         guard !p.apiKey.isEmpty else { throw StoreError(message: "还没有配置语音接口") }
         let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !t.isEmpty else { throw StoreError(message: "没有可以朗读的文字") }
+        guard !VoiceScript.plain(t).isEmpty else { throw StoreError(message: "没有可以朗读的文字") }
         let style = (prompt: prompt.isEmpty ? p.prompt : prompt, lang: lang.isEmpty ? p.lang : lang)
+        guard VoiceScript.hasTags(t) else { return try await one(p, t, voiceId, speed, style.prompt, style.lang) }
+        var out = Data()
+        for seg in VoiceScript.plan(p.kind, t, baseMood: style.prompt, model: p.model) {
+            let segText = VoiceScript.text(p.kind, seg, model: p.model)
+            if segText.isEmpty { continue }
+            // MiniMax 的情绪只认固定几个词，拿这一段的情绪词本身去认；别家收自由文本，这一段的情绪与角色卡那一份一起给
+            let segPrompt = p.kind == "minimax" ? (seg.mood.isEmpty ? style.prompt : seg.mood)
+                : [seg.mood != style.prompt ? seg.mood : "", style.prompt].filter { !$0.isEmpty }.joined(separator: "；")
+            out.append(try await one(p, segText, voiceId, speed, segPrompt, style.lang))
+        }
+        if out.isEmpty { throw StoreError(message: "台本里没有可念的内容") }
+        return out
+    }
+
+    private static func one(_ p: VoicePreset, _ t: String, _ voiceId: String, _ speed: Double, _ prompt: String, _ lang: String) async throws -> Data {
         try Task.checkCancellation()
         await Usage.shared.note(task: "tts")
         let started = Date()
         do {
             let data: Data
             switch p.kind {
-            case "openai": data = try await openai(p, t, voiceId, speed, style.prompt, style.lang)
-            case "eleven": data = try await eleven(p, t, voiceId, speed, style.lang)
-            default: data = try await minimax(p, t, voiceId, speed, style.prompt, style.lang)
+            case "openai": data = try await openai(p, t, voiceId, speed, prompt, lang)
+            case "eleven": data = try await eleven(p, t, voiceId, speed, lang)
+            default: data = try await minimax(p, t, voiceId, speed, prompt, lang)
             }
             Diagnostics.shared.record("tts", ["kind": p.kind, "model": p.model, "bytes": data.count,
                                               "ms": Int(Date().timeIntervalSince(started) * 1000)])
@@ -362,7 +378,11 @@ enum VoiceGen {
         do {
             let st = style(char, preset)
             let speed = char?.row.number("voiceSpeed") ?? 1
-            let data = try await speak(text: row.string("voiceText"), voiceId: vid, speed: speed > 0 ? speed : 1,
+            // 先写成台本：原话不动，插上哪里停顿、哪里换情绪（依据是用户的语音世界书）。默认关，开了才多这一次
+            let text = row.string("voiceText")
+            let said = await PromptWrite.scriptFor(text, chatId: row.string("chatId"), char: (char ?? nil))
+            if said != text { _ = try? update(messageId) { $0["voiceScript"] = .string(said) } }
+            let data = try await speak(text: said, voiceId: vid, speed: speed > 0 ? speed : 1,
                                        prompt: st.prompt, lang: st.lang, preset: preset)
             let id = try Files.save(data, ext: "mp3", type: "audio/mpeg")
             return try update(messageId) {
@@ -399,6 +419,15 @@ enum VoiceGen {
 
 /// 任意二进制附件（语音）。图片走 Images，那边会压缩，音频不能压（网页版 db/files.js）。
 enum Files {
+    /// 交给系统「存储到文件 / 发送」用的一份：拷到临时目录、起个看得懂的名字。原件不动
+    static func exportURL(_ id: String, name: String) -> URL? {
+        guard let src = MediaStore.url(.files, id: id) else { return nil }
+        let safe = name.replacingOccurrences(of: #"[/\\:*?"<>|\s]+"#, with: "_", options: .regularExpression)
+        let dst = FileManager.default.temporaryDirectory.appendingPathComponent("\(safe.isEmpty ? "语音" : safe).\(src.pathExtension)")
+        try? FileManager.default.removeItem(at: dst)
+        do { try FileManager.default.copyItem(at: src, to: dst); return dst } catch { return nil }
+    }
+
     static func save(_ data: Data, ext: String, type: String) throws -> String {
         let id = Ids.make("f")
         let dir = AppPaths.media.appendingPathComponent(MediaKind.files.rawValue, isDirectory: true)

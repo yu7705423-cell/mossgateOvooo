@@ -179,6 +179,12 @@ struct VoiceSettingsView: View {
                 HelpNote("开启且当前接口填全后，在角色卡上为角色填写音色，角色即可在回复里发语音：每条语音调用一次语音接口，失败不自动重试。关闭后角色不再发语音，已有的语音照常播放。")
             }
             Section {
+                Toggle("合成语音前先写成台本", isOn: model.bool("writeVoicePrompt", false))
+            } footer: {
+                Text("开启后每条语音多调用一次接口；通话中不另计。")
+                HelpNote("角色每发一条语音，先调用一次文字接口，在原句中标出停顿、情绪与声音（依据是用途为「语音」的世界书），再按标记合成（走副用接口）。台本只加标记、不改台词，对不上原话时照原话念。情绪一次只能有一种的接口按情绪切成几段分别合成，按字数计费，不多花钱。通话中由通话模型在台词里直接标出，不另调用。", title: "语音台本")
+            }
+            Section {
                 ForEach(model.s.voicePresets) { p in
                     NavigationLink { VoicePresetEditView(id: p.id) } label: {
                         HStack {

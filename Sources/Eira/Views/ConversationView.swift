@@ -1777,6 +1777,11 @@ struct MessageRow: View, Equatable {
         if (message.kind == "image" && !message.imageId.isEmpty) || (message.kind == "sticker" && !message.row.string("stickerId").isEmpty) {
             Button { onAction?(.saveAlbum) } label: { Label("存相册", systemImage: "photo.on.rectangle") }
         }
+        // 存储语音：交给系统的分享面板，可存到「文件」或发给别人
+        if message.kind == "voice", case let aid = message.row.string("audioId"), !aid.isEmpty,
+           let url = Files.exportURL(aid, name: "语音-\(String(message.row.string("voiceText").prefix(12)))") {
+            ShareLink(item: url) { Label("存储语音", systemImage: "square.and.arrow.down") }
+        }
         if !MessageActions.bodyText(message).isEmpty {
             Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
         }

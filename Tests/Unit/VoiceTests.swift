@@ -176,4 +176,35 @@ final class VoiceTests: StoreTestCase {
         XCTAssertEqual(MockNet.requests.first?.url?.path, "/v1/chat/completions")
         XCTAssertEqual(MockNet.count, 1)
     }
+
+    func testScriptPlanAndText() {
+        let raw = "<情绪 平静>你回来了。<停顿 0.8><声音 叹气><情绪 生气>今天怎么这么晚？"
+        XCTAssertEqual(VoiceScript.plain(raw), "你回来了。今天怎么这么晚？")
+        let segs = VoiceScript.plan("minimax", raw, model: "speech-2.8-hd")
+        XCTAssertEqual(segs.map(\.mood), ["平静", "生气"])
+        XCTAssertEqual(VoiceScript.text("minimax", segs[0], model: "speech-2.8-hd"), "你回来了。<#0.80#>(sighs)")
+        XCTAssertEqual(VoiceScript.text("minimax", segs[1], model: "speech-2.8-hd"), "今天怎么这么晚？")
+        XCTAssertEqual(VoiceScript.text("openai", VoiceScript.plan("openai", "好<停顿 1>吧<停顿 2>")[0]), "好……吧", "段尾的停顿去掉")
+        XCTAssertEqual(VoiceScript.plan("eleven", raw, model: "eleven_v3").count, 1, "v3 的情绪写在句子里，不切")
+        XCTAssertEqual(VoiceScript.mmEmotion("whisper", model: "speech-02"), "")
+    }
+
+    /// 台本默认关：一条语音一次合成。开了多一次写台本，按情绪切段各合成一次，台本存在消息上
+    func testScriptOffByDefaultAndSplits() async throws {
+        try configure()
+        XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "writeVoicePrompt" })
+        try setSettings(["writeVoicePrompt": .bool(true)])
+        MockNet.reset { r, _ in
+            if r.url?.host == "tts.test" { return .init(status: 200, body: #"{"data":{"audio":"49443303"},"base_resp":{"status_code":0}}"#) }
+            let body = String(decoding: r.httpBodyStreamData() ?? Data(), as: UTF8.self)
+            if body.contains("voice actor") { return .init(status: 200, body: MockNet.anthropicStream("<情绪 开心>你好<情绪 难过>再见")) }
+            return .init(status: 200, body: MockNet.anthropicStream("[语音：你好再见]"))
+        }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        try await settle()
+        XCTAssertEqual(MockNet.requests.filter(isTTS).count, 2)
+        let m = try XCTUnwrap(Repo.messages(chatId: "chat_a").last { $0.kind == "voice" })
+        XCTAssertEqual(m.row.string("voiceScript"), "<情绪 开心>你好<情绪 难过>再见")
+        XCTAssertEqual(m.row.string("media"), "done")
+    }
 }

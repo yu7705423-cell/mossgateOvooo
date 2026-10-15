@@ -53,4 +53,44 @@ enum PromptWrite {
             return raw
         }
     }
+
+    /// 比较两句话是不是同一句：去掉空白与标点再比。模型常动一两个标点，那不算改台词
+    static func bare(_ t: String) -> String {
+        var v = String.UnicodeScalarView()
+        v.append(contentsOf: t.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0)
+            && !CharacterSet.punctuationCharacters.contains($0) && !CharacterSet.symbols.contains($0) })
+        return String(v)
+    }
+
+    /// 这个角色的语音世界书（用途为「语音」的书）里，拿这句话与前几句对话扫到的条目
+    static func voiceRules(char: Character?, scan: String) -> String {
+        guard let char else { return "" }
+        return ChatPrompt.pickPurpose(char: char, scanText: scan, purpose: "voice")
+            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// 通话里用的：语音世界书整本（通话边说边念，来不及按每句扫）
+    static func voiceBook(char: Character) -> String {
+        ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == "voice" && ($0.global || char.lorebookIds.contains($0.id)) }
+            .flatMap(\.entries).filter { $0.enabled && !$0.isCard }
+            .map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// 把要念的那一句写成台本：原话不动，只在里面插停顿与情绪标记（VoiceScript）。
+    /// 台本只许加标记，不许改台词：去掉标记之后和原话对不上，就不用它，照原话念
+    static func scriptFor(_ text: String, chatId: String, char: Character?) async -> String {
+        let raw = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard voiceOn(), !raw.isEmpty else { return raw }
+        let recent = ((try? Repo.messages(chatId: chatId, limit: 4)) ?? []).map(\.content).joined(separator: "\n")
+        let rules = voiceRules(char: char, scan: "\(recent)\n\(raw)")
+        do {
+            let out = try await write(task: "voice.script", template: "task.voice-script",
+                                      vars: ["line": raw, "context": context(chatId: chatId, char: char), "rules": rules.isEmpty ? "(none)" : rules])
+            guard !out.isEmpty, VoiceScript.hasTags(out), bare(VoiceScript.plain(out)) == bare(raw) else { return raw }
+            return out
+        } catch {
+            Diagnostics.shared.record("voice-script-failed", ["error": error.localizedDescription])
+            return raw
+        }
+    }
 }

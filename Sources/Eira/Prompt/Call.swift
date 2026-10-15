@@ -40,7 +40,14 @@ enum CallEngine {
                 : Templates.render("skeleton.call-translate", ["lang": lang], settings: s),
         ], settings: s)
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
-        let built = try ChatPrompt.build(chat: chat, char: char, settings: s, call: (rule: rule, script: ""))
+        // 语音台本：开着时由通话模型在台词里直接标停顿与情绪，不另调接口；规则是用户的语音世界书，整本给出
+        var script = ""
+        if PromptWrite.voiceOn(s) {
+            let rules = PromptWrite.voiceBook(char: char)
+            script = Templates.render("skeleton.call-script", ["rules": rules.isEmpty ? "" : "Delivery rules written by the user:\n\(rules)"], settings: s)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let built = try ChatPrompt.build(chat: chat, char: char, settings: s, call: (rule: rule, script: script))
         return Prepared(system: built.system, history: built.messages)
     }
 
@@ -97,7 +104,7 @@ enum CallEngine {
 
     /// 字幕：动作换成（…），译文另起一行；流式时没写完的半个先不显示
     static func subtitle(_ text: String) -> String {
-        let t = drop(drop(text, transHalf), actHalf)
+        let t = VoiceScript.plain(drop(drop(text, transHalf), actHalf))
         return prose(t).replacingOccurrences(of: transRe, with: "\n$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
     }

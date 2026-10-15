@@ -196,7 +196,7 @@ final class CallSession: ObservableObject {
                 self.error = "语音合成失败：\(error.localizedDescription)"
             }
         } else {
-            let u = AVSpeechUtterance(string: spoken)
+            let u = AVSpeechUtterance(string: VoiceScript.plain(spoken))
             synth.speak(u)
         }
     }
