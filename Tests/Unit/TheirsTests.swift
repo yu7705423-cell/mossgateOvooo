@@ -161,4 +161,23 @@ final class TheirsTests: StoreTestCase {
         sys = try ChatPrompt.build(chat: chat, char: char, settings: .load()).system
         XCTAssertTrue(sys.contains("[存图"))
     }
+
+    /// 代发进双方的提示词：代发的那句与对方紧接着回的；知道的点明是代发，不知道的写成它自己发的；对方那边也记得
+    func testProxyFacts() throws {
+        var other = try XCTUnwrap(Repo.character("char_a")).row
+        other["id"] = .string("char_b"); other["name"] = .string("阿明")
+        try Database.shared.put(Collections.characters, other)
+        let c = try Theirs.startChat("char_a", npcId: "char_b", name: "阿明")
+        _ = try Theirs.sendOther(c.id, "明天见", mode: Theirs.proxyUnaware)
+        try Theirs.addLine(c.id, ["from": .string("other"), "text": .string("好"), "re": .bool(true)])
+        try Theirs.addLine(c.id, ["from": .string("other"), "text": .string("生成的背景"), "re": .bool(false)])
+        let me = try XCTUnwrap(Repo.character("char_a")), b = try XCTUnwrap(Repo.character("char_b"))
+        let s = AppSettings.load()
+        XCTAssertEqual(Theirs.factsForSender(me, personaId: "me_root", userName: "小于", settings: s),
+                       ["You sent to 阿明: 「明天见」", "阿明 replied: 「好」"])
+        XCTAssertEqual(Theirs.factsForRecipient(b, settings: s), ["林 messaged you: 「明天见」", "You replied to 林: 「好」"])
+        _ = try Theirs.sendOther(c.id, "是我", mode: Theirs.proxyAware)
+        XCTAssertTrue(Theirs.proxyBlock(char: me, personaId: "me_root", userName: "小于", settings: s)
+            .contains("小于 logged into your account and sent to 阿明 as you: 「是我」"))
+    }
 }

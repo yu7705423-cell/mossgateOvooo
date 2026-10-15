@@ -549,6 +549,71 @@ enum Theirs {
         return rejected
     }
 
+    // MARK: - 代发进提示词（网页版 proxy.js 的 factsForSender、factsForRecipient，context/proxy.js）
+    //
+    // 只取有代发参与的那几句：代发的那句，和对方紧接着回的（re）。生成出来的那几段不算，那是这台手机的背景。
+    // 被代发的那一方也记得：对它来说那都是那个角色发的。只陈述事实（第 16 条）
+
+    private static func clip(_ s: String) -> String { String(s.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(200)) }
+
+    private static func proxied(_ c: PhoneChat) -> [[String: JSONValue]] {
+        var out: [[String: JSONValue]] = []
+        var open = false
+        for l in (c.row["lines"]?.array ?? []).compactMap(\.object) {
+            if !(l["proxy"]?.string ?? "").isEmpty { out.append(l); open = (l["rejected"]?.string ?? "").isEmpty; continue }
+            if open && l["from"]?.string == "other" && l["re"]?.bool == true { out.append(l); continue }
+            open = false
+        }
+        return out
+    }
+
+    /// 带进提示词的条数（settings.proxyLines，默认 10，0 为全带）
+    private static func cap(_ s: AppSettings) -> Int { max(0, Int(s.num("proxyLines", 10))) }
+
+    /// 按时刻排，同一时刻保持原来的先后（sort 不保证稳定）
+    private static func byTime(_ list: [(PhoneChat, [String: JSONValue])]) -> [(PhoneChat, [String: JSONValue])] {
+        list.enumerated().sorted {
+            let a = $0.element.1["at"]?.number ?? 0, b = $1.element.1["at"]?.number ?? 0
+            return a != b ? a < b : $0.offset < $1.offset
+        }.map(\.element)
+    }
+
+    private static func tail<T>(_ list: [T], _ n: Int) -> [T] { n > 0 ? Array(list.suffix(n)) : list }
+
+    static func factsForSender(_ char: Character, personaId: String, userName: String, settings s: AppSettings) -> [String] {
+        var out: [String] = []
+        let n = cap(s)
+        let mine = ((try? Repo.chats()) ?? []).filter { !$0.isGroup && $0.characterIds == [char.id] && ($0.personaId.isEmpty || $0.personaId == personaId) }
+            .flatMap { ((try? Repo.messages(chatId: $0.id)) ?? []).filter { $0.row.string("proxy") == proxyAware } }
+        for m in tail(mine, n) { out.append("\(userName) logged into your account and sent this to \(userName) as you: 「\(clip(m.content))」") }
+        let lines = byTime(chatsOf(char.id).flatMap { c in proxied(c).map { (c, $0) } })
+        for (c, l) in tail(lines, n) {
+            let text = clip(l["text"]?.string ?? "")
+            if l["from"]?.string == "other" { out.append("\(c.name) replied: 「\(text)」"); continue }
+            let head = l["proxy"]?.string == proxyAware ? "\(userName) logged into your account and sent to \(c.name) as you" : "You sent to \(c.name)"
+            let rej = l["rejected"]?.string ?? ""
+            out.append("\(head): 「\(text)」" + (rej.isEmpty ? "" : " (not delivered: \(c.name) has \(rej == "blocked" ? "blocked" : "removed") you)"))
+        }
+        return out
+    }
+
+    static func factsForRecipient(_ char: Character, settings s: AppSettings) -> [String] {
+        let rows = ((try? Database.shared.all(chats)) ?? []).map(PhoneChat.init(row:)).filter { $0.npcId == char.id }
+        let lines = byTime(rows.flatMap { c in proxied(c).filter { ($0["rejected"]?.string ?? "").isEmpty }.map { (c, $0) } })
+        return tail(lines, cap(s)).map { c, l in
+            let sender = ((try? Repo.character(c.charId)) ?? nil)?.name ?? "someone"
+            let text = clip(l["text"]?.string ?? "")
+            return l["from"]?.string == "other" ? "You replied to \(sender): 「\(text)」" : "\(sender) messaged you: 「\(text)」"
+        }
+    }
+
+    /// [手机上的对话] 区块
+    static func proxyBlock(char: Character, personaId: String, userName: String, settings s: AppSettings) -> String {
+        let lines = factsForSender(char, personaId: personaId, userName: userName.isEmpty ? "the user" : userName, settings: s)
+            + factsForRecipient(char, settings: s)
+        return lines.isEmpty ? "" : "[手机上的对话]\n" + lines.joined(separator: "\n")
+    }
+
     static func removeChat(_ id: String) throws { try Database.shared.delete(chats, id: id) }
 
     // MARK: - 生成（一项一次请求，只在用户点了时调；只发角色设定，不发对话历史）

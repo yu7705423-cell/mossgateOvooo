@@ -62,6 +62,12 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "角色手机代发带进对话几条", value: model.number("proxyLines", 10), unit: "条", placeholder: "全部")
+            } footer: {
+                HelpNote("在角色手机上代发的消息与对方的回复，按时间取最近这么多条写进双方的对话。填 0 表示全部，提示词随之变长。")
+            }
+
+            Section {
                 NumberRow(title: "我的日程往前读几天", value: model.number("userSchedBack", 1), unit: "天", placeholder: "0")
                 NumberRow(title: "我的日程往后读几天", value: model.number("userSchedAhead", 0), unit: "天", placeholder: "0")
             } footer: {

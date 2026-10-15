@@ -64,6 +64,8 @@ enum ChatPrompt {
             // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
             "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
             // 你的日程（「日常 - 我的日程」）：没有日程时为空；不给这个角色看的整段不给
+            // 代发与手机上的对话（角色手机）：只取有代发参与的那几句
+            "proxy": Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s),
             "userSched": UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now),
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
