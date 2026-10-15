@@ -28,6 +28,7 @@ import jwt  # PyJWT，工作流里装
 
 API = 'https://api.appstoreconnect.apple.com/v1'
 PREFIX = 'Eiraowo CI '   # 这个工作流建的描述文件都叫这个开头，后面是建的时间
+WEB_PREFIX = 'Eira CI '   # 网页版仓库的工作流建的（同一个账号）。它自己也只留最近一张
 
 
 def token():
@@ -73,7 +74,14 @@ def prepare(bundle, out):
     except SystemExit as e:
         print(f'证书      申请不下来，收掉最近那张旧证书再试：{e}')
         prune(keep=0)
-        cert = call('POST', '/certificates', body)['data']
+        try:
+            cert = call('POST', '/certificates', body)['data']
+        except SystemExit as e2:
+            # 还是满的：名额被网页版的工作流占着。它自己的规矩也是只留最近一张，更早的照它的规矩收掉再试一次
+            print(f'证书      仍然申请不下来：{e2}')
+            listing()
+            prune(keep=1, prefix=WEB_PREFIX)
+            cert = call('POST', '/certificates', body)['data']
     with open(os.path.join(out, 'cert.cer'), 'wb') as f:
         f.write(base64.b64decode(cert['attributes']['certificateContent']))
     ids = {'certificate': cert['id'], 'team': team, 'bundleId': bid}
@@ -92,10 +100,19 @@ def prepare(bundle, out):
     print(f'描述文件  已生成（{prof["id"]}）')
 
 
-def prune(keep):
-    """这个工作流以前建的描述文件与它们的证书，按建的时间留最近 keep 份，其余删掉、撤销"""
+def listing():
+    """账号里现有的发布证书：编号、名字、到期日（不含私钥，只用来看名额被谁占着）"""
+    rows = call('GET', '/certificates?filter[certificateType]=DISTRIBUTION,IOS_DISTRIBUTION&limit=50').get('data', [])
+    print(f'证书      账号里现有 {len(rows)} 张发布证书：')
+    for c in rows:
+        a = c['attributes']
+        print(f"          {c['id']}  {a.get('name', '')}  {a.get('displayName', '')}  到期 {a.get('expirationDate', '')}")
+
+
+def prune(keep, prefix=PREFIX):
+    """某个工作流以前建的描述文件与它们的证书，按建的时间留最近 keep 份，其余删掉、撤销"""
     rows = call('GET', '/profiles?filter[profileType]=IOS_APP_STORE&limit=200').get('data', [])
-    mine = [p for p in rows if str(p['attributes'].get('name', '')).startswith(PREFIX)]
+    mine = [p for p in rows if str(p['attributes'].get('name', '')).startswith(prefix)]
     mine.sort(key=lambda p: p['attributes']['name'], reverse=True)
     for p in mine[keep:]:
         certs = call('GET', f"/profiles/{p['id']}/certificates").get('data', [])
