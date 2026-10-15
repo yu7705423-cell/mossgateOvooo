@@ -50,6 +50,35 @@ enum Interact {
         return c.code == "none" ? "" : "\(c.name)（\(c.symbol.isEmpty ? c.code : c.symbol)）"
     }
 
+    // MARK: - 汇率（网页版 currency.js）
+    //
+    // 一对币种一个数：rates["CNY>JPY"] = 20.5 表示 1 人民币折 20.5 日元。反向取倒数，两个方向只存一个。
+    // 汇率自己填，不联网取：你心里那个数才是你要用的数。换算只发生在输入那一步，落库的是这段对话币种的数
+
+    static func rateOf(_ from: String, _ to: String, _ s: AppSettings = .load()) -> Double? {
+        let a = currency(from).code, b = currency(to).code
+        if a == b { return 1 }
+        let t = s.raw["rates"]?.object ?? [:]
+        if let d = t["\(a)>\(b)"]?.number, d > 0 { return d }
+        if let r = t["\(b)>\(a)"]?.number, r > 0 { return 1 / r }
+        return nil
+    }
+
+    static func setRate(_ s: inout AppSettings, _ from: String, _ to: String, _ v: Double?) {
+        let a = currency(from).code, b = currency(to).code
+        guard a != b else { return }
+        var t = s.raw["rates"]?.object ?? [:]
+        if let v, v > 0 { t["\(a)>\(b)"] = .number(v); t["\(b)>\(a)"] = nil } else { t["\(a)>\(b)"] = nil }
+        s.raw["rates"] = .object(t)
+    }
+
+    /// 按汇率折过去，收到目标币种的小数位。没填汇率回 nil
+    static func convert(_ n: Double, _ from: String, _ to: String, _ s: AppSettings = .load()) -> Double? {
+        guard let r = rateOf(from, to, s) else { return nil }
+        let v = n * r
+        return v.isFinite ? round(v, to) : nil
+    }
+
     // MARK: - 名字
 
     static func names(_ chatId: String) -> (me: String, char: String, charId: String) {

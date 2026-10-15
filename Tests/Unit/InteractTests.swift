@@ -207,4 +207,15 @@ final class InteractTests: StoreTestCase {
         XCTAssertEqual(Interact.format(1234.6), "1235")
         XCTAssertEqual(Interact.display(5, "USD"), "$5.00")
     }
+
+    func testExchangeRate() {
+        var s = AppSettings(raw: [:])
+        XCTAssertNil(Interact.rateOf("CNY", "JPY", s))
+        Interact.setRate(&s, "CNY", "JPY", 20.5)
+        XCTAssertEqual(Interact.rateOf("CNY", "JPY", s), 20.5)
+        XCTAssertEqual(Interact.rateOf("JPY", "CNY", s)!, 1 / 20.5, accuracy: 1e-9)
+        XCTAssertEqual(Interact.convert(10, "CNY", "JPY", s), 205)
+        Interact.setRate(&s, "JPY", "CNY", 0.05)
+        XCTAssertNil(s.raw["rates"]?["CNY>JPY"], "两个方向只存一个")
+    }
 }

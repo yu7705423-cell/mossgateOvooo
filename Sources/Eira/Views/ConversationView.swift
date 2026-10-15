@@ -1482,6 +1482,15 @@ struct InteractSheet: View {
         }
     }
 
+    @State private var rateFrom = ""
+    @State private var rateAmount = ""
+    @State private var rateText = ""
+
+    private var converted: Double? {
+        guard let n = Double(rateAmount), n > 0, let r = Double(rateText), r > 0 else { return nil }
+        return Interact.round(n * r, Interact.currency().code)
+    }
+
     private var ready: Bool {
         let filled = !a.trimmingCharacters(in: .whitespaces).isEmpty
         switch kind {
@@ -1498,9 +1507,37 @@ struct InteractSheet: View {
                 Section {
                     TextField("金额", text: $amount).keyboardType(.decimalPad)
                     TextField("留言（可不填）", text: $a)
+                    Picker("币种", selection: Binding(get: { Interact.currency().code },
+                                                      set: { v in SettingsModel.shared.set("currency", .string(v)) })) {
+                        ForEach(Interact.currencies, id: \.code) { Text($0.name).tag($0.code) }
+                    }
                 } footer: {
-                    HelpNote("币种：\(Interact.currency().name)。对方可以收下或退回。")
+                    HelpNote("币种对所有对话生效，影响显示与角色写金额时的量级；已经发出的转账按当时的币种显示。对方可以收下或退回。", title: "转账")
                 }
+                Section {
+                    Picker("按哪种钱填", selection: $rateFrom) {
+                        ForEach(Interact.currencies.filter { $0.code != "none" && $0.code != Interact.currency().code }, id: \.code) { Text($0.name).tag($0.code) }
+                    }
+                    TextField("\(Interact.currency(rateFrom).name)金额", text: $rateAmount).keyboardType(.decimalPad)
+                    TextField("汇率：1 \(Interact.currency(rateFrom).name)折合多少\(Interact.currency().name)", text: $rateText).keyboardType(.decimalPad)
+                    Button(converted.map { "折合 \(Interact.display($0, Interact.currency().code))，填入金额" } ?? "填写金额与汇率") {
+                        guard let v = converted else { return }
+                        if let r = Double(rateText), r > 0 { SettingsModel.shared.update { Interact.setRate(&$0, rateFrom, Interact.currency().code, r) } }
+                        amount = Interact.format(v, Interact.currency().code)
+                    }
+                    .disabled(converted == nil)
+                } header: {
+                    Text("按汇率换算")
+                } footer: {
+                    HelpNote("按习惯的那种钱填写，按汇率折成当前币种再填入金额。汇率由你填写，不联网获取；填过的汇率会记住。", title: "按汇率换算")
+                }
+                .onAppear {
+                    if rateFrom.isEmpty || rateFrom == Interact.currency().code {
+                        rateFrom = Interact.currencies.first { $0.code != "none" && $0.code != Interact.currency().code }?.code ?? "CNY"
+                    }
+                    if rateText.isEmpty, let r = Interact.rateOf(rateFrom, Interact.currency().code) { rateText = String(r) }
+                }
+                .onChange(of: rateFrom) { _, v in rateText = Interact.rateOf(v, Interact.currency().code).map { String($0) } ?? "" }
             case .gift:
                 Section {
                     TextField("礼物名称", text: $a)
