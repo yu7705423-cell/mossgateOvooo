@@ -82,6 +82,11 @@ enum Bond {
         try Database.shared.put(Collections.characters, char.row)
     }
 
+    /// 解锁：手写的那一份不再算手写，S 级记忆变动时重新生成
+    static func unlock(charId: String, key: String) throws {
+        try write(charId: charId, key: key, ["manual": .bool(false), "sig": .string("")])
+    }
+
     private static func write(charId: String, key: String, _ patch: [String: JSONValue]) throws {
         guard var char = try Repo.character(charId) else { return }
         var bonds = char.row["bonds"]?.object ?? [:]

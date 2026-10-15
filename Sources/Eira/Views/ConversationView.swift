@@ -1109,6 +1109,9 @@ struct ConversationView: View {
                 let r = try MessageActions.remember(m, chat: chat, char: char)
                 rememberedMemory = RememberedMemory(id: r.memoryId, charId: r.charId)
             } catch { problem = error.localizedDescription }
+        case .pat:
+            guard chat?.isGroup == false, !archivedChat else { return }
+            post { try ChatEngine.pat(chatId: chatId) }
         case .resummarize:
             // 水位线退到这一条之前，不调接口；已经记下的记忆不删（网页版 4.606）
             do {
@@ -1519,7 +1522,7 @@ struct MessageRow: View, Equatable {
             && a.summarized == b.summarized
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat }
 
     let message: Message
     let char: Character?
@@ -1722,6 +1725,11 @@ struct MessageRow: View, Equatable {
     private func avatarView(_ mine: Bool) -> some View {
         Avatar(imageId: mine ? meAvatar : (charFace.isEmpty ? (char?.avatar ?? "") : charFace), name: mine ? meName : (char?.displayName ?? ""),
                size: skin.avatarSize, radius: skin.radius(skin.avatarSize))
+            // 双击角色的头像拍一拍（网页版双击头像）；单击展开心声
+            .onTapGesture(count: 2) {
+                guard !mine, !picking else { return }
+                onAction?(.pat)
+            }
             .onTapGesture {
                 guard !mine else { return }
                 if innerCard { onAction?(.innerCard); return }

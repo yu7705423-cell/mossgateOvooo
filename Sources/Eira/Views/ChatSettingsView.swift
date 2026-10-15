@@ -155,6 +155,10 @@ struct ChatSettingsView: View {
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "", keys: "总结 记住",
             dest: AnyView(MenuPage("记忆总结") { summarySection }))
+        if !c.isGroup {
+            add("bond", "记忆", "关系底色", keys: "你们之间 关系 现状 S 级",
+                dest: AnyView(BondView(chatId: chatId)))
+        }
         if !c.isGroup, Ties.pair(c) != nil {
             add("ties", "好友与拉黑", "好友与拉黑", Self.tieLabel(c), keys: "拉黑 删除好友 好友申请",
                 dest: AnyView(MenuPage("好友与拉黑") { TiesSection(chatId: chatId) }))

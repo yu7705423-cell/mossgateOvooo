@@ -24,7 +24,7 @@ const APPS = {
   'CardImportView.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系',
   'ChatLookView.swift': '聊天', 'ChatSettingsView.swift': '聊天', 'ConversationView.swift': '聊天', 'ForwardViews.swift': '聊天',
   'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'StatusBarViews.swift': '聊天',
-  'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天',
+  'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天', 'BondViews.swift': '聊天',
   'DailyViews.swift': '日常', 'UserSchedViews.swift': '日常', 'DiaryViews.swift': '日记', 'MusicViews.swift': '音乐', 'HomeEditViews.swift': '主屏',
   'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康', 'TheirsViews.swift': '角色手机',
 };
