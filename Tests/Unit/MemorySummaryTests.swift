@@ -168,4 +168,25 @@ final class MemorySummaryTests: StoreTestCase {
         try MemCheck.restore(other.id)
         XCTAssertTrue(MemCheck.superseded(charId: "char_a", personaId: "me_root").isEmpty)
     }
+    /// 按轮数总结：积压比 N 轮多时只吃最早的 N 轮、只标这一段，不把更早的整批划掉（网页版 4.606）；
+    /// 「从这条起重新总结」把水位线退回去，不调接口
+    func testRoundsTakeEarliestAndRewind() async throws {
+        try setSettings(["autoSummarizeInterval": .number(1)])
+        for i in 0..<3 {
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "问\(i)"))
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "答\(i)", turnId: "r\(i)"))
+        }
+        let before = try MemorySummary.pending(chatId: "chat_a").count
+        reply(#"{"events":[],"facts":[],"ended":[],"open":[],"closed":[],"state":{}}"#)
+        _ = try await MemorySummary.extract(chatId: "chat_a")
+        XCTAssertEqual(MockNet.count, 1)
+        let left = try MemorySummary.pending(chatId: "chat_a").count
+        XCTAssertGreaterThan(left, 0)
+        XCTAssertLessThan(left, before)
+        let first = try XCTUnwrap(Repo.messages(chatId: "chat_a").first)
+        XCTAssertTrue(MemorySummary.summarized(chatId: "chat_a", msgId: first.id))
+        try MemorySummary.rewind(chatId: "chat_a", to: first.id)
+        XCTAssertEqual(try MemorySummary.pending(chatId: "chat_a").count, before)
+        XCTAssertEqual(MockNet.count, 1)
+    }
 }

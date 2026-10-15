@@ -904,6 +904,8 @@ struct ConversationView: View {
         var rejects: [String: String] = [:]
         var innerCard = false
         var meAvatar = ""
+        /// 记忆总结的水位线停在哪一刻：这一刻及之前的消息算作总结过
+        var memoryUpToAt: Double = 0
     }
 
     private func rowContext() -> RowContext {
@@ -921,7 +923,8 @@ struct ConversationView: View {
             statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
             rejects: Ties.notes(messages, chat: chat),
             innerCard: chat.map { InnerVoice.style($0, settings: st) == "card" } ?? false,
-            meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""))
+            meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""),
+            memoryUpToAt: chat?.isGroup == false ? (chat?.row.number("memoryUpToAt") ?? 0) : 0)
     }
 
     /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
@@ -972,6 +975,7 @@ struct ConversationView: View {
                           quoteName: quoteName(of: m),
                           speakerName: groupName(of: m),
                           innerCard: ctx.innerCard,
+                          summarized: ctx.memoryUpToAt > 0 && m.createdAt <= ctx.memoryUpToAt,
                           narrColor: look.narr,
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
@@ -1104,6 +1108,13 @@ struct ConversationView: View {
             do {
                 let r = try MessageActions.remember(m, chat: chat, char: char)
                 rememberedMemory = RememberedMemory(id: r.memoryId, charId: r.charId)
+            } catch { problem = error.localizedDescription }
+        case .resummarize:
+            // 水位线退到这一条之前，不调接口；已经记下的记忆不删（网页版 4.606）
+            do {
+                let n = try MemorySummary.rewind(chatId: chatId, to: m.id)
+                notice = "已改回未总结 \(n) 条，下一次总结从这一条开始。已经记下的记忆不删除，再总结时与已有记忆比对，仍可能出现重复。"
+                reload()
             } catch { problem = error.localizedDescription }
         case .example:
             do { notice = try MessageActions.addExample(m) ? "已收进说话示例，可在编辑资料中修改" : "说话示例中已有这一句" }
@@ -1505,9 +1516,10 @@ struct MessageRow: View, Equatable {
             && a.speakerName == b.speakerName && a.innerCard == b.innerCard && a.narrColor == b.narrColor
             && a.charFace == b.charFace && a.rejectNote == b.rejectNote && a.skin == b.skin
             && a.picking == b.picking && a.picked == b.picked && (a.onRetry == nil) == (b.onRetry == nil)
+            && a.summarized == b.summarized
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize }
 
     let message: Message
     let char: Character?
@@ -1530,6 +1542,8 @@ struct MessageRow: View, Equatable {
     var speakerName = ""
     /// 心声显示成一张卡：点头像打开那张卡，不在气泡下展开
     var innerCard = false
+    /// 这一条已经算作总结过（长按菜单里给「从这条起重新总结」）
+    var summarized = false
     /// 旁白的文字颜色（聊天背景里设的，空为默认的灰）
     var narrColor = ""
     /// 只在这段会话里用的角色头像（空为角色自己的那张）
@@ -1680,6 +1694,9 @@ struct MessageRow: View, Equatable {
         }
         if !MessageActions.bodyText(message).isEmpty {
             Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
+        }
+        if summarized {
+            Button { onAction?(.resummarize) } label: { Label("从这条起重新总结", systemImage: "arrow.counterclockwise") }
         }
         if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {
             Button { onAction?(.example) } label: { Label("收进示例", systemImage: "text.quote") }

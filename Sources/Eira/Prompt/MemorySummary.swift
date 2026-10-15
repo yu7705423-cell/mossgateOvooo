@@ -62,6 +62,47 @@ enum MemorySummary {
         return list
     }
 
+    /// 最早的 n 轮（网页版 4.606）：从头数 n 轮角色回复，连同它们前面你说的话；不够 n 轮就全部。
+    /// 第 n 轮之后、下一轮角色回复之前你说的话属于下一轮，不切进来
+    static func firstRounds(_ list: [Message], _ n: Int) -> [Message] {
+        var keys = Set<String>()
+        var end = -1
+        for (i, m) in list.enumerated() where m.role == .char {
+            let k = m.turnId.isEmpty ? m.id : m.turnId
+            if !keys.contains(k) {
+                if keys.count >= n { return end >= 0 ? Array(list[...end]) : [] }
+                keys.insert(k)
+            }
+            end = i
+        }
+        return list
+    }
+
+    /// 从这一条起改回未总结（网页版 4.606）：水位线退到这一条的前一条，下一次总结从这里接着吃。
+    /// 已经提取过的记忆不删，再总结时与已有记忆比对去重。不调接口。回改回了几条
+    @discardableResult
+    static func rewind(chatId: String, to msgId: String) throws -> Int {
+        let all = try usable(chatId)
+        guard let i = all.firstIndex(where: { $0.id == msgId }), var chat = try Repo.chat(chatId) else {
+            throw StoreError(message: "这条消息已经不在了")
+        }
+        let before = try pending(chatId: chatId).count
+        let prev = i > 0 ? all[i - 1] : nil
+        chat.row["memoryUpTo"] = prev.map { .string($0.id) } ?? .null
+        chat.row["memoryUpToAt"] = .number(prev?.createdAt ?? 0)
+        chat.row["memoryTriedId"] = .null
+        chat.row["memoryTriedAt"] = .number(0)
+        chat.row.touch()
+        try Repo.save(chat)
+        return try pending(chatId: chatId).count - before
+    }
+
+    /// 这条消息是不是已经算作总结过（消息菜单上「从这条起重新总结」只给这些）
+    static func summarized(chatId: String, msgId: String) -> Bool {
+        guard let all = try? usable(chatId), all.contains(where: { $0.id == msgId }) else { return false }
+        return !((try? pending(chatId: chatId)) ?? []).contains { $0.id == msgId }
+    }
+
     private static func int(_ s: AppSettings, _ key: String, _ def: Double = 0) -> Int {
         max(0, Int((s.raw[key]?.number ?? def).rounded()))
     }
@@ -279,8 +320,10 @@ enum MemorySummary {
         guard all.count >= 2, let lastMsg = all.last else { throw StoreError(message: "对话太短，暂时不需要总结") }
         let every = int(s, "autoSummarizeInterval")
         let cap = int(s, "memoryBatch", 200)
-        let batch = every > 0 ? lastRounds(all, every) : (cap > 0 ? Array(all.prefix(cap)) : all)
-        let markList = every > 0 ? all : batch
+        // 设了「每 N 轮」：一次总结 N 轮。积压比 N 轮多时（开启之前攒下的、改回未总结的）从最早的 N 轮开始，只标这一段。
+        // 从前取的是最近 N 轮、把更早的整批标成已总结：一开开关，几百条积压一下变成 0 条，实际一条都没总结（网页版 4.606）
+        let batch = every > 0 ? firstRounds(all, every) : (cap > 0 ? Array(all.prefix(cap)) : all)
+        let markList = batch
 
         let personas = try Repo.personas()
         let me = try personas.first { $0.id == chat.personaId } ?? Repo.activePersona(s)

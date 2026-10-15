@@ -47,15 +47,51 @@ final class QQMusicTests: StoreTestCase {
         XCTAssertEqual(a.qqMid, "0039MnYb0qxYhV")
     }
 
-    /// 播放地址拿不到（海外、未登录、会员歌）：一次请求，带上 QQ 音乐给的原因
+    /// 播放地址拿不到（海外、未登录、会员歌）：老接口空了换 UrlGetVkey 再问一次，都没有时写明结果码与来源 IP（网页版 4.625）
     func testSongUrlEmptyExplains() async throws {
-        MockNet.reset { _, _ in .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":[],"midurlinfo":[{"purl":""}],"msg":"1.2.3.4;invalidq;"}}}"#) }
+        MockNet.reset { _, _ in .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":[],"midurlinfo":[{"purl":"","result":104003}],"msg":"1.2.3.4"}}}"#) }
         do { _ = try await QQMusic.songUrl("0039MnYb0qxYhV"); XCTFail("应当失败") } catch {
-            XCTAssertTrue(error.localizedDescription.contains("invalidq"))
+            XCTAssertTrue(error.localizedDescription.contains("104003"), error.localizedDescription)
+            XCTAssertTrue(error.localizedDescription.contains("1.2.3.4"), error.localizedDescription)
         }
-        XCTAssertEqual(MockNet.count, 1)
-        MockNet.reset { _, _ in .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":["http://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"C400x.m4a?vkey=1"}]}}}"#) }
+        XCTAssertEqual(MockNet.count, 2)
+        // 老的给空、新的给了：用新的；sip 是 http 的换成 https
+        MockNet.reset { _, i in
+            i == 1 ? .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":[],"midurlinfo":[{"purl":""}]}}}"#)
+                : .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":["http://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"C400x.m4a?vkey=1"}]}}}"#)
+        }
         let u = try await QQMusic.songUrl("0039MnYb0qxYhV")
         XCTAssertEqual(u, "https://ws.stream.qqmusic.qq.com/C400x.m4a?vkey=1")
+        XCTAssertEqual(MockNet.count, 2)
+    }
+    /// 确认登录那一步没直接给 p_skey、而是跳去 QQ 的另一个地址：顺着跳下去收（网页版 4.620）
+    func testLoginFollowsRedirectForPskey() async throws {
+        MockNet.reset { req, _ in
+            let u = req.url?.absoluteString ?? ""
+            if u.contains("check_sig") {
+                return .init(status: 302, body: "", headers: ["Location": "https://graph.qq.com/oauth2.0/login_jump", "Set-Cookie": "p_uin=o123; Path=/; Domain=qq.com"])
+            }
+            if u.contains("login_jump") {
+                return .init(status: 200, body: "", headers: ["Set-Cookie": "p_skey=REAL; Path=/; Domain=graph.qq.com"])
+            }
+            if u.contains("authorize") {
+                return .init(status: 302, body: "", headers: ["Location": "https://y.qq.com/portal/wx_redirect.html?code=ABC"])
+            }
+            return .init(status: 200, body: #"{"code":0,"req":{"code":0,"data":{"musickey":"MK","musicid":123}}}"#)
+        }
+        let uin = try await QQMusic.finishLogin(checkSigURL: "https://ssl.ptlogin2.graph.qq.com/check_sig?x=1", cookies: [:])
+        XCTAssertEqual(uin, "123")
+        XCTAssertEqual(QQMusic.musicKey(), "MK")
+    }
+
+    /// 一直不给 p_skey：写明每一跳的状态与收到哪几个 cookie（只写名字）
+    func testLoginExplainsMissingPskey() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: "", headers: ["Set-Cookie": "pt2gguin=o123; Path=/; Domain=qq.com"]) }
+        do { _ = try await QQMusic.finishLogin(checkSigURL: "https://ssl.ptlogin2.graph.qq.com/check_sig?x=1", cookies: [:]); XCTFail("应当失败") } catch {
+            XCTAssertTrue(error.localizedDescription.contains("p_skey"))
+            XCTAssertTrue(error.localizedDescription.contains("pt2gguin"))
+            XCTAssertFalse(error.localizedDescription.contains("o123"))
+        }
+        XCTAssertEqual(MockNet.count, 1)
     }
 }

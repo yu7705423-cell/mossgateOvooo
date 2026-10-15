@@ -118,7 +118,7 @@ enum ReplyParser {
     /// autoSplitAt：整轮只有一条很长的纯文字时按句子再切的字数（网页版 settings.autoSplitAt，默认 40，0 为不切）
     static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
-        let (text, stamp) = stripStamps(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines)))
+        let (text, stamp) = stripStamps(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines))))
         var state = State()
 
         let ns = text as NSString

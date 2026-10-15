@@ -177,4 +177,60 @@ enum MarkFold {
         out += ns.substring(from: last)
         return out
     }
+
+    // MARK: - 图片、语音、视频标记的走样（网页版 markfold.foldMedia，ARCHITECTURE 4.635）
+    //
+    // 反馈：角色说发了图片、语音，其实没有发，连「正在生成」都没有。解析只认 [图片：…] [语音：…] 这一种写法，
+    // 模型常写成别的样子，整行就当成正文落成一个气泡：
+    //   [发送图片：…] [语音消息：…] [录音：…]      标记名换了个说法
+    //   [图片]：… 【照片】… [语音]…                名字和内容之间是收口不是冒号
+    //   （图片：…） (语音：…)                      整行用圆括号
+    //   [图片：…                                   行末没收口
+    // 这几种换成规范写法再交给解析。只动这几类，别的标记不碰；截图（闲置截图）不算图片。
+
+    private static let media: [String: String] = [
+        "图片": "图片", "照片": "照片", "视频": "视频", "语音": "语音",
+        "发送图片": "图片", "发图片": "图片", "发图": "图片", "图": "图片", "配图": "图片", "自拍": "图片", "图片描述": "图片",
+        "照片描述": "照片", "相片": "照片", "发照片": "照片", "发送照片": "照片",
+        "发送视频": "视频", "发视频": "视频", "视频描述": "视频",
+        "语音消息": "语音", "发语音": "语音", "发送语音": "语音", "语音条": "语音", "录音": "语音",
+    ]
+
+    static func canon(_ head: String) -> String {
+        let h = String(head.filter { !$0.isWhitespace }.map { t2s[$0] ?? $0 })
+        return media[h] ?? ""
+    }
+
+    private static let alias = try! NSRegularExpression(pattern: #"([\[【])\s*([^\]】:：\n]{1,6}?)\s*([:：])"#)
+    private static let shut = try! NSRegularExpression(pattern: #"^[\[【]\s*([^\]】:：\n]{1,6}?)\s*[\]】]\s*[:：]?\s*(\S[\s\S]*)$"#)
+    private static let roundLine = try! NSRegularExpression(pattern: #"^[(（]\s*([^)）:：\n]{1,6}?)\s*[:：]\s*([\s\S]+?)\s*[)）]$"#)
+    private static let openLine = try! NSRegularExpression(pattern: #"^[\[【]\s*([^\]】:：\n]{1,6}?)\s*[:：]\s*([^\]】]+?)\s*$"#)
+
+    private static func groups(_ re: NSRegularExpression, _ s: String) -> [String]? {
+        let ns = s as NSString
+        guard let m = re.firstMatch(in: s, range: NSRange(location: 0, length: ns.length)) else { return nil }
+        return (0..<m.numberOfRanges).map { m.range(at: $0).location == NSNotFound ? "" : ns.substring(with: m.range(at: $0)) }
+    }
+
+    /// 图片、语音、视频标记的几种走样换成规范写法
+    static func foldMedia(_ text: String) -> String {
+        text.components(separatedBy: "\n").map { line -> String in
+            let ns = line as NSString
+            var s = ""
+            var last = 0
+            for m in alias.matches(in: line, range: NSRange(location: 0, length: ns.length)) {
+                s += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+                let head = ns.substring(with: m.range(at: 2))
+                let c = canon(head)
+                s += !c.isEmpty && c != head ? ns.substring(with: m.range(at: 1)) + c + ns.substring(with: m.range(at: 3)) : ns.substring(with: m.range)
+                last = m.range.location + m.range.length
+            }
+            s += ns.substring(from: last)
+            let t = s.trimmingCharacters(in: .whitespaces)
+            if let g = groups(shut, t), !canon(g[1]).isEmpty { return "[\(canon(g[1]))：\(g[2].trimmingCharacters(in: .whitespaces))]" }
+            if let g = groups(roundLine, t), !canon(g[1]).isEmpty { return "[\(canon(g[1]))：\(g[2])]" }
+            if let g = groups(openLine, t), !canon(g[1]).isEmpty { return "[\(canon(g[1]))：\(g[2])]" }
+            return s
+        }.joined(separator: "\n")
+    }
 }

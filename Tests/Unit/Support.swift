@@ -40,6 +40,8 @@ final class MockNet: URLProtocol {
     struct Reply {
         var status: Int
         var body: String
+        /// 额外的响应头（Set-Cookie、Location）
+        var headers: [String: String] = [:]
     }
 
     private static let lock = NSLock()
@@ -64,7 +66,8 @@ final class MockNet: URLProtocol {
         Self.lock.unlock()
         let reply = h(request, n)
         let resp = HTTPURLResponse(url: request.url!, statusCode: reply.status, httpVersion: "HTTP/1.1",
-                                   headerFields: ["content-type": reply.status == 200 ? "text/event-stream" : "application/json"])!
+                                   headerFields: ["content-type": reply.status == 200 ? "text/event-stream" : "application/json"]
+                                       .merging(reply.headers) { _, n in n })!
         client?.urlProtocol(self, didReceive: resp, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data(reply.body.utf8))
         client?.urlProtocolDidFinishLoading(self)

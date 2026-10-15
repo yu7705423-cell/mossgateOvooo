@@ -1026,9 +1026,21 @@ struct QQLoginView: View {
                 let q = try await QQMusic.qrStart()
                 qr = q
                 status = "等待扫码"
+                var fails = 0
                 while !Task.isCancelled {
                     try await Task.sleep(nanoseconds: 2_000_000_000)
-                    let r = try await QQMusic.qrCheck(q.qrsig)
+                    // 切去 QQ 确认时应用在后台：不问，回到前台立刻问（网页版 4.622）
+                    if UIApplication.shared.applicationState != .active { continue }
+                    let r: (state: QQMusic.QRState, cookies: [String: String])
+                    do { r = try await QQMusic.qrCheck(q.qrsig) }
+                    catch let e as QQMusic.QQError where e.transient {
+                        // 那一下被系统掐断（切去 QQ 时常见）：接着问，连着 8 次才算失败
+                        fails += 1
+                        if fails >= 8 { throw e }
+                        status = "网络中断，正在重试"
+                        continue
+                    }
+                    fails = 0
                     switch r.state {
                     case .waiting: status = "等待扫码"
                     case .scanned: status = "已扫码，请在手机上确认"

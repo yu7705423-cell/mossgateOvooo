@@ -154,4 +154,19 @@ final class ReplyParserTests: XCTestCase {
         XCTAssertGreaterThan(ReplyParser.split(long).parts.count, 1)
         XCTAssertEqual(ReplyParser.split(long, autoSplitAt: 0).parts.count, 1)
     }
+    /// 图片、语音标记写走样了也认（网页版 4.635）：换了说法、收口代替冒号、整行圆括号、行末没收口、繁体
+    func testMediaMarkVariants() {
+        func kinds(_ t: String) -> [ReplyParser.PartType] { ReplyParser.split(t).parts.map(\.type) }
+        for t in ["[发送图片：夕阳]", "[图片]：夕阳", "【照片】夕阳", "（图片：夕阳）", "(照片：夕阳)", "[图片：夕阳", "[自拍：对镜]", "[配图：夕阳]", "[發送圖片：夕陽]"] {
+            XCTAssertEqual(kinds(t), [.image], t)
+        }
+        for t in ["[语音消息：你好]", "[发语音：你好]", "[语音]你好", "[录音：你好]", "[语音条：你好]", "（语音：你好）"] {
+            XCTAssertEqual(kinds(t), [.voice], t)
+        }
+        XCTAssertEqual(kinds("[截图：聊天]"), [.text])
+        XCTAssertEqual(kinds("今天（图片：不算）很好"), [.text])
+        XCTAssertEqual(kinds("[图片：夕阳] 好看吧"), [.image, .text])
+        XCTAssertEqual(kinds("[图片]"), [.text])
+        XCTAssertEqual(ReplyParser.split("[语音]今天好累").parts.first?.text, "今天好累")
+    }
 }

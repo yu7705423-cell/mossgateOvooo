@@ -25,6 +25,8 @@ enum QQMusic {
 
     struct QQError: LocalizedError {
         var message: String
+        /// 网络一时断了（切去 QQ 确认时系统掐断请求这一类），可以接着再问
+        var transient = false
         var errorDescription: String? { message }
     }
 
@@ -85,7 +87,7 @@ enum QQMusic {
     private static func send(_ req: URLRequest) async throws -> Reply {
         let data: Data, resp: URLResponse
         do { (data, resp) = try await session.data(for: req) }
-        catch { throw QQError(message: "连不上 QQ 音乐：\(error.localizedDescription)") }
+        catch { throw QQError(message: "连不上 QQ 音乐：\(error.localizedDescription)", transient: true) }
         let http = resp as? HTTPURLResponse
         var cookies: [String: String] = [:]
         if let h = http, let url = h.url {
@@ -165,24 +167,51 @@ enum QQMusic {
         return out
     }
 
-    /// 播放地址。拿不到时把 QQ 音乐给的原因带出来（会员、地区、未登录）
+    /// 播放地址（网页版 qqmusic.songUrl，4.625、4.629）。两种文件各问一个；老接口给空地址时换 UrlGetVkey 再问一次（不调模型接口）。
+    /// 拿不到时写明 QQ 回的结果码与它看到的来源 IP：来源不在中国大陆时常不给
     static func songUrl(_ mid: String) async throws -> String {
         let guid = String(Int.random(in: 1_000_000_000...9_999_999_999))
-        let j = try await musicu(["req_0": .object([
-            "module": .string("vkey.GetVkeyServer"), "method": .string("CgiGetVkey"),
-            "param": .object(["guid": .string(guid), "songmid": .array([.string(mid)]), "songtype": .array([.number(0)]),
-                              "uin": .string(uin().isEmpty ? "0" : uin()), "loginflag": .number(1), "platform": .string("20")]),
-        ])])
-        let d = j["req_0"]?["data"]
-        let purl = d?["midurlinfo"]?[0]?["purl"]?.string ?? ""
-        let sip = d?["sip"]?[0]?.string ?? "https://ws.stream.qqmusic.qq.com/"
-        guard !purl.isEmpty else {
-            let msg = d?["msg"]?.string ?? ""
-            throw QQError(message: loggedIn()
-                ? "QQ 音乐没有给出这首歌的播放地址，可能需要会员或版权受限\(msg.isEmpty ? "" : "（\(msg)）")"
-                : "QQ 音乐没有给出这首歌的播放地址。登录 QQ 音乐后再试，会员歌曲需要会员账号\(msg.isEmpty ? "" : "（\(msg)）")")
+        let tries = ["C400\(mid).m4a", "M500\(mid).mp3"]
+        let param: JSONValue = .object([
+            "guid": .string(guid), "songmid": .array(tries.map { _ in .string(mid) }), "songtype": .array(tries.map { _ in .number(0) }),
+            "filename": .array(tries.map { .string($0) }),
+            "uin": .string(uin().isEmpty ? "0" : uin()), "loginflag": .number(1), "platform": .string("20"),
+        ])
+        func pick(_ d: JSONValue?) -> String {
+            guard let hit = (d?["midurlinfo"]?.array ?? []).first(where: { !($0["purl"]?.string ?? "").isEmpty }),
+                  let purl = hit["purl"]?.string else { return "" }
+            // sip 里常有 http:// 的：先挑 https 的，没有就把 http 换成 https
+            let sip = (d?["sip"]?.array ?? []).compactMap(\.string).filter { !$0.isEmpty }
+            var host = sip.first { $0.lowercased().hasPrefix("https:") } ?? sip.first ?? "https://ws.stream.qqmusic.qq.com/"
+            if host.lowercased().hasPrefix("http:") { host = "https:" + host.dropFirst(5) }
+            return host + purl
         }
-        return (sip.hasPrefix("http://") ? "https://" + sip.dropFirst(7) : sip) + purl
+        func codes(_ d: JSONValue?) -> [String] {
+            (d?["midurlinfo"]?.array ?? []).compactMap { x -> String? in
+                guard let r = x["result"]?.number, r != 0 else { return nil }
+                return String(Int(r))
+            }
+        }
+        func ipOf(_ d: JSONValue?) -> String {
+            let m = d?["msg"]?.string ?? ""
+            return m.range(of: #"^\d+\.\d+\.\d+\.\d+$"#, options: .regularExpression) != nil ? m : ""
+        }
+        let d1 = try await musicu(["req_0": .object(["module": .string("vkey.GetVkeyServer"), "method": .string("CgiGetVkey"), "param": param])])["req_0"]?["data"]
+        var url = pick(d1)
+        var seen = codes(d1)
+        var ip = ipOf(d1)
+        if url.isEmpty, let d2 = try? await musicu(["req_0": .object(["module": .string("music.vkey.GetVkey"), "method": .string("UrlGetVkey"), "param": param])])["req_0"]?["data"] {
+            url = pick(d2)
+            for c in codes(d2) where !seen.contains(c) { seen.append(c) }
+            if ip.isEmpty { ip = ipOf(d2) }
+        }
+        guard url.isEmpty else { return url }
+        var why = loggedIn() ? "QQ 音乐没有给出这首歌的播放地址，可能需要会员或版权受限" : "QQ 音乐没有给出这首歌的播放地址。登录 QQ 音乐后再试，会员歌曲需要会员账号"
+        var bits: [String] = []
+        if !seen.isEmpty { bits.append("结果码 \(seen.joined(separator: "、"))") }
+        if !ip.isEmpty { bits.append("QQ 看到的来源 IP \(ip)，来源不在中国大陆时常不给") }
+        if !bits.isEmpty { why += "（\(bits.joined(separator: "；"))）" }
+        throw QQError(message: why)
     }
 
     // MARK: - 歌单
@@ -268,9 +297,26 @@ enum QQMusic {
     static func finishLogin(checkSigURL: String, cookies first: [String: String]) async throws -> String {
         var jar = first
         func cookieHeader() -> String { jar.map { "\($0.key)=\($0.value)" }.joined(separator: "; ") }
-        let sig = try await get(checkSigURL, cookie: cookieHeader(), referer: "https://xui.ptlogin2.qq.com/")
-        jar.merge(sig.cookies) { _, n in n }
-        guard let pskey = jar["p_skey"], !pskey.isEmpty else { throw QQError(message: "登录第二步没有拿到 p_skey（HTTP \(sig.status)）") }
+        // check_sig 本身没给 p_skey、而是跳去 QQ 的另一个地址时，顺着跳下去收 cookie，最多三跳，只跟 qq.com 的（网页版 4.620）
+        var hops: [String] = []
+        var next = checkSigURL
+        for _ in 0..<4 {
+            let r = try await get(next, cookie: cookieHeader(), referer: "https://xui.ptlogin2.qq.com/")
+            // 同一次回复里有值的赢过空的（空值本来就不收，网页版 4.623）
+            jar.merge(r.cookies) { _, n in n }
+            let at = URL(string: next).map { ($0.host ?? "") + $0.path } ?? ""
+            let names = r.cookies.keys.sorted().joined(separator: "、")
+            hops.append("\(at) 返回 \(r.status)，收到 " + (names.isEmpty ? "没有 cookie" : names))
+            if !(jar["p_skey"] ?? "").isEmpty { break }
+            guard (300..<400).contains(r.status), !r.location.isEmpty,
+                  let u = URL(string: r.location, relativeTo: URL(string: next))?.absoluteURL,
+                  let host = u.host, host == "qq.com" || host.hasSuffix(".qq.com") else { break }
+            next = u.absoluteString
+        }
+        // 拿不到时把每一跳写全：状态码、跳到哪（只写域名与路径）、收到哪几个 cookie（只写名字，不写值）
+        guard let pskey = jar["p_skey"], !pskey.isEmpty else {
+            throw QQError(message: "登录没有完成：QQ 没有给出授权凭据（p_skey）。" + hops.joined(separator: "；"))
+        }
 
         guard let au = URL(string: "https://graph.qq.com/oauth2.0/authorize") else { throw QQError(message: "地址有误") }
         var req = URLRequest(url: au)
