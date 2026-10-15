@@ -193,7 +193,7 @@ struct CardSendView: View {
                     Button { pick = i; form = [:]; idea = "" } label: {
                         VStack(alignment: .leading, spacing: 2) {
                             Text(cards[i].name).foregroundStyle(Theme.text)
-                            Text(cards[i].bookId == HtmlCard.builtinBookId ? "内置卡片" : (((try? Repo.lorebooks()) ?? []).first { $0.id == cards[i].bookId }?.name ?? ""))
+                            Text(cards[i].bookId == HtmlCard.builtinBookId ? "内置卡片" : (((try? Repo.lorebooks()) ?? []).first(where: { $0.id == cards[i].bookId })?.name ?? ""))
                                 .font(.footnote).foregroundStyle(Theme.text2)
                         }
                     }
@@ -251,10 +251,10 @@ struct CardSendView: View {
         let recent = ((try? Repo.messages(chatId: chatId, limit: 12)) ?? []).map {
             "\($0.role == .user ? meName : char.name): \(String($0.content.prefix(200)))"
         }.joined(separator: "\n")
-        let charName = char.name, userName = meName, idea = idea
+        let charName = char.name, userName = meName, wish = self.idea
         Task {
             do {
-                let v = try await HtmlCard.fillByModel(e, idea: idea, charName: charName, userName: userName, recent: recent)
+                let v = try await HtmlCard.fillByModel(e, idea: wish, charName: charName, userName: userName, recent: recent)
                 form = HtmlCard.toForm(e.fields, v)
             } catch { problem = error.localizedDescription }
             busy = false

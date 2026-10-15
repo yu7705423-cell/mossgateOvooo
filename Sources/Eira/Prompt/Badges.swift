@@ -459,7 +459,7 @@ enum Badges {
                 count[w, default: 0] += 1
             }
         }
-        return count.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(n).map { ($0.key, $0.value) }
+        return count.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(n).map { (w: $0.key, n: $0.value) }
     }
 
     static func yearOf(_ chat: Chat, msgs: [Message], year: Int, words: Bool = true) -> Year {

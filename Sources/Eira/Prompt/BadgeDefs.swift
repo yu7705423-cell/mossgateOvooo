@@ -11,10 +11,12 @@ import Foundation
 enum BadgeDefs {
     static let collection = "badgeDefs"
 
-    static let hows: [(id: String, label: String)] = [("rule", "按条件"), ("judge", "模型判断"), ("manual", "手动颁发")]
-    static let whos: [(id: String, label: String)] = [("both", "双方"), ("me", "我"), ("char", "角色")]
-    static let kinds: [(id: String, label: String)] = [("image", "图片"), ("sticker", "表情"), ("voice", "语音"), ("transfer", "转账"),
-                                                       ("gift", "礼物"), ("letter", "信"), ("location", "位置"), ("call", "通话")]
+    struct Opt: Hashable { let id: String, label: String }
+    static let hows = [Opt(id: "rule", label: "按条件"), Opt(id: "judge", label: "模型判断"), Opt(id: "manual", label: "手动颁发")]
+    static let whos = [Opt(id: "both", label: "双方"), Opt(id: "me", label: "我"), Opt(id: "char", label: "角色")]
+    static let kinds = [Opt(id: "image", label: "图片"), Opt(id: "sticker", label: "表情"), Opt(id: "voice", label: "语音"),
+                        Opt(id: "transfer", label: "转账"), Opt(id: "gift", label: "礼物"), Opt(id: "letter", label: "信"),
+                        Opt(id: "location", label: "位置"), Opt(id: "call", label: "通话")]
 
     struct Metric { let id: String, label: String, unit: String; var who = false, scan = false, word = false, kind = false }
     static let metrics: [Metric] = [
@@ -227,8 +229,8 @@ enum BadgeDefs {
         if d.how == "manual" { return "手动颁发" }
         if d.how == "judge" { return d.cond.isEmpty ? "由模型判断" : "由模型判断：\(d.cond)" }
         let m = metric(d.metricId)
-        let who = m.who ? (whos.first { $0.id == d.who }?.label ?? "双方") : ""
-        let what = d.metricId == "keyword" ? "说「\(d.word)」" : d.metricId == "kind" ? "发\(kinds.first { $0.id == d.kind }?.label ?? "")" : m.label
+        let who = m.who ? (whos.first(where: { $0.id == d.who })?.label ?? "双方") : ""
+        let what = d.metricId == "keyword" ? "说「\(d.word)」" : d.metricId == "kind" ? "发\(kinds.first(where: { $0.id == d.kind })?.label ?? "")" : m.label
         return "\(who)\(what)达到 \(d.value) \(m.unit)"
     }
 
