@@ -1,0 +1,18 @@
+name: 探 QQ 音乐接口
+
+# 只在改了探测脚本时跑，或手动触发。不登录、不带任何密钥，只把接口返回的形状打在日志里
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+    paths: [scripts/qq-probe.mjs, .github/workflows/qq-probe.yml]
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: node scripts/qq-probe.mjs
