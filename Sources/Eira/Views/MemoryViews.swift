@@ -10,6 +10,8 @@ struct MemoryListView: View {
     @State private var problem: String?
 
     struct EditTarget: Identifiable, Hashable { let id: String }
+    struct SubPage: Identifiable, Hashable { let id: String }
+    @State private var sub: SubPage?
 
     private static let filters: [(String, String)] = [("all", "全部"), ("event", "事件"), ("fact", "事实"), ("open", "进行中"), ("pinned", "常驻")]
 
@@ -34,7 +36,10 @@ struct MemoryListView: View {
         .navigationTitle("记忆")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                NavigationLink { MemoryStateView(charId: charId) } label: { Text("现状") }
+                Menu {
+                    Button("现状") { sub = SubPage(id: "state") }
+                    Button("历史版本") { sub = SubPage(id: "history") }
+                } label: { NavIcon("more") }
             }
             ToolbarItem(placement: .primaryAction) {
                 Button { editing = EditTarget(id: "") } label: { NavIcon("plus") }.accessibilityLabel("新建记忆")
@@ -42,6 +47,9 @@ struct MemoryListView: View {
         }
         .navigationDestination(item: $editing) { t in
             MemoryEditView(memoryId: t.id.isEmpty ? nil : t.id, charId: charId)
+        }
+        .navigationDestination(item: $sub) { p in
+            if p.id == "state" { MemoryStateView(charId: charId) } else { MemoryHistoryView(charId: charId) }
         }
         .onAppear(perform: reload)
     }
@@ -350,5 +358,108 @@ struct MemoryStateView: View {
     private func act(_ f: () throws -> Void) {
         do { try f(); problem = nil } catch { problem = "未能保存：\(error.localizedDescription)" }
         tick += 1
+    }
+}
+
+/// 记忆的历史版本（网页版 HistoryPage.js，4.560）
+struct MemoryHistoryView: View {
+    let charId: String
+    @ObservedObject private var model = SettingsModel.shared
+    @State private var tick = 0
+
+    static func when(_ ms: Double) -> String {
+        let f = DateFormatter(); f.dateFormat = "M月d日 HH:mm"
+        return f.string(from: Date(millis: ms))
+    }
+
+    var body: some View {
+        let _ = tick
+        let list = MemHistory.list(charId)
+        List {
+            Section {
+                if list.isEmpty { Text("还没有历史版本。第一次自动总结记忆之前会存下第一份。").foregroundStyle(Theme.secondaryText) }
+                ForEach(list, id: \.id) { x in
+                    NavigationLink { MemorySnapView(snapId: x.id) } label: {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(Self.when(x.number("at") ?? 0)) · \(x.string("why").isEmpty ? "自动" : x.string("why"))之前")
+                            Text("\(x["memories"]?.array?.count ?? 0) 条记忆").font(.footnote).foregroundStyle(Theme.secondaryText)
+                        }
+                    }
+                }
+            } footer: {
+                HelpNote("每次自动总结记忆、重新压缩关系底色之前，存一份当时的全部记忆、现状与关系底色。可以查看与现在的差别，并整份恢复。", title: "记忆：历史版本")
+            }
+            Section {
+                NumberRow(title: "每个角色保留的份数", value: model.number("memSnapKeep", Double(MemHistory.defaultKeep)), unit: "份", placeholder: "不限")
+            } footer: {
+                HelpNote("填 0 不限。超出的更早的几份自动删除。只占本机存储，不调用接口。")
+            }
+        }
+        .navigationTitle("历史版本")
+        .onAppear { model.reload(); tick += 1 }
+    }
+}
+
+struct MemorySnapView: View {
+    let snapId: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var confirm = false
+    @State private var problem: String?
+
+    private static func clip(_ s: String, _ n: Int = 60) -> String {
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.count > n ? String(t.prefix(n)) + "…" : t
+    }
+
+    var body: some View {
+        if let d = MemHistory.diff(snapId) {
+            let labels = MemorySummary.stateLabels
+            List {
+                if let problem { Text(problem).foregroundStyle(Theme.danger) }
+                if d.same { Text("与现在相同。").foregroundStyle(Theme.secondaryText) }
+                if !d.removed.isEmpty {
+                    Section("恢复后放回（\(d.removed.count)）") { ForEach(d.removed.indices, id: \.self) { i in Text(Self.clip(d.removed[i]["content"]?.string ?? "")) } }
+                }
+                if !d.added.isEmpty {
+                    Section("恢复后去掉（\(d.added.count)）") { ForEach(d.added.indices, id: \.self) { i in Text(Self.clip(d.added[i]["content"]?.string ?? "")) } }
+                }
+                if !d.changed.isEmpty {
+                    Section("恢复后改回（\(d.changed.count)）") {
+                        ForEach(d.changed.indices, id: \.self) { i in
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(Self.clip(d.changed[i].then["content"]?.string ?? ""))
+                                Text("现在：\(Self.clip(d.changed[i].now["content"]?.string ?? ""))").font(.footnote).foregroundStyle(Theme.secondaryText)
+                            }
+                        }
+                    }
+                }
+                if !d.blocks.isEmpty {
+                    Section("现状") {
+                        ForEach(d.blocks.indices, id: \.self) { i in
+                            let b = d.blocks[i]
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(labels[b.id] ?? b.id)
+                                Text("那时：\(Self.clip(b.then, 120).isEmpty ? "空" : Self.clip(b.then, 120))\n现在：\(Self.clip(b.now, 120).isEmpty ? "空" : Self.clip(b.now, 120))")
+                                    .font(.footnote).foregroundStyle(Theme.secondaryText)
+                            }
+                        }
+                    }
+                }
+                if d.bond { Text("关系底色与现在不同，恢复时一并换回。").font(.footnote).foregroundStyle(Theme.secondaryText) }
+                Section {
+                    Button("恢复到这一份", role: .destructive) { confirm = true }.disabled(d.same).foregroundStyle(Theme.dangerText)
+                }
+            }
+            .navigationTitle(MemoryHistoryView.when(d.snap.number("at") ?? 0))
+            .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("这个角色现在的全部记忆、现状与关系底色将换成这一份。恢复之前会先存一份现在的，可以再恢复回来。",
+                                isPresented: $confirm, titleVisibility: .visible) {
+                Button("恢复", role: .destructive) {
+                    do { try MemHistory.restore(snapId); dismiss() } catch { problem = "未能恢复：\(error.localizedDescription)" }
+                }
+            }
+        } else {
+            EmptyState(title: "这一份已不存在")
+        }
     }
 }

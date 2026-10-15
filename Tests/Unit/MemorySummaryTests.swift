@@ -131,4 +131,25 @@ final class MemorySummaryTests: StoreTestCase {
         c = try XCTUnwrap(Repo.character("char_a"))
         XCTAssertEqual(MemorySummary.stateOf(char: c, key: key).blocks["user"], "模型的")
     }
+
+    /// 历史版本：一样不存；恢复把记忆与现状整份放回，恢复之前先存一份
+    func testMemHistory() throws {
+        XCTAssertNotNil(try MemHistory.take("char_a", why: "总结记忆"))
+        XCTAssertNil(try MemHistory.take("char_a", why: "总结记忆"))
+        let snap = try XCTUnwrap(MemHistory.list("char_a").first)
+        let before = try Repo.memories(charId: "char_a").count
+        try Knowledge.deleteMemory("mem_2")
+        let key = try MemorySummary.stateKey("me_root")
+        try MemorySummary.setState(charId: "char_a", key: key, block: "recent", text: "改过")
+        let d = try XCTUnwrap(MemHistory.diff(snap.id))
+        XCTAssertEqual(d.removed.count, 1)
+        XCTAssertEqual(d.blocks.count, 1)
+        XCTAssertFalse(d.same)
+        XCTAssertEqual(try MemHistory.restore(snap.id), before)
+        XCTAssertEqual(try Repo.memories(charId: "char_a").count, before)
+        let c = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(MemorySummary.stateOf(char: c, key: key).blocks["recent"], "")
+        XCTAssertEqual(MemHistory.list("char_a").first?.string("why"), "恢复之前")
+        XCTAssertTrue(try XCTUnwrap(MemHistory.diff(snap.id)).same)
+    }
 }

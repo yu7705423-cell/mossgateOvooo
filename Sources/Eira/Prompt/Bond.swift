@@ -64,6 +64,8 @@ enum Bond {
             return
         }
         let clipped = String(text.prefix(600))
+        // 底色改写之前存一份（网页版 4.560）
+        do { try MemHistory.take(charId, why: "关系底色") } catch { Diagnostics.shared.record("memhistory-failed", ["error": error.localizedDescription]) }
         try write(charId: charId, key: key, ["text": .string(clipped), "manual": .bool(false), "at": .number(Date().millis), "failed": .string("")])
         // 压出来的写进现状块的「你们之间」：注入读的是那一块。手写锁住的不动
         guard var char = try Repo.character(charId) else { return }

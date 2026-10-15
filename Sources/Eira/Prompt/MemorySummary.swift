@@ -345,6 +345,8 @@ enum MemorySummary {
     /// 把模型交回来的操作落库（网页版 applyOps，一对一那一半）。
     static func apply(_ result: [String: JSONValue], charId: String, personaId: String, key: String, at: Double,
                       existing: [Memory]) throws -> Counts {
+        // 改写之前先把整份记忆存一份，改坏了能退回去（网页版 4.560）。和上一份相同不存
+        do { try MemHistory.take(charId, why: "总结记忆") } catch { Diagnostics.shared.record("memhistory-failed", ["error": error.localizedDescription]) }
         var n = Counts()
         let byId = Dictionary(existing.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         func keywords(_ r: JSONValue) -> JSONValue { .array((r["keywords"]?.array ?? []).compactMap(\.string).filter { !$0.isEmpty }.map { JSONValue.string($0) }) }
