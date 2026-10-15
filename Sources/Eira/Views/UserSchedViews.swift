@@ -1,12 +1,19 @@
+import PhotosUI
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 我的日程（网页版 daily/MinePage.js，4.321）：今天、每周重复的、只在某一天的，加哪些角色读得到。
-/// 从文件或截图导入要调接口，原生版暂未提供。
+/// 从文件或截图导入：一次导入调一次接口，读出来的先进确认页。
 struct UserSchedView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var tick = 0
     @State private var editing: Edit?
     @State private var problem: String?
+    @State private var busy = ""
+    @State private var pickingFile = false
+    @State private var pickingShot = false
+    @State private var shot: PhotosPickerItem?
+    @State private var pending: UserSched.Pending?
 
     struct Edit: Identifiable { let id: String }   // "new" 为新建
 
@@ -42,7 +49,18 @@ struct UserSchedView: View {
             Section {
                 Button("添加日程") { editing = Edit(id: "new") }
             } footer: {
-                HelpNote("日程是一段段占着的时间：课表、排班、通勤、固定的安排。每周重复的可以设起止日期与单双周；单双周按起始日期那一周算第一周，没有起始日期时按一年中的第几周算。日期与时刻按你的时区。从文件或截图导入原生版暂未提供。", title: "我的日程")
+                HelpNote("日程是一段段占着的时间：课表、排班、通勤、固定的安排。每周重复的可以设起止日期与单双周；单双周按起始日期那一周算第一周，没有起始日期时按一年中的第几周算。日期与时刻按你的时区。", title: "我的日程")
+            }
+            Section {
+                Button(busy == "file" ? "正在读取文件" : "从文件导入") { pickingFile = true }.disabled(!busy.isEmpty)
+                Button(busy == "shot" ? "正在识别截图" : "从截图导入") { pickingShot = true }
+                    .disabled(!busy.isEmpty || !UserSched.visionReady(model.s))
+                if !UserSched.visionReady(model.s) {
+                    Text("从截图导入需要先在「设置 - 识图」中配置识图。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                }
+            } header: { Text("导入") } footer: {
+                Text("每次导入调用一次接口，读出的内容先进入确认页，确认后才会存入。")
+                HelpNote("从文件导入支持 xlsx、docx、txt、csv、md：文字在本机读出，再调用一次副用接口整理成时间段。从截图导入读课程表、排班表的截图，调用一次识图接口。", title: "我的日程：导入")
             }
 
             Section {
@@ -57,10 +75,40 @@ struct UserSchedView: View {
             ProblemSection(text: model.problem)
         }
         .navigationTitle("我的日程")
+        .documentPicker(isPresented: $pickingFile, types: ["xlsx", "docx", "txt", "csv", "md"].compactMap { UTType(filenameExtension: $0) }) { urls in
+            guard let u = urls.first else { return }
+            run("file") { try await UserSched.extract(file: u) }
+        }
+        .photosPicker(isPresented: $pickingShot, selection: $shot, matching: .images)
+        .onChange(of: shot) { _, item in
+            guard let item else { return }
+            shot = nil
+            run("shot") {
+                guard let data = try await item.loadTransferable(type: Data.self) else { throw StoreError(message: "读不到这张图片") }
+                let jpeg = UIImage(data: data)?.jpegData(compressionQuality: 0.85)
+                return try await UserSched.extract(image: jpeg ?? data, mediaType: "image/jpeg")
+            }
+        }
+        .sheet(isPresented: Binding(get: { pending != nil }, set: { if !$0 { pending = nil } }), onDismiss: { tick += 1 }) {
+            if let p = pending { NavigationStack { UserSchedImportView(pending: p, owner: UserSched.ownerOf("")) } }
+        }
         .sheet(item: $editing, onDismiss: { tick += 1 }) { e in
             NavigationStack { UserSchedEditView(itemId: e.id == "new" ? nil : e.id) }
         }
         .onAppear { model.reload(); tick += 1 }
+    }
+
+    private func run(_ kind: String, _ job: @escaping () async throws -> UserSched.Pending) {
+        busy = kind
+        problem = nil
+        Task { @MainActor in
+            do {
+                let p = try await job()
+                if p.items.isEmpty { problem = "没有读到可以存入的时间段" + (p.unclear.isEmpty ? "" : "：\(p.unclear)") }
+                else { pending = p }
+            } catch { problem = error.localizedDescription }
+            busy = ""
+        }
     }
 
     private func weeksText(_ r: UserSched.Item) -> String {
@@ -218,5 +266,54 @@ struct UserSchedEditView: View {
             if let itemId { try UserSched.update(itemId, raw) } else { try UserSched.create(UserSched.ownerOf(""), raw) }
             dismiss()
         } catch { problem = error.localizedDescription }
+    }
+}
+
+/// 确认导入（网页版 MineImport）：读到的每一段，右侧开关决定存不存；信息不全的不存；可选先删掉之前导入的
+struct UserSchedImportView: View {
+    @State var pending: UserSched.Pending
+    let owner: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var replace = false
+    @State private var problem: String?
+
+    var body: some View {
+        let had = UserSched.list(owner).filter { $0.row.string("source") == "import" }.count
+        let take = pending.items.filter { $0.ok && !$0.skip }.count
+        Form {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            Section {
+                ForEach($pending.items) { $d in
+                    Toggle(isOn: Binding(get: { d.ok && !d.skip }, set: { d.skip = !$0 })) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(d.s("title"))
+                            Text(d.summary).font(.footnote).foregroundStyle(d.ok ? Theme.secondaryText : Theme.danger)
+                        }
+                    }
+                    .disabled(!d.ok)
+                }
+            } header: { Text("从「\(pending.from)」读到 \(pending.items.count) 段") } footer: {
+                if !pending.unclear.isEmpty { Text("未能读出的部分：\(pending.unclear)") }
+            }
+            if had > 0 {
+                Section {
+                    Toggle("替换原来导入的", isOn: $replace)
+                } footer: {
+                    Text("开启后，先删除之前导入的 \(had) 段，再存入这一批。手动添加的不受影响。")
+                }
+            }
+        }
+        .navigationTitle("确认导入")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("存入 \(take) 段") {
+                    do { try UserSched.install(owner, pending.items, replace: replace); dismiss() }
+                    catch { problem = "未能存入：\(error.localizedDescription)" }
+                }
+                .disabled(take == 0)
+            }
+        }
     }
 }

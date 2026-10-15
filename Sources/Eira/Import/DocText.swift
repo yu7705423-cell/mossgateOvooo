@@ -1,6 +1,6 @@
 import Foundation
 
-/// 从 txt、md、docx 读出纯文本（网页版 src/system/doctext.js 的 readText）。
+/// 从 txt、md、csv、docx、xlsx 读出纯文本（网页版 doctext.js 的 readText、docfile.js 的 readXlsx）。
 enum DocText {
     static func read(_ url: URL) throws -> String {
         let scoped = url.startAccessingSecurityScopedResource()
@@ -9,6 +9,7 @@ enum DocText {
         do { data = try Data(contentsOf: url, options: .alwaysMapped) }
         catch { throw StoreError(message: "读不出这个文件：\(error.localizedDescription)") }
         if url.pathExtension.lowercased() == "docx" { return try docx(data) }
+        if url.pathExtension.lowercased() == "xlsx" { return try xlsx(data) }
         if ZipReader.looksLikeZip(data) { throw StoreError(message: "这个文件是压缩包。docx 请直接选择 .docx 文件") }
         return plain(data)
     }
@@ -44,6 +45,58 @@ enum DocText {
         return lines.joined(separator: "\n")
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func all(_ pattern: String, _ s: String) -> [[String]] {
+        guard let re = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let ns = s as NSString
+        return re.matches(in: s, range: NSRange(location: 0, length: ns.length)).map { m in
+            (0..<m.numberOfRanges).map { i in m.range(at: i).location == NSNotFound ? "" : ns.substring(with: m.range(at: i)) }
+        }
+    }
+
+    private static func texts(_ s: String) -> String {
+        all(#"<t(?:\s[^>]*)?>([\s\S]*?)</t>"#, s).map { unescape($0[1]) }.joined()
+    }
+
+    /// xlsx：每张表一行一行，每格写成「坐标 内容」，用 | 隔开；不止一张表时每张前面一行 [表：名字]（与网页版 readXlsx 一致）
+    static func xlsx(_ data: Data) throws -> String {
+        let zip = try ZipReader(data: data)
+        func text(_ name: String) -> String? { zip.entry(named: name).flatMap { zip.contents(of: $0) }.flatMap { String(data: $0, encoding: .utf8) } }
+        guard let wb = text("xl/workbook.xml") else { throw StoreError(message: "这个 xlsx 里没找到工作簿") }
+        var rels: [String: String] = [:]
+        for tag in all(#"<Relationship\s[^>]*>"#, text("xl/_rels/workbook.xml.rels") ?? "").map({ $0[0] }) {
+            if let id = all(#"\sId="([^"]+)""#, tag).first?[1], let target = all(#"\sTarget="([^"]+)""#, tag).first?[1] {
+                rels[id] = target.hasPrefix("/") ? String(target.dropFirst()) : "xl/\(target)"
+            }
+        }
+        var sheets: [(name: String, path: String)] = []
+        for tag in all(#"<sheet\s[^>]*>"#, wb).map({ $0[0] }) {
+            let name = unescape(all(#"\sname="([^"]*)""#, tag).first?[1] ?? "")
+            let rid = all(#"\s[a-z]+:id="([^"]+)""#, tag).first?[1] ?? ""
+            if let path = rels[rid] { sheets.append((name, path)) }
+        }
+        let shared = all(#"<si>([\s\S]*?)</si>"#, text("xl/sharedStrings.xml") ?? "").map { texts($0[1]) }
+        let many = sheets.count > 1
+        var out: [String] = []
+        for sh in sheets {
+            let xml = text(sh.path) ?? ""
+            var rows: [Int: [String]] = [:]
+            for m in all(#"<c\s([^>]*?)(?:/>|>([\s\S]*?)</c>)"#, xml) {
+                guard let ref = all(#"(?:^|\s)r="([A-Z]+[0-9]+)""#, m[1]).first?[1] else { continue }
+                let t = all(#"\bt="([^"]+)""#, m[1]).first?[1] ?? ""
+                let inner = m[2]
+                let v: String
+                if t == "s" { v = Int(all(#"<v>([^<]*)</v>"#, inner).first?[1] ?? "").flatMap { shared.indices.contains($0) ? shared[$0] : nil } ?? "" }
+                else if t == "inlineStr" { v = texts(inner) }
+                else { v = unescape(all(#"<v>([^<]*)</v>"#, inner).first?[1] ?? "") }
+                guard !v.isEmpty, let r = Int(ref.drop(while: { $0.isLetter })) else { continue }
+                rows[r, default: []].append("\(many ? "\(sh.name)!" : "")\(ref) \(v.replacingOccurrences(of: "\n", with: " "))")
+            }
+            if many { out.append("[表：\(sh.name)]") }
+            for r in rows.keys.sorted() { out.append(rows[r]!.joined(separator: " | ")) }
+        }
+        return out.joined(separator: "\n")
     }
 
     private static func unescape(_ s: String) -> String {

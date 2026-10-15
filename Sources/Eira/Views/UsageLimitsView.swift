@@ -188,6 +188,7 @@ struct UsageLimitsView: View {
             "moment.comment": "朋友圈评论",
             "moment.reply": "朋友圈回复",
             "translate.lines": "翻译单条消息",
+            "usersched.import": "导入我的日程",
             "phone.lock": "角色手机的锁屏密码",
             "phone.chats": "角色手机的会话列表",
             "phone.chat": "角色手机的一段会话",

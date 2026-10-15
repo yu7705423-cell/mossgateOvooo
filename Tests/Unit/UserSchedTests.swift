@@ -5,8 +5,53 @@ import XCTest
 final class UserSchedTests: StoreTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
+        URLProtocol.registerClass(MockNet.self)
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
         try importFixture("data.json")
-        try setSettings(["timeZoneUser": .string("Asia/Shanghai")])
+        try setSettings(["timeZoneUser": .string("Asia/Shanghai"), "services": .object(["chat": .object([
+            "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
+                                         "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])]),
+            "activeId": .string("svc_main")])])])
+    }
+
+    override func tearDownWithError() throws {
+        URLProtocol.unregisterClass(MockNet.self)
+        try super.tearDownWithError()
+    }
+
+    private func xlsxFile() throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("sched-\(UUID().uuidString).xlsx")
+        let z = try ZipWriter(url: url)
+        try z.add(name: "xl/workbook.xml", data: Data(#"<workbook><sheets><sheet name="课表" sheetId="1" r:id="rId1"/></sheets></workbook>"#.utf8))
+        try z.add(name: "xl/_rels/workbook.xml.rels", data: Data(#"<Relationships><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>"#.utf8))
+        try z.add(name: "xl/sharedStrings.xml", data: Data(#"<sst><si><t>周一</t></si><si><t>高数 &amp; 线代</t></si></sst>"#.utf8))
+        try z.add(name: "xl/worksheets/sheet1.xml", data: Data(#"<worksheet><sheetData><row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row><row r="2"><c r="A2"><v>8</v></c><c r="B2" t="inlineStr"><is><t>A101</t></is></c></row></sheetData></worksheet>"#.utf8))
+        try z.finish()
+        return url
+    }
+
+    func testXlsxText() throws {
+        let text = try DocText.read(try xlsxFile())
+        XCTAssertEqual(text, "A1 周一 | B1 高数 & 线代\nA2 8 | B2 A101")
+    }
+
+    /// 导入一次调一次接口；接口一直失败时也只打一次。读回来的先是草稿，信息不全的不存，替换只删导入的
+    func testImportOneCallAndInstall() async throws {
+        let url = try xlsxFile()
+        do { _ = try await UserSched.extract(file: url); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"items":[{"kind":"class","repeat":"weekly","weekday":"周一","start":"8:00","end":"9:40","title":"高数","place":"A101"},{"title":"没有时间","weekday":2}],"unclear":"备注栏"}"#)) }
+        let p = try await UserSched.extract(file: url)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(p.items.count, 2)
+        XCTAssertTrue(p.items[0].ok)
+        XCTAssertFalse(p.items[1].ok)
+        XCTAssertEqual(p.unclear, "备注栏")
+        let owner = UserSched.ownerOf("")
+        try UserSched.create(owner, ["title": .string("手动"), "start": .string("7:00"), "weekday": .number(3)])
+        XCTAssertEqual(try UserSched.install(owner, p.items, replace: false), 1)
+        XCTAssertEqual(try UserSched.install(owner, p.items, replace: true), 1)
+        XCTAssertEqual(UserSched.list(owner).map(\.title).sorted(), ["手动", "高数"])
     }
 
     func testTimeParsing() {

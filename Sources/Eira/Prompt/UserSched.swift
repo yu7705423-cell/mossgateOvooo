@@ -313,4 +313,102 @@ enum UserSched {
         let text = textFor(ownerOf(personaId), back: 0, ahead: 0, settings: s)
         return text.isEmpty ? "" : "The user's own schedule (user's time zone):\n\(text)"
     }
+
+    // MARK: - 从文件或截图导入（网页版 ai/tasks/usersched.js）
+    //
+    // 一份来源只调一次接口，而且是你点了才调。文件先在本机读成文字，再交给副用接口整理；截图交给识图接口，一次读完、一次整理。
+    // 整理出来的先放在确认页，你看过、点了存入才进库。
+
+    /// 周几：数字 1 到 7（0 与 7 都算周日），或「周一」「星期三」「Mon」
+    static func weekdayNum(_ v: JSONValue?) -> Int {
+        if let n = v?.number { return (1...7).contains(Int(n)) ? Int(n) : Int(n) == 0 ? 7 : 0 }
+        let s = (v?.string ?? "").trimmingCharacters(in: .whitespaces).lowercased()
+        if let n = Int(s) { return (1...7).contains(n) ? n : n == 0 ? 7 : 0 }
+        for pre in ["星期", "礼拜", "周"] where s.hasPrefix(pre) {
+            if let c = s.dropFirst(pre.count).first, let i = Array("一二三四五六日天").firstIndex(of: c) { return min(i + 1, 7) }
+        }
+        return ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].firstIndex(of: String(s.prefix(3))).map { $0 + 1 } ?? 0
+    }
+
+    struct Draft: Identifiable, Equatable {
+        let id = UUID()
+        var raw: [String: JSONValue]
+        var skip = false
+        var ok: Bool { UserSched.normalize(raw) != nil }
+        func s(_ k: String) -> String { raw[k]?.string ?? "" }
+        var summary: String {
+            guard ok else { return "信息不全：缺少开始时刻、周几或日期，不会存入" }
+            let kind = UserSched.kinds.first { $0.id == s("kind") }?.label ?? ""
+            let when = s("repeat") == UserSched.once ? s("date")
+                : UserSched.weekdays[max(0, Int(raw["weekday"]?.number ?? 1) - 1)] + (s("weeks") == "odd" ? "（单周）" : s("weeks") == "even" ? "（双周）" : "")
+            let span = s("end").isEmpty ? s("start") : "\(s("start"))-\(s("end"))"
+            return [kind, when, span, s("place"), s("note")].filter { !$0.isEmpty }.joined(separator: " · ")
+        }
+        static func == (a: Draft, b: Draft) -> Bool { a.id == b.id && a.skip == b.skip }
+    }
+
+    struct Pending { var items: [Draft]; var unclear: String; var from: String }
+
+    /// 模型交回来的一条，整理成确认页上的一行
+    static func draftOf(_ v: JSONValue) -> Draft {
+        func str(_ k: String) -> String { (v[k]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        let raw: [String: JSONValue] = [
+            "kind": .string(["class", "work", "other"].contains(str("kind")) ? str("kind") : "class"),
+            "repeat": .string(str("repeat") == once ? once : weekly),
+            "weekday": .number(Double(weekdayNum(v["weekday"]))),
+            "date": .string(str("date")), "start": .string(hm(str("start"))), "end": .string(hm(str("end"))),
+            "title": .string(String(str("title").prefix(60))), "place": .string(String(str("place").prefix(60))),
+            "note": .string(String(str("note").prefix(200))),
+            "weeks": .string(["odd", "even"].contains(str("weeks")) ? str("weeks") : "all"),
+            "from": .string(str("from")), "to": .string(str("to")),
+        ]
+        return Draft(raw: raw)
+    }
+
+    private static func prompt(_ source: String, settings s: AppSettings) -> String {
+        let t = today(s, at: Date()).key
+        return Templates.render("task.user-sched", ["today": t, "weekday": weekdays[max(0, weekdayOfKey(t) - 1)], "source": source], settings: s)
+    }
+
+    private static func shape(_ j: JSONValue, from: String) -> Pending {
+        Pending(items: (j["items"]?.array ?? []).map(draftOf).filter { !$0.s("title").isEmpty },
+                unclear: String((j["unclear"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(400)), from: from)
+    }
+
+    /// 读一份文件（xlsx、docx、txt、csv、md），整理成待确认的几行。调一次副用接口
+    static func extract(file url: URL) async throws -> Pending {
+        let text = try DocText.read(url)
+        guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw StoreError(message: "这份文件里没有读到文字") }
+        let s = AppSettings.load()
+        let r = try await AIService.shared.send(task: "usersched.import",
+                                                system: prompt("## Source (read from \(url.lastPathComponent))\n\(text)", settings: s),
+                                                messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.")], maxTokens: 4000)
+        guard let j = JSONReply.parse(r.text), j.object != nil else { throw StoreError(message: JSONReply.failure(r.text)) }
+        return shape(j, from: url.lastPathComponent)
+    }
+
+    /// 识图能不能用：单独的识图接口，或者把图交给聊天模型
+    static func visionReady(_ s: AppSettings = .load()) -> Bool { s.visionActive }
+
+    /// 读一张截图。调一次识图接口（识图交给聊天模型时走聊天那一套）
+    static func extract(image data: Data, mediaType: String) async throws -> Pending {
+        let s = AppSettings.load()
+        guard s.visionActive else { throw StoreError(message: "尚未配置识图接口，可在「设置 - 识图」中填写") }
+        let image = AIImage(mediaType: mediaType, base64: data.base64EncodedString())
+        let r = try await AIService.shared.send(task: "usersched.import", preset: s.visionMode == "api" ? s.visionPreset : nil,
+                                                system: prompt("## Source\nThe attached image.", settings: s),
+                                                messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.", images: [image])],
+                                                maxTokens: 4000)
+        guard let j = JSONReply.parse(r.text), j.object != nil else { throw StoreError(message: "识图接口返回的内容读不出来") }
+        return shape(j, from: "截图")
+    }
+
+    /// 确认之后存进去。replace 为真先清掉这个身份原来导入的那些（手动加的留着）
+    @discardableResult
+    static func install(_ owner: String, _ drafts: [Draft], replace: Bool) throws -> Int {
+        if replace { for r in list(owner) where r.row.string("source") == "import" { try remove(r.id) } }
+        var n = 0
+        for d in drafts where d.ok && !d.skip { try create(owner, d.raw, source: "import"); n += 1 }
+        return n
+    }
 }
