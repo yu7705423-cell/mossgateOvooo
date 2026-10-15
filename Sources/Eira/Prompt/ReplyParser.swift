@@ -25,6 +25,8 @@ enum ReplyParser {
         case keep, lockcode
         // 角色打电话过来（flag 为真是视频，原生版先按语音接）
         case ring
+        // 草稿箱：写了又没发出去的话（不落进聊天）
+        case draft
     }
 
     struct Part: Equatable, Sendable {
@@ -249,6 +251,9 @@ enum ReplyParser {
                 var p = Part(type: .lockcode, text: (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces))
                 p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
                 push(p)
+            case "草稿":
+                let t = body.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !t.isEmpty { push(Part(type: .draft, text: t)) }
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"

@@ -131,3 +131,49 @@ struct BondView: View {
         }
     }
 }
+
+/// 草稿箱（网页版 4.335）：开关与这段会话里角色写了没发的话。开关挂在会话上，默认关
+struct DraftsView: View {
+    let chatId: String
+    @State private var on = false
+    @State private var rows: [Row] = []
+    @State private var loaded = false
+    @State private var problem: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("草稿箱", isOn: $on)
+                HelpNote("开启后，角色可以在回复里留下写了又没发出去的话，不显示在聊天里，存在这里。写不写、写什么由角色决定。随回复一起，不另外调用接口。关闭后不再记录，已有的草稿保留。", title: "草稿箱")
+            }
+            Section {
+                if rows.isEmpty { Text("还没有草稿。").foregroundStyle(Theme.text2) }
+                ForEach(rows, id: \.id) { r in
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(r.string("text"))
+                        Text(SceneListView.date(r.created ?? 0)).font(.footnote).foregroundStyle(Theme.text3)
+                    }
+                    .swipeActions {
+                        Button("删除", role: .destructive) {
+                            do { try Drafts.remove(r.id); reload() } catch { problem = "删除失败：\(error.localizedDescription)" }
+                        }
+                    }
+                }
+            } header: { Text("草稿") }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle("草稿箱")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            on = Drafts.on((try? Repo.chat(chatId)) ?? nil)
+            reload()
+            loaded = true
+        }
+        .onChange(of: on) { _, v in
+            guard loaded else { return }
+            do { try Drafts.setOn(chatId, v) } catch { problem = "保存失败：\(error.localizedDescription)" }
+        }
+    }
+
+    private func reload() { rows = Drafts.list(chatId) }
+}

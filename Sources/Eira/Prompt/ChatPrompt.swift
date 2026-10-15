@@ -370,7 +370,7 @@ enum ChatPrompt {
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
-    static let capIds = ["image", "voice", "ties", "listen", "ring", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
+    static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
@@ -497,6 +497,11 @@ enum ChatPrompt {
         cap("silence", on: char.row["canSilence"]?.bool == true, hot: recent.contains { $0.kind == "silence" },
             line: "Send nothing this turn: output exactly [不回复] and nothing else") {
             Templates.get("skeleton.silence", settings: s)
+        }
+        // 草稿箱（网页版 capabilities.js 的 drafts）：这段会话开了才有，开关在会话菜单里
+        cap("drafts", on: Drafts.on(chat), hot: used(#"[\[【]草稿"#),
+            line: "Keep words you wrote but did not send: a line on its own, [草稿：the unsent words]") {
+            Templates.get("skeleton.drafts", settings: s)
         }
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
             line: "Withdraw a message: write [撤回] on its own line directly after that message.") {

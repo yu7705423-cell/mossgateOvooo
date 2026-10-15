@@ -196,6 +196,7 @@ enum ChatEngine {
         for m in rows { try Interact.drop(m) }
         try Interact.undoReactions(chatId: chatId, turnId: turnId)
         try Ties.undoTurn(turnId)
+        try Drafts.undoTurn(chatId: chatId, turnId: turnId)
         // 群里这一轮发进私聊的私信一起撤掉（网页版 clearTurn）
         if let chat = try Repo.chat(chatId), chat.isGroup {
             for c in try Repo.chats() where !c.isGroup {
@@ -406,6 +407,11 @@ enum ChatEngine {
             var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[\(char.name)改了手机的锁屏密码]", kind: "notice", turnId: turnId)
             m.row["lockUndo"] = .object(["charId": .string(char.id), "prev": prev])
             return m
+        case .draft:
+            // 草稿箱：这段会话开了才存，一个字都不落进聊天
+            guard Drafts.on(chat) else { return nil }
+            try Drafts.add(chatId: chat.id, charId: char.id, text: p.text, turnId: turnId)
+            return nil
         case .ring:
             // 角色打电话过来：正看着这段对话就响铃，否则记一条未接来电。群里没有一个对象可以接
             let off = (AppSettings.load().raw["capsOff"]?.array ?? []).compactMap(\.string)
@@ -517,7 +523,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

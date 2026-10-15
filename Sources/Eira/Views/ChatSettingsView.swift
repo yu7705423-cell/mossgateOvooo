@@ -145,6 +145,10 @@ struct ChatSettingsView: View {
             add("status", how, "状态栏", StatusBar.active(c) ? "开启" : "关闭", keys: "心情 所在地 进度条",
                 dest: AnyView(StatusBarSettingsView(chatId: chatId)))
         }
+        if !c.isGroup {
+            add("drafts", how, "草稿箱", Drafts.on(c) ? "开启" : "关闭", keys: "没发出去 写了又删",
+                dest: AnyView(DraftsView(chatId: chatId)))
+        }
         add("narr", how, "旁白", narration || userNarration ? "开启" : "关闭", keys: "我也写旁白",
             dest: AnyView(MenuPage("旁白") { narrationSections }))
         add("translate", how, "翻译", translateTo.trimmingCharacters(in: .whitespaces).isEmpty ? "关闭" : translateTo, keys: "译文 语言",
