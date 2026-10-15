@@ -130,10 +130,16 @@ struct MusicFrontView: View {
                 }
             } else {
                 if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
-                Section("最近播放") {
+                Section {
                     if recent.isEmpty { Text("该账号暂无播放记录。").font(.footnote).foregroundStyle(Theme.secondaryText) }
                     ForEach(Array(recent.enumerated()), id: \.offset) { i, t in
                         TrackRow(title: t.title, artist: t.artist, cover: t.cover) { player.play(neSongs(recent), at: i) }
+                    }
+                } header: {
+                    HStack {
+                        Text("最近播放")
+                        Spacer()
+                        if !recent.isEmpty { Button("全部播放") { player.play(neSongs(recent), at: 0) }.font(.footnote) }
                     }
                 }
                 Section("我的歌单 · \(lists.count)") {
@@ -259,6 +265,8 @@ struct MusicMineView: View {
                             }
                         }
                         LabeledContent("累计听歌", value: "\(p.listenSongs)")
+                        LabeledContent("关注", value: "\(p.follows)")
+                        LabeledContent("粉丝", value: "\(p.followeds)")
                         LabeledContent("入驻天数", value: "\(p.createDays)")
                     }
                 }
@@ -270,7 +278,12 @@ struct MusicMineView: View {
                             player.play(neSongs(Array(rank.prefix(50))), at: i)
                         }
                     }
-                } header: { Text("听歌排行") }
+                } header: { Text("听歌排行") } footer: {
+                    if !rank.isEmpty {
+                        let sec = rank.reduce(0) { $0 + $1.seconds * $1.count }
+                        Text("\(week ? "最近一周" : "所有时间")累计时长约 \(sec >= 3600 ? "\(sec / 3600) 小时 \(sec % 3600 / 60) 分钟" : "\(sec / 60) 分钟")。按排行中各曲目的时长与播放次数估算，不含排行以外的曲目。")
+                    }
+                }
             }
         }
         .task(id: week) {
