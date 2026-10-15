@@ -10,7 +10,7 @@ struct RootView: View {
     @State private var opened: OpenedApp?
     @State private var unread = Shell.chatUnread()
     /// 锁屏：打开应用时先显示（网页版 showLockScreen，没写过按开启）
-    @State private var locked = AppSettings.load().raw["showLockScreen"]?.bool != false
+    @State private var locked = AppSettings.load().raw["showLockScreen"]?.bool != false || PinLock.hasPin()
     /// 打开 app 时从那个图标放大出来、关上时缩回去（iOS 18 起）
     @Namespace private var appZoom
 
@@ -38,7 +38,11 @@ struct RootView: View {
             if locked && !onboarding {
                 LockScreenView(wallpaper: layout.wallpaperLock) { chat in
                     withAnimation(.easeOut(duration: 0.25)) { locked = false }
-                    if let chat { notifier.openChat = chat }
+                    // 锁着时点了系统通知的那一段，解锁之后正好落在那儿
+                    if let pending = chat ?? notifier.openChat {
+                        notifier.openChat = pending
+                        if opened?.id != "chat" { opened = OpenedApp(id: "chat") }
+                    }
                 }
                 .transition(.move(edge: .top))
                 .zIndex(1)
@@ -47,8 +51,11 @@ struct RootView: View {
         .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
         // 点了通知或主屏的会话：打开聊天，由会话列表打开那一段
         .onChange(of: notifier.openChat) { _, id in
-            if id != nil { locked = false }
-            if id != nil, opened?.id != "chat" { opened = OpenedApp(id: "chat") }
+            guard id != nil else { return }
+            // 设了锁屏密码：等解锁之后再打开（网页版 pinlock：门挂在外壳上）
+            if locked && PinLock.hasPin() { return }
+            locked = false
+            if opened?.id != "chat" { opened = OpenedApp(id: "chat") }
         }
         .fullScreenCover(item: $opened, onDismiss: refresh) { app in
             AppHost(appId: app.id) { opened = nil }

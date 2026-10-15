@@ -354,17 +354,37 @@ struct LookPresetsSection: View {
 /// 锁屏：开关与锁屏壁纸
 struct LockLookSection: View {
     @ObservedObject private var model = SettingsModel.shared
+    @State private var lockOff = false
+
+    /// 设了密码就算开着
+    private var on: Bool { model.s.raw["showLockScreen"]?.bool != false || PinLock.hasPin(model.s) }
 
     var body: some View {
         Section {
-            Toggle("锁屏", isOn: model.bool("showLockScreen", true))
-            if model.s.raw["showLockScreen"]?.bool != false {
+            Toggle("锁屏", isOn: Binding(get: { on }, set: { v in
+                if v { model.set("showLockScreen", .bool(true)) }
+                else if PinLock.hasPin(model.s) { lockOff = true }
+                else { model.set("showLockScreen", .bool(false)) }
+            }))
+            if on {
                 WallpaperSection(slot: "lock", label: "锁屏壁纸", desc: "位于时钟与通知下层", bare: true)
+                NavigationLink {
+                    LockPinView()
+                } label: {
+                    HStack {
+                        Text("锁屏密码")
+                        Spacer()
+                        Text(PinLock.hasPin(model.s) ? "\(PinLock.length(model.s)) 位" : "未设置").foregroundStyle(Theme.text2)
+                    }
+                }
             }
         } header: {
             Text("锁屏")
         } footer: {
-            HelpNote("开启时，打开应用先显示锁屏：时间、日期与有未读消息的会话，上滑进入主界面，点一条会话直接进入。关闭时直接进入主界面。", title: "锁屏")
+            HelpNote("开启时，打开应用先显示锁屏：时间、日期与有未读消息的会话，上滑进入主界面，点一条会话直接进入。关闭时直接进入主界面。锁屏密码：设置后每次打开应用时需要输入，切到后台再回来不需要；关闭锁屏时先核对密码，密码一并清除。", title: "锁屏")
+        }
+        .sheet(isPresented: $lockOff) {
+            NavigationStack { LockPinView(lockOff: true) }
         }
     }
 }

@@ -10,6 +10,9 @@ struct LockScreenView: View {
     struct Note: Identifiable { var id: String; var title: String; var body: String; var count: Int }
     @State private var notes: [Note] = []
     @State private var drag: CGFloat = 0
+    /// 设了锁屏密码：先要密码，对了再放开；点了哪一条先记着
+    @State private var asking = false
+    @State private var after: String?
 
     private var onImage: Bool { !wallpaper.isEmpty }
 
@@ -23,6 +26,19 @@ struct LockScreenView: View {
                         .clipped()
                         .ignoresSafeArea()
                 }
+                if asking {
+                    VStack(spacing: 30) {
+                        TimelineView(.periodic(from: .now, by: 20)) { ctx in
+                            Text(ctx.date, format: .dateTime.hour(.twoDigits(amPM: .omitted)).minute(.twoDigits))
+                                .font(.system(size: 44, weight: .thin).monospacedDigit())
+                        }
+                        PinGate(tint: onImage ? .white : Theme.text, onPass: { asking = false; unlock(after) },
+                                onCancel: { after = nil; asking = false })
+                    }
+                    .foregroundStyle(onImage ? Color.white : Theme.text)
+                    .padding(.top, 50)
+                    .frame(maxHeight: .infinity, alignment: .top)
+                } else {
                 VStack(spacing: 0) {
                     TimelineView(.periodic(from: .now, by: 20)) { ctx in
                         VStack(spacing: 6) {
@@ -38,7 +54,7 @@ struct LockScreenView: View {
                     ScrollView {
                         VStack(spacing: 8) {
                             ForEach(notes) { n in
-                                Button { unlock(n.id) } label: {
+                                Button { go(n.id) } label: {
                                     HStack(alignment: .top, spacing: 10) {
                                         SvgIcon(name: "message", size: 16, color: Theme.text2)
                                         VStack(alignment: .leading, spacing: 2) {
@@ -59,7 +75,7 @@ struct LockScreenView: View {
                         .padding(.top, 28)
                     }
 
-                    Button { unlock(nil) } label: {
+                    Button { go(nil) } label: {
                         VStack(spacing: 4) {
                             Image(systemName: "chevron.up").font(.system(size: 16))
                             Text("上滑解锁").font(.system(size: 13))
@@ -71,16 +87,22 @@ struct LockScreenView: View {
                     .buttonStyle(.plain)
                 }
                 .offset(y: min(0, drag))
+                }
             }
         }
         .contentShape(Rectangle())
         .gesture(DragGesture(minimumDistance: 12)
             .onChanged { v in drag = v.translation.height }
             .onEnded { v in
-                if v.translation.height < -70 { unlock(nil) }
+                if !asking && v.translation.height < -70 { go(nil) }
                 withAnimation(.easeOut(duration: 0.2)) { drag = 0 }
             })
         .task { load() }
+    }
+
+    /// 设了密码先要密码
+    private func go(_ chat: String?) {
+        if PinLock.hasPin() { after = chat; asking = true } else { unlock(chat) }
     }
 
     static func dateLine(_ d: Date) -> String {
