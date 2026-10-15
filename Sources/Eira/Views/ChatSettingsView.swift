@@ -540,6 +540,10 @@ struct ProactiveSection: View {
     @State private var problem: String?
     @State private var sending = false
     @State private var next: Double = 0
+    @State private var emo = false
+    @State private var emoFrom = 1
+    @State private var emoTo = 4
+    @State private var emoDays = 5.0
     @ObservedObject private var bg = BgPush.shared
 
     var body: some View {
@@ -550,6 +554,13 @@ struct ProactiveSection: View {
                 Stepper("免打扰开始：\(quietFrom) 点", value: $quietFrom, in: 0...23)
                 Stepper("免打扰结束：\(quietTo) 点", value: $quietTo, in: 0...23)
                 HStack { Text("下一次预计"); Spacer(); Text(nextText).foregroundStyle(Theme.text2) }
+                Toggle("深夜那一档", isOn: $emo)
+                if emo {
+                    Stepper("深夜从 \(emoFrom) 点", value: $emoFrom, in: 0...23)
+                    Stepper("到 \(emoTo) 点", value: $emoTo, in: 0...23)
+                    NumberRow(title: "距上次至少隔", value: $emoDays, unit: "天", placeholder: "0", range: 0...365)
+                    HelpNote("深夜那一档：在设定的深夜时段内，角色以夜里醒着的状态开口，每次调用一次接口。距上次至少隔设定的天数，填 0 表示每晚都可能。不受免打扰时段限制；只在应用打开时发送。", title: "深夜那一档")
+                }
             }
             Button(sending ? "正在发起" : "立即发起一次") { sendNow() }.disabled(sending)
             Text("点一次调用一次接口。").font(.footnote).foregroundStyle(Theme.text2)
@@ -565,6 +576,10 @@ struct ProactiveSection: View {
         .onChange(of: minutes) { _, _ in save() }
         .onChange(of: quietFrom) { _, _ in save() }
         .onChange(of: quietTo) { _, _ in save() }
+        .onChange(of: emo) { _, _ in saveEmo() }
+        .onChange(of: emoFrom) { _, _ in saveEmo() }
+        .onChange(of: emoTo) { _, _ in saveEmo() }
+        .onChange(of: emoDays) { _, _ in saveEmo() }
     }
 
     private var footer: String {
@@ -579,7 +594,19 @@ struct ProactiveSection: View {
         let cfg = Proactive.config(c)
         on = cfg.on; minutes = cfg.minutes; quietFrom = cfg.quietFrom; quietTo = cfg.quietTo
         next = Proactive.upcoming(charId, count: 1).first ?? 0
+        emo = cfg.emo; emoFrom = cfg.emoFrom; emoTo = cfg.emoTo; emoDays = Double(cfg.emoDays)
         loaded = true
+    }
+
+    private func saveEmo() {
+        guard loaded, var c = try? Repo.character(charId) else { return }
+        c.row["emo"] = .bool(emo)
+        c.row["emoFrom"] = .number(Double(emoFrom))
+        c.row["emoTo"] = .number(Double(emoTo))
+        c.row["emoDays"] = .number(max(0, emoDays.rounded()))
+        c.row.touch()
+        do { try Database.shared.put(Collections.characters, c.row); problem = nil }
+        catch { problem = "保存失败：\(error.localizedDescription)" }
     }
 
     /// 后台有服务器代发时，本机算的这个时刻只是估计

@@ -158,4 +158,32 @@ final class ProactiveTests: StoreTestCase {
         _ = await GroupProactive.tick(now: now + 1000)
         XCTAssertEqual(MockNet.count, 1)
     }
+
+    /// 深夜那一档：默认关；到了时段、接口一直失败时只打一次，先记试过，之后要隔够天数
+    func testEmoOncePerDays() async throws {
+        try turnOn()
+        try quiet()
+        XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "emo" })
+        var c = try XCTUnwrap(Repo.character("char_a"))
+        c.row["emo"] = .bool(true)
+        c.row["emoFrom"] = .number(0)
+        c.row["emoTo"] = .number(23)
+        c.row["emoDays"] = .number(5)
+        try Database.shared.put(Collections.characters, c.row)
+        Proactive.setEmoAt("char_a", 0)
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        let cal = Calendar.current
+        let now = cal.date(bySettingHour: 2, minute: 0, second: 0, of: Date())!.millis
+        Proactive.setNext("char_a", now - 1000)
+        _ = await Proactive.tick(now: now)
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(decoding: MockNet.requests.first?.httpBodyStreamData() ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("during the night"))
+        XCTAssertEqual(Proactive.emoAt("char_a"), now)
+        // 一天后到点：还没隔够五天，走平常那一档（同样失败一次）
+        Proactive.setNext("char_a", now + 86_400_000 - 1000)
+        _ = await Proactive.tick(now: now + 86_400_000)
+        XCTAssertEqual(MockNet.count, 2)
+        XCTAssertFalse(String(decoding: MockNet.requests.last?.httpBodyStreamData() ?? Data(), as: UTF8.self).contains("during the night"))
+    }
 }

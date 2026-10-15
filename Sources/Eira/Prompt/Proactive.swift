@@ -11,6 +11,12 @@ enum Proactive {
         var minutes = 60.0
         var quietFrom = 0
         var quietTo = 8
+        // 深夜那一档（网页版 emo）：夜里睡不着时才会冒出来的那种话。只在这个时段之间、距上次至少隔几天。
+        // 和平常的主动消息是两件事，各有各的开关；不受免打扰限制（它本来就在夜里）
+        var emo = false
+        var emoFrom = 1
+        var emoTo = 4
+        var emoDays = 5
     }
 
     /// 对话末尾那一句：这一轮没有新消息，由角色开口（后台消息服务器接着发第二条时也用它）。
@@ -24,8 +30,11 @@ enum Proactive {
         }
         let m = c["proactiveMinutes"]?.number ?? 60
         // 封存的角色不再主动发起对话（网页版 4.557）
+        // 填 0 是「每晚都可能」，是个合法值
+        let days = c["emoDays"]?.number.map { max(0, Int($0.rounded())) } ?? 5
         return Config(on: c["proactive"]?.bool == true && char?.archived != true, minutes: max(1, m > 0 ? m : 60),
-                      quietFrom: hour("proactiveQuietFrom", 0), quietTo: hour("proactiveQuietTo", 8))
+                      quietFrom: hour("proactiveQuietFrom", 0), quietTo: hour("proactiveQuietTo", 8),
+                      emo: c["emo"]?.bool == true, emoFrom: hour("emoFrom", 1), emoTo: hour("emoTo", 4), emoDays: days)
     }
 
     // MARK: - 落点（本机的临时状态，不进库，不进备份）
@@ -44,6 +53,31 @@ enum Proactive {
         var m = map()
         if t > 0 { m[charId] = t } else { m[charId] = nil }
         UserDefaults.standard.set(m, forKey: key)
+    }
+
+    // 深夜那一档上次是什么时候：单独记，「不要反复触发」（本机的临时状态，不进库）
+    private static let emoKey = "phone.proactive.emo"
+    static func emoAt(_ charId: String) -> Double {
+        ((UserDefaults.standard.dictionary(forKey: emoKey) as? [String: Double]) ?? [:])[charId] ?? 0
+    }
+    static func setEmoAt(_ charId: String, _ t: Double) {
+        lock.lock(); defer { lock.unlock() }
+        var m = (UserDefaults.standard.dictionary(forKey: emoKey) as? [String: Double]) ?? [:]
+        m[charId] = t
+        UserDefaults.standard.set(m, forKey: emoKey)
+    }
+
+    static func inEmoHours(_ c: Config, _ d: Date = Date()) -> Bool {
+        let a = c.emoFrom, b = c.emoTo
+        if a == b { return false }
+        let h = Calendar.current.component(.hour, from: d)
+        return a < b ? (h >= a && h < b) : (h >= a || h < b)
+    }
+
+    /// 今晚这一条该不该来：开着、到点、距上次够久
+    static func emoDue(_ charId: String, _ c: Config, now: Double) -> Bool {
+        guard c.emo, inEmoHours(c, Date(millis: now)) else { return false }
+        return now - emoAt(charId) >= Double(c.emoDays) * 86_400_000
     }
 
     /// 0.5 到 1.5 倍间隔之间随机掷一个。定死的间隔像闹钟。
@@ -151,11 +185,11 @@ enum Proactive {
     }
 
     /// 主动开口那一次请求的内容。带着聊天记录发；time 与 gap 可以留记号，由服务器到点按那一刻填。
-    static func payload(chat: Chat, char: Character, time: String? = nil, gap: String? = nil) throws -> Payload {
+    static func payload(chat: Chat, char: Character, time: String? = nil, gap: String? = nil, mood: Bool = false) throws -> Payload {
         let s = AppSettings.load().forChat(chat)
         let built = try ChatPrompt.build(chat: chat, char: char, settings: s)
         let last = try Repo.messages(chatId: chat.id).filter { !$0.isError }.last
-        let instruction = Templates.render("task.proactive", [
+        let instruction = Templates.render(mood ? "task.emo" : "task.proactive", [
             "charName": char.name.isEmpty ? "你" : char.name,
             "time": time ?? timeText(),
             "gap": gap ?? gapText(last.map { Date().millis - ($0.row.number("createdAt") ?? 0) } ?? 0),
@@ -166,14 +200,14 @@ enum Proactive {
 
     /// 这一次由角色开口：一次请求，落成一轮，未读加上这几条。
     @discardableResult
-    static func send(chatId: String, charId: String, onRow: @escaping ChatEngine.OnRow = { _ in }) async throws -> [Message] {
+    static func send(chatId: String, charId: String, mood: Bool = false, onRow: @escaping ChatEngine.OnRow = { _ in }) async throws -> [Message] {
         guard let chat = try Repo.chat(chatId), let char = try Repo.character(charId) else { throw StoreError(message: "会话或角色不存在") }
         guard Running.claim(chatId) else { return [] }
         defer { Running.release(chatId) }
         // 生成中这段会话的标题写「正在输入」（网页版 4.533）
         await MainActor.run { Typing.shared.begin(chatId) }
         do {
-            let made = try await speak(chat: chat, char: char, onRow: onRow)
+            let made = try await speak(chat: chat, char: char, mood: mood, onRow: onRow)
             await MainActor.run { Typing.shared.end(chatId) }
             return made
         } catch {
@@ -182,9 +216,9 @@ enum Proactive {
         }
     }
 
-    private static func speak(chat: Chat, char: Character, onRow: @escaping ChatEngine.OnRow) async throws -> [Message] {
+    private static func speak(chat: Chat, char: Character, mood: Bool = false, onRow: @escaping ChatEngine.OnRow) async throws -> [Message] {
         let chatId = chat.id
-        let p = try payload(chat: chat, char: char)
+        let p = try payload(chat: chat, char: char, mood: mood)
         let r = try await AIService.shared.send(task: "chat.proactive", system: p.system, messages: p.messages, maxTokens: p.maxTokens)
         let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { throw StoreError(message: "模型返回了空内容") }
@@ -221,6 +255,19 @@ enum Proactive {
             let chat = chatReady(char.id, s)
             let held = holdUntil(chat, c.minutes, now: now)
             if held > 0 { if !holds { setNext(char.id, held) }; continue }
+            // 深夜那一档排在免打扰前面：它本来就在夜里，默认免打扰正好是 0 点到 8 点。
+            // 先记「试过」再发：落点挪走、深夜的时刻记上，失败也要再等够天数。只在应用开着时发，后台消息服务器不代发
+            if !holds, let chat, emoDue(char.id, c, now: now), Ties.canReachUser(char.id, personaId: chat.personaId) {
+                setNext(char.id, now + roll(c.minutes))
+                setEmoAt(char.id, now)
+                fired.append(char.id)
+                do { try await send(chatId: chat.id, charId: char.id, mood: true) }
+                catch {
+                    Diagnostics.shared.record("emo-failed", ["error": error.localizedDescription])
+                    Problems.report("\(char.displayName) 深夜主动发起对话失败：\(error.localizedDescription)。过了设定的天数再试。")
+                }
+                continue
+            }
             if inQuiet(c, Date(millis: now)) { setNext(char.id, quietEndsAt(c, Date(millis: now))); continue }
             if holds { continue }
             // 先排下一次，再发：失败也要再等一个完整的间隔

@@ -60,6 +60,9 @@ enum ExtraCalls {
         ExtraCall(id: "groupProactive", label: "群里主动开口",
                   isOn: { _ in ((try? Repo.chats()) ?? []).contains { $0.isGroup && $0.row["groupProactive"]?["on"]?.bool == true } },
                   when: { _ in "每个开了的群按设定的间隔一次；只在应用打开时发送。开关在群资料" }),
+        ExtraCall(id: "emo", label: "深夜那一档",
+                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["proactive"]?.bool == true && $0.row["emo"]?.bool == true } },
+                  when: { _ in "开了的角色在设定的深夜时段内，距上次满设定的天数时一次；只在应用打开时发送" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "diaryAuto", label: "角色每天写日记",
                   isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["diaryAuto"]?.bool == true } },
