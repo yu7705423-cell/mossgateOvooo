@@ -150,6 +150,52 @@ enum MemorySummary {
         }.joined(separator: "\n\n")
     }
 
+    static let stateLabels = ["user": "关于你", "self": "关于角色自己", "us": "你们之间", "recent": "最近"]
+
+    /// 四块的当前内容（「你们之间」没写过时读关系底色）与哪几块锁着
+    static func stateOf(char: Character, key: String) -> (blocks: [String: String], locks: Set<String>) {
+        let cur = char.row["states"]?[key]
+        var blocks: [String: String] = [:]
+        for b in stateBlocks { blocks[b.id] = (cur?["blocks"]?[b.id]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+        if blocks["us", default: ""].isEmpty {
+            blocks["us"] = (char.row["bonds"]?[key]?["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let locks = Set((cur?["locks"]?.object ?? [:]).filter { $0.value.bool == true }.map(\.key))
+        return (blocks, locks)
+    }
+
+    private static func writeState(charId: String, key: String, _ change: (inout [String: JSONValue]) -> Void) throws {
+        guard var char = try Repo.character(charId) else { throw StoreError(message: "该角色已不存在") }
+        var states = char.row["states"]?.object ?? [:]
+        var cur = states[key]?.object ?? ["blocks": .object([:]), "locks": .object([:])]
+        change(&cur)
+        states[key] = .object(cur)
+        char.row["states"] = .object(states)
+        char.row.touch()
+        try Database.shared.put(Collections.characters, char.row)
+    }
+
+    /// 手写一块（网页版 mind.set）：写完那一块锁住，模型之后不再改写
+    static func setState(charId: String, key: String, block: String, text: String) throws {
+        try writeState(charId: charId, key: key) { cur in
+            var blocks = cur["blocks"]?.object ?? [:]
+            var locks = cur["locks"]?.object ?? [:]
+            blocks[block] = .string(text.trimmingCharacters(in: .whitespacesAndNewlines))
+            locks[block] = .bool(true)
+            cur["blocks"] = .object(blocks)
+            cur["locks"] = .object(locks)
+            cur["at"] = .number(Date().millis)
+        }
+    }
+
+    static func lockState(charId: String, key: String, block: String, on: Bool) throws {
+        try writeState(charId: charId, key: key) { cur in
+            var locks = cur["locks"]?.object ?? [:]
+            locks[block] = .bool(on)
+            cur["locks"] = .object(locks)
+        }
+    }
+
     /// 模型交回来的几块。锁住的不动；没给的不动；给了空串照写。
     static func applyState(charId: String, key: String, _ incoming: [String: JSONValue]) throws -> Int {
         guard var char = try Repo.character(charId) else { return 0 }

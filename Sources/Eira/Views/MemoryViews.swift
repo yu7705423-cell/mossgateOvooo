@@ -34,6 +34,9 @@ struct MemoryListView: View {
         .navigationTitle("记忆")
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
+                NavigationLink { MemoryStateView(charId: charId) } label: { Text("现状") }
+            }
+            ToolbarItem(placement: .primaryAction) {
                 Button { editing = EditTarget(id: "") } label: { NavIcon("plus") }.accessibilityLabel("新建记忆")
             }
         }
@@ -277,5 +280,75 @@ struct MemoryEditView: View {
         } catch {
             problem = "保存失败：\(error.localizedDescription)"
         }
+    }
+}
+
+/// 一个角色的现状（网页版 memory/App.js 的 StatePage，4.441）：四块每轮常驻，可以手写并锁住；进行中的事可以直接了结
+struct MemoryStateView: View {
+    let charId: String
+    @State private var drafts: [String: String] = [:]
+    @State private var tick = 0
+    @State private var problem: String?
+    @State private var settling: Memory?
+
+    var body: some View {
+        let _ = tick
+        let me = (try? People.ensureActivePersona())?.id ?? ""
+        let key = (try? MemorySummary.stateKey(me)) ?? "root"
+        if let c = (try? Repo.character(charId)) ?? nil {
+            let st = MemorySummary.stateOf(char: c, key: key)
+            let now = Date()
+            let open = ((try? Knowledge.memories(charId: charId, personaId: me)) ?? []).filter { ChatPrompt.isOpen($0, now: now) }
+            Form {
+                if let problem { Text(problem).foregroundStyle(Theme.danger) }
+                ForEach(MemorySummary.stateBlocks, id: \.id) { b in
+                    Section {
+                        TextField("尚未写过", text: Binding(get: { drafts[b.id] ?? st.blocks[b.id] ?? "" }, set: { drafts[b.id] = $0 }), axis: .vertical)
+                            .lineLimit(3...12)
+                        if drafts[b.id] != nil {
+                            Button("保存") { act { try MemorySummary.setState(charId: charId, key: key, block: b.id, text: drafts[b.id] ?? "") }; drafts[b.id] = nil }
+                        }
+                        Toggle("锁住，不再自动改写", isOn: Binding(get: { st.locks.contains(b.id) },
+                                                             set: { v in act { try MemorySummary.lockState(charId: charId, key: key, block: b.id, on: v) } }))
+                    } header: { Text(MemorySummary.stateLabels[b.id] ?? b.id) }
+                }
+                Section {
+                    if open.isEmpty { Text("暂无").foregroundStyle(Theme.secondaryText) }
+                    ForEach(open) { m in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(m.content)
+                                if m.at > 0 { Text(TimeText.day(Date(millis: m.at))).font(.caption).foregroundStyle(Theme.secondaryText) }
+                            }
+                            Spacer()
+                            Button("了结") { settling = m }.buttonStyle(.borderless)
+                        }
+                    }
+                } header: { Text("进行中的事 \(open.count)") } footer: {
+                    HelpNote("这几块每轮常驻，总结记忆时由模型整块改写。手写之后那一块锁住，模型不再改；关掉锁，下次总结时重新改写。「你们之间」即从前的关系底色。总结记忆时还没了结的事记在「进行中的事」里，了结之后不再作为进行中的事注入。", title: "记忆：现状")
+                }
+            }
+            .navigationTitle("\(c.displayName)的现状")
+            .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("标为已了结，从此不再作为进行中的事注入。", isPresented: Binding(get: { settling != nil }, set: { if !$0 { settling = nil } }),
+                                titleVisibility: .visible, presenting: settling) { m in
+                Button("了结") {
+                    act {
+                        var r = m.row
+                        r["status"] = .string("done")
+                        r["doneAt"] = .number(Date().millis)
+                        r.touch()
+                        try Database.shared.put(Collections.memories, r)
+                    }
+                }
+            }
+        } else {
+            EmptyState(title: "该角色已不存在")
+        }
+    }
+
+    private func act(_ f: () throws -> Void) {
+        do { try f(); problem = nil } catch { problem = "未能保存：\(error.localizedDescription)" }
+        tick += 1
     }
 }

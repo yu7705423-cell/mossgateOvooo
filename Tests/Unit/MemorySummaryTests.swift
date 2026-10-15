@@ -115,4 +115,20 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertEqual(lines[2], "林：早安")
         XCTAssertTrue(lines[3].range(of: #"^\[\d{2}:\d{2}\] 小于：我回来了$"#, options: .regularExpression) != nil)
     }
+
+    /// 现状：手写一块就锁住，模型总结时锁住的那块不改；解锁之后照改
+    func testStateManualLock() throws {
+        let key = try MemorySummary.stateKey("me_root")
+        try MemorySummary.setState(charId: "char_a", key: key, block: "user", text: "手写的")
+        var c = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(MemorySummary.stateOf(char: c, key: key).blocks["user"], "手写的")
+        XCTAssertTrue(MemorySummary.stateOf(char: c, key: key).locks.contains("user"))
+        XCTAssertEqual(try MemorySummary.applyState(charId: "char_a", key: key, ["user": .string("模型的"), "recent": .string("最近")]), 1)
+        c = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(MemorySummary.stateOf(char: c, key: key).blocks["user"], "手写的")
+        try MemorySummary.lockState(charId: "char_a", key: key, block: "user", on: false)
+        XCTAssertEqual(try MemorySummary.applyState(charId: "char_a", key: key, ["user": .string("模型的")]), 1)
+        c = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(MemorySummary.stateOf(char: c, key: key).blocks["user"], "模型的")
+    }
 }
