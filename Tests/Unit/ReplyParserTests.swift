@@ -123,8 +123,10 @@ final class ReplyParserTests: XCTestCase {
 
     /// 原生版还没有的那几件事：认出来就不落气泡
     func testUnsupportedActionLinesDropped() {
-        let r = ReplyParser.split("好\n[批准]\n[暂停]\n[同行]\n[全员禁言]\n嗯")
+        let r = ReplyParser.split("好\n[批准]\n[暂停]\n[同行]\n嗯")
         XCTAssertEqual(r.parts.map(\.text), ["好", "嗯"])
+        // 全员禁言如今是群管理的一件事：不占气泡，落成一个动作，由引擎按身份决定生不生效
+        XCTAssertEqual(ReplyParser.split("好\n[全员禁言]\n嗯").parts.map(\.type), [.text, .muteAll, .text])
     }
 
     /// 打电话过来：整行一件事，不占气泡；视频的记在 flag 上（繁体也认）
