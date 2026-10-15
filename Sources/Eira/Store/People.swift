@@ -50,6 +50,8 @@ enum People {
 
     /// 删一段会话与它的全部消息，以及按 chatId 挂着的数据域。
     static func deleteChat(_ id: String) throws {
+        // 线下各场的正文挂在场次上（按 sceneId），先删掉，不留成孤儿
+        for sc in try Database.shared.all("scenes", where: id) { try Database.shared.deleteAll("beats", where: sc.id) }
         for collection in Collections.indexField.filter({ $0.value == "chatId" }).map(\.key) {
             try Database.shared.deleteAll(collection, where: id)
         }

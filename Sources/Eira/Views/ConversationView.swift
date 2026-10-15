@@ -83,6 +83,7 @@ struct ConversationView: View {
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
     @State private var calling: Character?
+    @State private var showScenes = false
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -144,6 +145,7 @@ struct ConversationView: View {
         .alert(notice ?? "", isPresented: Binding(get: { notice != nil }, set: { if !$0 { notice = nil } })) {
             Button("好") { notice = nil }
         }
+        .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
@@ -547,6 +549,7 @@ struct ConversationView: View {
             panelButton("mic", "语音") { recordingVoice = true }
             panelButton("grid", "骰子") { dicing = true }
             panelButton("music", "分享音乐") { songPicking = true }
+            panelButton("book", "线下") { showScenes = true }
             // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
             if chat?.isGroup == false {
                 panelButton("headphone", "一起听") {

@@ -44,35 +44,8 @@ enum ChatPrompt {
 
         // 各段先算出来，先后与开关交给预设的条目顺序（Layout，网页版 4.387）。默认顺序与从前一字不差
         let memoryDepth = Int(s.num("memoryDepth", 1))
-        var blocks: [String: String] = [
-            "lorebook": loreBlock(lore.before),
-            "bond": bondBlock(char: char, rootId: rootId),
-            "state": stateBlock(char: char, rootId: rootId, memories: memories, settings: s, now: now),
-            "character": characterBlock(char),
-            "loreAfter": loreBlock(lore.after),
-            "user": userBlock(me: me, char: char),
-            "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
-            "time": timeBlock(char: char, msgs: all, settings: s, now: now),
-            "recent": recentBlock(recent, now: now),
-            "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
-            "day": DayPlan.block(char, at: now),
-            "music": Netease.block(char, now: now.millis),
-            "moments": Moments.block(char: char, userName: me?.name ?? "对方", now: now),
-            "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
-            // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
-            "space": Space.block(chat, now: now),
-            // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
-            "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
-            // 你的日程（「日常 - 我的日程」）：没有日程时为空；不给这个角色看的整段不给
-            // 代发与手机上的对话（角色手机）：只取有代发参与的那几句
-            "proxy": Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s),
-            "userSched": UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now),
-        ]
-        // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
-        if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
-        // 基线之后新加的区块：用户开了才进（网页版 4.486）
-        blocks = blocks.filter { NewFeat.blockOn($0.key, s) }
-
+        let blocks = dataBlocks(chat: chat, char: char, me: me, msgs: all, lore: lore, memories: memories, recent: recent,
+                                recalled: recalled, rootId: rootId, settings: s, now: now)
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         P["opening"] = Templates.render("skeleton.opening", names, settings: s)
         let gender = genderPiece(char: char, me: me, names: names, settings: s)
@@ -105,6 +78,42 @@ enum ChatPrompt {
                      seenImages: seen)
     }
 
+    /// 设定区里的那些注入区块（线上聊天与线下共用；线下传进来的 char、me 是这一场换过身份的）
+    static func dataBlocks(chat: Chat, char: Character, me: Persona?, msgs all: [Message], lore: Lore, memories: [Memory],
+                           recent: [Memory], recalled: [Memory], rootId: String, settings s: AppSettings, now: Date) -> [String: String] {
+        let memoryDepth = Int(s.num("memoryDepth", 1))
+        var blocks: [String: String] = [
+            "lorebook": loreBlock(lore.before),
+            "bond": bondBlock(char: char, rootId: rootId),
+            "state": stateBlock(char: char, rootId: rootId, memories: memories, settings: s, now: now),
+            "character": characterBlock(char),
+            "loreAfter": loreBlock(lore.after),
+            "user": userBlock(me: me, char: char),
+            "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
+            "time": timeBlock(char: char, msgs: all, settings: s, now: now),
+            "recent": recentBlock(recent, now: now),
+            "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
+            "day": DayPlan.block(char, at: now),
+            "music": Netease.block(char, now: now.millis),
+            "moments": Moments.block(char: char, userName: me?.name ?? "对方", now: now),
+            "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
+            // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
+            "space": Space.block(chat, now: now),
+            // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
+            "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
+            // 你的日程（「日常 - 我的日程」）：没有日程时为空；不给这个角色看的整段不给
+            // 代发与手机上的对话（角色手机）：只取有代发参与的那几句
+            "proxy": Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s),
+            "userSched": UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now),
+        ]
+        // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
+        if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
+        // 基线之后新加的区块：用户开了才进（网页版 4.486）
+        blocks = blocks.filter { NewFeat.blockOn($0.key, s) }
+
+        return blocks
+    }
+
     // MARK: - 历史
 
     /// group：群聊时成员 id 对应群里显示的名字。成员说的话都算 assistant，前面带着名字 ——
@@ -112,13 +121,23 @@ enum ChatPrompt {
     private static func history(_ all: [Message], chat: Chat, char: Character, settings s: AppSettings,
                                 tail: String, tailDepth: Int, lore: [(Int, String)],
                                 group: [String: String]? = nil) -> ([AIMessage], [String]) {
+        // 线下那几场的正文按时间排进来，一起算条数与轮次（网页版 4.375）。场外指示不进
+        let beats = Scene.beatsAsMessages(chatId: chat.id)
+        let timeline = beats.isEmpty ? all : (all + beats).enumerated().sorted { a, b in
+            a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
+        }.map(\.element)
         let window: [Message]
         if s.raw["historyMode"]?.string == "turn" {
-            window = takeTurns(all, Int(s.num("historyTurns", 10)))
+            window = takeTurns(timeline, Int(s.num("historyTurns", 10)))
         } else {
             let limit = Int(s.num("historyLimit", 20))
-            window = limit > 0 ? Array(all.suffix(limit)) : all
+            window = limit > 0 ? Array(timeline.suffix(limit)) : timeline
         }
+        let meName: String = {
+            let ps = (try? Repo.personas()) ?? []
+            let me = ps.first { $0.id == chat.personaId } ?? ((try? Repo.activePersona(s)) ?? nil)
+            return me?.name ?? "我"
+        }()
         let stampOn = Clock.enabled(s)
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
 
@@ -140,6 +159,17 @@ enum ChatPrompt {
         var prev: Message?
         let lastFile = ChatFiles.lastWithText(window)
         for raw in window {
+            // 线下正文：一律放在对方那一侧，写成「谁：正文」；进出线下各标一行（放在角色那一侧，它会照着在线上写大段散文）
+            if raw.kind == "beat" {
+                if prev?.kind != "beat" || prev?.row.string("sceneId") != raw.row.string("sceneId") {
+                    out.append(AIMessage(role: .user, content: Scene.markText(raw.row.string("sceneId"), settings: s)))
+                }
+                let who = raw.role == .user ? meName : (((try? Repo.character(raw.authorId)) ?? nil)?.name ?? char.name)
+                out.append(AIMessage(role: .user, content: "\(who)：\(raw.content)"))
+                prev = raw
+                continue
+            }
+            if prev?.kind == "beat" { out.append(AIMessage(role: .user, content: Templates.get("skeleton.phone-mark", settings: s))) }
             // 正则替换里「发给角色的」那一份（存着的原文不动）
             let m = RegexRules.promptMessage(raw, chat: chat, settings: s)
             var text = (stampOn ? timeLine(m, prev) : "") + withQuote(m, byId)
@@ -171,6 +201,8 @@ enum ChatPrompt {
             }
             prev = m
         }
+        // 历史停在线下那一段上（见完面还没在手机上说过话）：补一行「以下在手机上」
+        if window.last?.kind == "beat" { out.append(AIMessage(role: .user, content: Templates.get("skeleton.phone-mark", settings: s))) }
 
         // 相邻同角色的并成一条（用换行）；带图的不并
         var merged: [AIMessage] = []
@@ -253,7 +285,7 @@ enum ChatPrompt {
         return flat.count > n ? String(flat.prefix(n)) + "…" : flat
     }
 
-    private static func scanTextOf(_ msgs: [Message], window: Int) -> String {
+    static func scanTextOf(_ msgs: [Message], window: Int) -> String {
         (window > 0 ? Array(msgs.suffix(window)) : msgs).map(\.content).joined(separator: "\n")
     }
 
@@ -261,7 +293,7 @@ enum ChatPrompt {
 
     private static func countText(_ lo: Int, _ hi: Int) -> String { lo == hi ? "\(lo)" : "\(lo) to \(hi)" }
 
-    private static func genderPiece(char: Character, me: Persona?, names: [String: String], settings s: AppSettings) -> String {
+    static func genderPiece(char: Character, me: Persona?, names: [String: String], settings s: AppSettings) -> String {
         var lines: [String] = []
         let cg = char.row.string("gender").trimmingCharacters(in: .whitespaces)
         let ug = (me?.row.string("gender") ?? "").trimmingCharacters(in: .whitespaces)
@@ -271,7 +303,7 @@ enum ChatPrompt {
         return Templates.render("skeleton.gender", ["lines": lines.joined(separator: "\n")], settings: s)
     }
 
-    private static func characterBlock(_ char: Character) -> String {
+    static func characterBlock(_ char: Character) -> String {
         var persona = char.persona
         if let parent = char.parentId, !parent.isEmpty, let p = try? Repo.character(parent) { persona = p.persona }
         var out = ""
@@ -285,7 +317,7 @@ enum ChatPrompt {
         return out
     }
 
-    private static func userBlock(me: Persona?, char: Character) -> String {
+    static func userBlock(me: Persona?, char: Character) -> String {
         guard let me else { return "" }
         var bits = ["Name: \(me.name)"]
         let sections = me.row["sections"]?.object ?? [:]
@@ -308,7 +340,7 @@ enum ChatPrompt {
         return out
     }
 
-    private static func bondBlock(char: Character, rootId: String) -> String {
+    static func bondBlock(char: Character, rootId: String) -> String {
         let key = rootId.isEmpty ? "root" : rootId
         // 「你们之间」那一块存在 states[根账号].blocks.us；没写过时退回关系底色（网页版 mind.blocksOf、bond.textOf）
         let us = (char.row["states"]?[key]?["blocks"]?["us"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -317,7 +349,7 @@ enum ChatPrompt {
         return text.isEmpty ? "" : "\n\n[你们之间的关系]\n\(text)"
     }
 
-    private static func banPiece(_ s: AppSettings) -> String {
+    static func banPiece(_ s: AppSettings) -> String {
         let phrases = Ban.list(s)
         guard !phrases.isEmpty else { return "" }
         let list = phrases.map { "- " + $0.replacingOccurrences(of: "*", with: "…") }.joined(separator: "\n")
@@ -535,11 +567,18 @@ enum ChatPrompt {
 
     // MARK: - 世界书
 
-    private struct Lore { var before: [String] = []; var after: [String] = []; var deep: [(Int, String)] = [] }
+    struct Lore { var before: [String] = []; var after: [String] = []; var deep: [(Int, String)] = [] }
 
     /// 这段文字会激活哪些条目（按注入的先后），以及一共估算多少 token。激活预览与拼提示词用同一份
-    static func selectLore(char: Character, scanText: String, budget: Int) -> (items: [LoreEntry], used: Int) {
-        let books = ((try? Repo.lorebooks()) ?? []).filter { $0.purpose == "chat" && ($0.global || char.lorebookIds.contains($0.id)) }
+    /// books：线下一场自己关掉的（off）与额外挂上的（on）几本（网页版 4.268）。不给时按角色挂的与全局的
+    static func selectLore(char: Character, scanText: String, budget: Int,
+                           books pick: (off: [String], on: [String])? = nil) -> (items: [LoreEntry], used: Int) {
+        let books = ((try? Repo.lorebooks()) ?? []).filter { b in
+            guard b.purpose == "chat" else { return false }
+            let mine = b.global || char.lorebookIds.contains(b.id)
+            guard let pick else { return mine }
+            return (mine && !pick.off.contains(b.id)) || pick.on.contains(b.id)
+        }
         var hits: [LoreEntry] = []
         for book in books {
             for e in book.entries where e.enabled && !e.isCard && !e.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -563,9 +602,9 @@ enum ChatPrompt {
         return (out, used)
     }
 
-    private static func activateLore(char: Character, scanText: String, budget: Int) -> Lore {
+    static func activateLore(char: Character, scanText: String, budget: Int, books: (off: [String], on: [String])? = nil) -> Lore {
         var lore = Lore()
-        for e in selectLore(char: char, scanText: scanText, budget: budget).items {
+        for e in selectLore(char: char, scanText: scanText, budget: budget, books: books).items {
             let text = e.content.trimmingCharacters(in: .whitespacesAndNewlines)
             if e.depth > 0 { lore.deep.append((e.depth, text)) }
             else if e.part == "before" { lore.before.append(text) }
@@ -589,7 +628,7 @@ enum ChatPrompt {
         return true
     }
 
-    private static func loreBlock(_ items: [String]) -> String {
+    static func loreBlock(_ items: [String]) -> String {
         items.isEmpty ? "" : "\n\n[世界设定]\n" + items.joined(separator: "\n")
     }
 
@@ -644,7 +683,7 @@ enum ChatPrompt {
         return now.millis - m.at <= Double(days) * 86_400_000
     }
 
-    private static func staleDays(_ s: AppSettings) -> Int { max(0, Int(s.num("openStaleDays", 3))) }
+    static func staleDays(_ s: AppSettings) -> Int { max(0, Int(s.num("openStaleDays", 3))) }
 
     static func stateLines(_ all: [Memory], settings s: AppSettings, now: Date) -> [String] {
         let max = Swift.max(0, Int(s.num("openMax", 10)))
@@ -675,7 +714,7 @@ enum ChatPrompt {
         return "\n\n[现状]\(asOf)\n\(parts.joined(separator: "\n\n"))"
     }
 
-    private static func pinnedBlock(_ all: [Memory], max: Int) -> String {
+    static func pinnedBlock(_ all: [Memory], max: Int) -> String {
         var list = all.filter { ($0.pinned || $0.taboo) && $0.supersededBy.isEmpty }
             .sorted { ($0.row.number("updatedAt") ?? 0) > ($1.row.number("updatedAt") ?? 0) }
         if max > 0 { list = Array(list.prefix(max)) }
@@ -690,13 +729,13 @@ enum ChatPrompt {
         return "\n\n[一直记着]\n" + parts.joined(separator: "\n\n")
     }
 
-    private static func recentMemories(_ all: [Memory], limit: Int) -> [Memory] {
+    static func recentMemories(_ all: [Memory], limit: Int) -> [Memory] {
         Array(all.filter { $0.rank != "S" && $0.supersededBy.isEmpty && !$0.pinned && !$0.taboo && $0.kind != .open }
             .sorted { $0.at > $1.at }
             .prefix(max(0, limit)))
     }
 
-    private static func recentBlock(_ list: [Memory], now: Date) -> String {
+    static func recentBlock(_ list: [Memory], now: Date) -> String {
         guard !list.isEmpty else { return "" }
         let lines = list.map { "- \(TimeText.ago(Date(millis: $0.at), now: now))\u{3000}\(about[$0.row.string("about")] ?? "")\($0.content)" }
         return "\n\n[最近记下的]\n" + lines.joined(separator: "\n")
@@ -705,7 +744,7 @@ enum ChatPrompt {
 
     /// 不用向量的召回：关键词命中，或者字的两两组合在最近几条里出现得够多；再按近期、用过几次、权重加分。
     /// 网页版 context/memory.js 的 recall 的简化版：没有同一时段、最早几条、疲劳这几项，也不做去重换位。
-    private static func recall(_ all: [Memory], scanText: String, skip: Set<String>, topK: Int, now: Date, openDays: Int = 3) -> [Memory] {
+    static func recall(_ all: [Memory], scanText: String, skip: Set<String>, topK: Int, now: Date, openDays: Int = 3) -> [Memory] {
         let scan = scanText.lowercased()
         let scanGrams = bigrams(scan)
         let pool = all.filter { m in
@@ -741,7 +780,7 @@ enum ChatPrompt {
         return now.millis - done <= 14 * 86_400_000
     }
 
-    private static func recallText(_ items: [Memory], now: Date) -> String {
+    static func recallText(_ items: [Memory], now: Date) -> String {
         var left = items
         func take(_ pred: (Memory) -> Bool) -> [Memory] {
             let got = left.filter(pred)
@@ -781,7 +820,7 @@ enum ChatPrompt {
     // MARK: - 时间
 
     /// 现在几点（网页版 context/basic.js 的 time）。角色明确设过时区才写地名，两边不在一个时区才说时差
-    private static func timeBlock(char: Character, msgs: [Message], settings s: AppSettings, now real: Date) -> String {
+    static func timeBlock(char: Character, msgs: [Message], settings s: AppSettings, now real: Date) -> String {
         guard Clock.enabled(s) else { return "" }
         let n = Clock.now(s, real: real)
         let cz = Clock.charZone(char, s)
@@ -879,7 +918,6 @@ extension ChatPrompt {
         let rootId = Repo.rootId(of: me?.id ?? "", in: personas)
         let scanText = scanTextOf(all, window: Int(s.num("scanWindow", 6)))
         let budget = Int(s.num("contextBudget", 0))
-        let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
         let memoryDepth = Int(s.num("memoryDepth", 1))
 
         // 世界书：成员各自激活，取并集
@@ -894,26 +932,9 @@ extension ChatPrompt {
         var recalledIds: [String] = []
         var memberBlocks: [String] = []
         for c in members {
-            var lines = ["[成员：\(c.name)]"]
-            func add(_ head: String?, _ v: String) {
-                let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
-                if !t.isEmpty { lines.append(head.map { "\($0)\n\(t)" } ?? t) }
-            }
-            add(nil, c.persona)
-            add("[当前情境]", c.scenario)
-            add("[说话方式示例]", c.exampleDialogue)
-            add("[核心设定]", c.core)
-            let memories = try visibleMemories(char: c, chat: chat, rootId: rootId, personas: personas)
-            let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
-            let body = [bondBlock(char: c, rootId: rootId), stateBlock(char: c, rootId: rootId, memories: memories, settings: s, now: now),
-                        pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))), recentBlock(recent, now: now)]
-                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
-            add(nil, body)
-            if memoryOn {
-                let r = recall(memories, scanText: scanText, skip: Set(recent.map(\.id)), topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s))
-                if !r.isEmpty { add(nil, recallText(r, now: now)); recalledIds += r.map(\.id) }
-            }
-            memberBlocks.append(lines.joined(separator: "\n\n"))
+            let one = try memberBlock(c, chat: chat, rootId: rootId, personas: personas, scanText: scanText, settings: s, now: now)
+            memberBlocks.append(one.text)
+            recalledIds += one.recalled
         }
 
         let blocks: [String: String] = [
@@ -952,5 +973,32 @@ extension ChatPrompt {
         let (messages, seen) = history(all, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
                                        tailDepth: max(1, memoryDepth), lore: deep, group: display)
         return Built(system: arranged.system, messages: messages, recalled: recalledIds, seenImages: seen)
+    }
+    /// 群聊与多人线下里每人一份：人设、情境、示例、核心设定、关系、钉住的、最近记下的、本轮召回（网页版 memberBlock）。
+    /// name 给了就用它当抬头（线下这一场里换过的名字）
+    static func memberBlock(_ c: Character, chat: Chat, rootId: String, personas: [Persona], scanText: String,
+                            settings s: AppSettings, now: Date, name: String? = nil) throws -> (text: String, recalled: [String]) {
+        let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
+        var lines = ["[成员：\(name ?? c.name)]"]
+        func add(_ head: String?, _ v: String) {
+            let t = v.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty { lines.append(head.map { "\($0)\n\(t)" } ?? t) }
+        }
+        add(nil, c.persona)
+        add("[当前情境]", c.scenario)
+        add("[说话方式示例]", c.exampleDialogue)
+        add("[核心设定]", c.core)
+        let memories = try visibleMemories(char: c, chat: chat, rootId: rootId, personas: personas)
+        let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
+        let body = [bondBlock(char: c, rootId: rootId), stateBlock(char: c, rootId: rootId, memories: memories, settings: s, now: now),
+                    pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))), recentBlock(recent, now: now)]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n\n")
+        add(nil, body)
+        var ids: [String] = []
+        if memoryOn {
+            let r = recall(memories, scanText: scanText, skip: Set(recent.map(\.id)), topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s))
+            if !r.isEmpty { add(nil, recallText(r, now: now)); ids = r.map(\.id) }
+        }
+        return (lines.joined(separator: "\n\n"), ids)
     }
 }

@@ -551,7 +551,7 @@ enum ChatEngine {
     }
 
     /// 发送成功之后，这一轮召回的记忆记一次「用过」。
-    private static func markRecalled(_ ids: [String]) throws {
+    static func markRecalled(_ ids: [String]) throws {
         for id in ids {
             guard var row = try Database.shared.get(Collections.memories, id: id) else { continue }
             row["useCount"] = .number((row.number("useCount") ?? 0) + 1)

@@ -87,6 +87,20 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                Toggle("多人线下每人单独调用", isOn: model.bool("scenePerChar", false))
+                NumberRow(title: "每段正文的上限", value: model.number("sceneMaxTokens", 0), unit: "token", placeholder: "不限")
+                NumberRow(title: "线下注入预算", value: model.number("sceneBudget", 120000), unit: "token", placeholder: "不限")
+                NumberRow(title: "往回带几段正文", value: model.number("sceneWindow", 0), unit: "段", placeholder: "全部")
+                NumberRow(title: "世界书与记忆按最近几段扫", value: model.number("sceneScan", 4), unit: "段", placeholder: "全部")
+                NumberRow(title: "每段大约多少字", value: model.number("sceneWords", 0), unit: "字", placeholder: "不写")
+            } header: {
+                Text("线下")
+            } footer: {
+                Text("线下每写一段调用一次接口。开启「每人单独调用」后，多人在场时每个在场角色各调用一次。")
+                HelpNote("线下每写一段调用一次接口（走主用接口）。不止一个角色在场时，默认一次调用写整轮，由模型按名字分段；开启「多人线下每人单独调用」后，每个在场角色各调用一次，后写的看得见先写的。每段正文的上限填 0 时不发送这个字段，由接口自己定。注入预算按 token 算世界书与正文的总量，填 0 表示不限。往回带几段填 0 表示整场都带；钉住的段落不受这一项限制。每段字数填 0 时提示词里不写篇幅。")
+            }
+
+            Section {
                 Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
                 NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
             } header: {
