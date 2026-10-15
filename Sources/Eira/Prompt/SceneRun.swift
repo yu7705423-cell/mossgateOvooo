@@ -230,3 +230,75 @@ enum SceneRun {
         func reset() { lock.lock(); buf = ""; lock.unlock() }
     }
 }
+
+// MARK: - 线下的摘要（网页版 ai/tasks/scene.js）
+//
+// 两处用它，都默认关着（第 15 条，登记在 ExtraCalls）：
+//   收场   把整场压成一段，写回这一场的 summary；
+//   压缩   窗口把老段落挡在外面时，先把挡掉的那些压进摘要里再挡。
+// 慢一点没人会发现，走记忆接口（没单独配时走副用）。
+
+extension SceneRun {
+    /// 拼给模型看的原文。场外指示不进：那是指令，不是发生过的事
+    static func transcript(_ list: [Row], chat: Chat?) -> String {
+        let ps = (try? Repo.personas()) ?? []
+        let me = ps.first { $0.id == chat?.personaId } ?? ((try? Repo.activePersona()) ?? nil)
+        return list.filter { $0.string("role") != Scene.DIRECTOR && !$0.string("text").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            .map { b -> String in
+                let who = b.string("role") == Scene.ME ? (me?.name ?? "我") : (((try? Repo.character(b.string("authorId"))) ?? nil)?.name ?? "对方")
+                let at = b.string("at").isEmpty ? "" : "（\(b.string("at"))）"
+                return "\(who)\(at)：\n\(b.string("text").trimmingCharacters(in: .whitespacesAndNewlines))"
+            }.joined(separator: "\n\n")
+    }
+
+    private static func summarize(_ row: Row, _ list: [Row], maxTokens: Int) async throws -> String {
+        let chat = (try? Repo.chat(row.string("chatId"))) ?? nil
+        let body = transcript(list, chat: chat)
+        guard !body.isEmpty else { return "" }
+        let head = [row.string("title").isEmpty ? "" : "场次：\(row.string("title"))",
+                    row.string("place").isEmpty ? "" : "地点：\(row.string("place"))",
+                    row.string("summary").isEmpty ? "" : "[这一场之前发生过什么]\n\(row.string("summary"))"]
+            .filter { !$0.isEmpty }.joined(separator: "\n")
+        let s = AppSettings.load()
+        let r = try await AIService.shared.send(task: "scene.summary", system: Templates.get("task.scene-summary", settings: s),
+                                                messages: [AIMessage(role: .user, content: [head, body].filter { !$0.isEmpty }.joined(separator: "\n\n"))],
+                                                maxTokens: maxTokens)
+        return ReplyParser.stripThink(r.text).0.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func summaryOn(_ s: AppSettings = .load()) -> Bool { s.raw["sceneSummary"]?.bool == true }
+    static func compressOn(_ s: AppSettings = .load()) -> Bool { s.raw["sceneCompress"]?.bool == true }
+
+    /// 收场时整场压成一段，写回这一场的 summary。开关关着时不调
+    @discardableResult
+    static func wrap(_ sceneId: String) async throws -> String {
+        guard summaryOn() else { return "" }
+        guard let row = Scene.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+        let text = try await summarize(row, Scene.beatsOf(sceneId), maxTokens: 1200)
+        if !text.isEmpty { try Scene.update(sceneId, ["summary": .string(text), "wrappedAt": .number(Date().millis)]) }
+        return text
+    }
+
+    /// 窗口外的那些先压进摘要再挡掉。窗口填 0（默认）时一段都挡不掉，直接返回。
+    /// 发请求之前先记下「试过」（compressFailedAt）：失败了要再多出一个窗口的段落才重试，不会每写一段都再压一次
+    @discardableResult
+    static func compressIfDue(_ sceneId: String) async throws -> Bool {
+        let s = AppSettings.load()
+        guard compressOn(s) else { return false }
+        let n = max(0, Int(s.num("sceneWindow", 0)))
+        guard n > 0, let row = Scene.get(sceneId) else { return false }
+        let body = Scene.told(sceneId)
+        let out = Array(body.prefix(max(0, body.count - n)))
+        guard let edge = out.last?.id, row.string("compressedTo") != edge else { return false }
+        let since = row.string("compressedTo").isEmpty ? 0 : ((out.firstIndex { $0.id == row.string("compressedTo") } ?? -1) + 1)
+        let fresh = Array(out[min(since, out.count)...])
+        guard !fresh.isEmpty else { try Scene.update(sceneId, ["compressedTo": .string(edge)]); return false }
+        let failedAt = row.string("compressFailedAt")
+        if !failedAt.isEmpty, let at = out.firstIndex(where: { $0.id == failedAt }), out.count - 1 - at < n { return false }
+        try Scene.update(sceneId, ["compressFailedAt": .string(edge)])
+        let text = try await summarize(row, fresh, maxTokens: 900)
+        guard !text.isEmpty else { return false }
+        try Scene.update(sceneId, ["summary": .string(text), "compressedTo": .string(edge), "compressFailedAt": .string("")])
+        return true
+    }
+}

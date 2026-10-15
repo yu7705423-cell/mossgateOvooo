@@ -88,6 +88,8 @@ struct UsageLimitsView: View {
 
             Section {
                 Toggle("多人线下每人单独调用", isOn: model.bool("scenePerChar", false))
+                Toggle("线下一场收尾时生成摘要", isOn: model.bool("sceneSummary", false))
+                Toggle("线下把窗口外的段落压成摘要", isOn: model.bool("sceneCompress", false))
                 NumberRow(title: "每段正文的上限", value: model.number("sceneMaxTokens", 0), unit: "token", placeholder: "不限")
                 NumberRow(title: "线下注入预算", value: model.number("sceneBudget", 120000), unit: "token", placeholder: "不限")
                 NumberRow(title: "往回带几段正文", value: model.number("sceneWindow", 0), unit: "段", placeholder: "全部")
@@ -96,8 +98,8 @@ struct UsageLimitsView: View {
             } header: {
                 Text("线下")
             } footer: {
-                Text("线下每写一段调用一次接口。开启「每人单独调用」后，多人在场时每个在场角色各调用一次。")
-                HelpNote("线下每写一段调用一次接口（走主用接口）。不止一个角色在场时，默认一次调用写整轮，由模型按名字分段；开启「多人线下每人单独调用」后，每个在场角色各调用一次，后写的看得见先写的。每段正文的上限填 0 时不发送这个字段，由接口自己定。注入预算按 token 算世界书与正文的总量，填 0 表示不限。往回带几段填 0 表示整场都带；钉住的段落不受这一项限制。每段字数填 0 时提示词里不写篇幅。")
+                Text("线下每写一段调用一次接口。开启「每人单独调用」后，多人在场时每个在场角色各调用一次；开启收场摘要后每次收场多调用一次；开启压缩后，有段落被挡在窗口外时多调用一次。")
+                HelpNote("线下每写一段调用一次接口（走主用接口）。不止一个角色在场时，默认一次调用写整轮，由模型按名字分段；开启「多人线下每人单独调用」后，每个在场角色各调用一次，后写的看得见先写的。每段正文的上限填 0 时不发送这个字段，由接口自己定。注入预算按 token 算世界书与正文的总量，填 0 表示不限。往回带几段填 0 表示整场都带；钉住的段落不受这一项限制。每段字数填 0 时提示词里不写篇幅。收场摘要：点「收场」时把整场压成一段，写进这一场的摘要，之后在这一场里继续写时读得到。压缩：「往回带几段」不为 0 时，被挡在外面的段落先压成摘要再挡掉；填 0 时不会触发。两项都走记忆接口，没单独配时走副用。")
             }
 
             Section {

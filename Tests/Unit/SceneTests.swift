@@ -193,4 +193,53 @@ final class SceneTests: StoreTestCase {
         XCTAssertNil(Scene.get(sc.id))
         XCTAssertTrue(try Database.shared.all(Scene.beats, where: sc.id).isEmpty)
     }
+    /// 收场摘要与压缩都默认关：关着时一次都不打
+    func testSummaryAndCompressOffByDefault() async throws {
+        let sc = try make()
+        for i in 0..<5 { try Scene.addBeat(sceneId: sc.id, role: Scene.CHAR, authorId: "char_a", text: "段\(i)") }
+        try setSettings(["sceneWindow": .number(2)])
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("摘要")) }
+        let wrapped = try await SceneRun.wrap(sc.id)
+        let squeezed = try await SceneRun.compressIfDue(sc.id)
+        XCTAssertEqual(wrapped, "")
+        XCTAssertFalse(squeezed)
+        XCTAssertEqual(MockNet.count, 0)
+        for id in ["sceneSummary", "sceneCompress"] { XCTAssertFalse(ExtraCalls.all.first(where: { $0.id == id })!.isOn(.load())) }
+    }
+
+    /// 压缩：接口一直失败时，先记下试过，要再多出一个窗口的段落才再试
+    func testCompressFailingCountsOnce() async throws {
+        let sc = try make()
+        for i in 0..<5 { try Scene.addBeat(sceneId: sc.id, role: Scene.CHAR, authorId: "char_a", text: "段\(i)") }
+        try setSettings(["sceneWindow": .number(2), "sceneCompress": .bool(true)])
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        do { _ = try await SceneRun.compressIfDue(sc.id); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        // 再写一段：窗口外多了一段，不到一个窗口，不再试
+        try Scene.addBeat(sceneId: sc.id, role: Scene.CHAR, authorId: "char_a", text: "段5")
+        let again = try await SceneRun.compressIfDue(sc.id)
+        XCTAssertFalse(again)
+        XCTAssertEqual(MockNet.count, 1)
+        // 多出一个窗口之后再试一次
+        try Scene.addBeat(sceneId: sc.id, role: Scene.CHAR, authorId: "char_a", text: "段6")
+        do { _ = try await SceneRun.compressIfDue(sc.id) } catch {}
+        XCTAssertEqual(MockNet.count, 2)
+    }
+
+    /// 压缩成功：写进这一场的摘要，记下压到哪一段，不重复压
+    func testCompressOnce() async throws {
+        let sc = try make()
+        for i in 0..<5 { try Scene.addBeat(sceneId: sc.id, role: Scene.CHAR, authorId: "char_a", text: "段\(i)") }
+        try setSettings(["sceneWindow": .number(2), "sceneCompress": .bool(true), "sceneSummary": .bool(true)])
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("前情")) }
+        let first = try await SceneRun.compressIfDue(sc.id)
+        let second = try await SceneRun.compressIfDue(sc.id)
+        XCTAssertTrue(first)
+        XCTAssertFalse(second)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(Scene.get(sc.id)?.string("summary"), "前情")
+        let text = try await SceneRun.wrap(sc.id)
+        XCTAssertEqual(text, "前情")
+        XCTAssertEqual(MockNet.count, 2)
+    }
 }

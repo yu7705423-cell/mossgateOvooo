@@ -452,7 +452,17 @@ struct SceneReadView: View {
         .onDisappear { job?.cancel() }
         .confirmationDialog("收场后输入框关闭，正文保留，可以随时重新开场。", isPresented: $confirmEnd, titleVisibility: .visible) {
             Button("收场") {
-                do { try Scene.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)" }
+                do { try Scene.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)"; return }
+                // 收场摘要是另一个开关（设置 - 用量与上限），开着才写
+                guard SceneRun.summaryOn() else { return }
+                let id = sceneId
+                Task { @MainActor in
+                    do {
+                        let text = try await SceneRun.wrap(id)
+                        notice = text.isEmpty ? "没有可供摘要的内容。" : "已生成这一场的摘要。"
+                        reload()
+                    } catch { problem = "生成摘要失败：\(error.localizedDescription)" }
+                }
             }
         }
         .confirmationDialog("删除这一段及其之后的全部正文。无法恢复。", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } }),
@@ -697,6 +707,8 @@ struct SceneReadView: View {
         let id = sceneId
         job = Task { @MainActor in
             do {
+                // 窗口把老段落挡在外面时先压一遍。开关默认关着，关着时直接返回
+                if (try? await SceneRun.compressIfDue(id)) == nil { problem = "压缩前文失败，这一段照常写。" }
                 let r = try await SceneRun.writeRound(sceneId: id, more: more, rewrite: rewrite) { text in
                     Task { @MainActor in live = text }
                 }
