@@ -368,6 +368,35 @@ struct BadgesView: View {
                 }
             }
         }
+        let defs = BadgeDefs.defsFor(chat)
+        Section("自定义标识") {
+            ForEach(defs) { d in
+                let at = unlocked[d.unlockId]?.number
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(at == nil && d.hidden ? "尚未解锁" : d.name).foregroundStyle(at == nil ? Theme.text3 : Theme.text)
+                        Text(at.map { "已得到 · \(BadgeTime.day($0))" } ?? (d.hidden ? d.hint : BadgeDefs.ruleText(d)))
+                            .font(.footnote).foregroundStyle(Theme.text2)
+                    }
+                    Spacer()
+                    if at == nil && d.how != "rule" {
+                        Button("颁发") {
+                            do { try BadgeDefs.grant(chatId, d.unlockId); reload() } catch { problem = "未能颁发：\(error.localizedDescription)" }
+                        }
+                        .buttonStyle(.borderless)
+                    }
+                }
+                .swipeActions {
+                    if at != nil && d.how != "rule" {
+                        Button("收回", role: .destructive) {
+                            do { try BadgeDefs.revoke(chatId, d.unlockId); reload() } catch { problem = "未能收回：\(error.localizedDescription)" }
+                        }
+                    }
+                }
+            }
+            if defs.isEmpty { Text("没有对该角色生效的自定义标识。").foregroundStyle(Theme.text2) }
+            NavigationLink("管理自定义标识") { BadgeDefsView() }
+        }
         let lim = (chat.row["limited"]?.object ?? [:]).keys.sorted()
         if !lim.isEmpty {
             Section("节日限定") {

@@ -99,4 +99,30 @@ final class BadgesTests: StoreTestCase {
         XCTAssertTrue(Badges.awards(try Repo.chat("chat_a")).isEmpty)
         XCTAssertFalse(a.id.isEmpty)
     }
+
+    func testCustomRuleAndManual() throws {
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let rule = try BadgeDefs.save(id: nil, ["name": .string("火锅搭子"), "how": .string("rule"),
+            "rule": .object(["metric": .string("keyword"), "who": .string("both"), "word": .string("火锅"), "value": .number(2)]),
+            "charIds": .array([.string("char_a")])], personaId: chat.personaId)
+        let manual = try BadgeDefs.save(id: nil, ["name": .string("手写的"), "how": .string("manual"), "charIds": .array([.string("char_a")])],
+                                        personaId: chat.personaId)
+        XCTAssertThrowsError(try BadgeDefs.save(id: nil, ["name": .string(""), "charIds": .array([])], personaId: chat.personaId))
+        try put(.user, "想吃火锅", Date())
+        try Badges.sync("chat_a")
+        XCTAssertNil(try Repo.chat("chat_a")?.row["unlocked"]?[rule.unlockId])
+        try put(.char, "火锅可以", Date().addingTimeInterval(1))
+        try Badges.sync("chat_a")
+        XCTAssertNotNil(try Repo.chat("chat_a")?.row["unlocked"]?[rule.unlockId])
+        XCTAssertEqual(Badges.label(rule.unlockId), "火锅搭子")
+        // 手动颁发的，重新统计也留着
+        try BadgeDefs.grant("chat_a", manual.unlockId)
+        try Badges.sync("chat_a", full: true)
+        let after = try XCTUnwrap(Repo.chat("chat_a"))
+        XCTAssertNotNil(after.row["unlocked"]?[manual.unlockId])
+        XCTAssertNotNil(after.row["unlocked"]?[rule.unlockId])
+        // 删定义，那一枚一并收回
+        try BadgeDefs.remove(rule.id)
+        XCTAssertNil(try Repo.chat("chat_a")?.row["unlocked"]?[rule.unlockId])
+    }
 }

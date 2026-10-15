@@ -84,6 +84,7 @@ enum Badges {
 
     /// 任何一种解锁记录写成一句给人看的名字
     static func label(_ id: String) -> String {
+        if id.hasPrefix("custom-") { return BadgeDefs.label(id) }
         if let a = achievements.first(where: { $0.id == id }) { return "\(a.name)（\(a.desc)）" }
         if id.contains(":") { return "\(id.split(separator: ":").last ?? "") \(limitedName(id))" }
         guard let r = id.range(of: #"^([a-z]+)-(\d+)$"#, options: .regularExpression) else { return "" }
@@ -268,6 +269,12 @@ enum Badges {
         let redo = full || stored == nil || stored?["v"]?.number != version
         var st = redo ? blank() : stored!
         var unlocked = redo && full ? [:] : (chat.row["unlocked"]?.object ?? [:])
+        // 重新统计时，手动颁发与模型判断给的那几枚不是按记录算出来的，留着（算不回来）
+        if redo && full {
+            for (k, v) in chat.row["unlocked"]?.object ?? [:] where k.hasPrefix("custom-") && BadgeDefs.get(BadgeDefs.defIdOf(k))?.how != "rule" {
+                unlocked[k] = v
+            }
+        }
         var lim = redo && full ? [:] : (chat.row["limited"]?.object ?? [:])
         var news: [String] = []
         func got(_ id: String, _ at: Double, _ isLimited: Bool) {
@@ -294,6 +301,10 @@ enum Badges {
         st["upTo"] = .number(mark)
         st["edge"] = .array(edge.sorted().map { .string($0) })
         tierUnlocks(st, chat: chat, now: nowMs, got)
+        // 自定义标识里「按条件」的那几个（网页版 4.320）
+        let cu = BadgeDefs.reached(chat, &st, msgs: { (try? Repo.messages(chatId: chatId)) ?? [] }, now: nowMs)
+        for id in cu.hits { got(id, nowMs, false) }
+        if cu.changed { moved = true }
         guard moved || !news.isEmpty || redo else { return [] }
         chat.row["stats"] = .object(st)
         chat.row["unlocked"] = .object(unlocked)
