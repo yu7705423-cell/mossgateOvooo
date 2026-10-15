@@ -82,12 +82,17 @@ struct ConversationView: View {
     struct RememberedMemory: Identifiable { var id: String; var charId: String }
     @State private var composing: InteractSheet.Kind?
     @State private var recordingVoice = false
-    @State private var calling: Character?
+    @State private var calling: CallTarget?
     @State private var showScenes = false
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
+    struct CallTarget: Identifiable {
+        let char: Character
+        let incoming: Bool
+        var id: String { char.id + (incoming ? ":in" : ":out") }
+    }
     private let dueTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
@@ -124,7 +129,7 @@ struct ConversationView: View {
                 }
             } else if let char, chat?.isGroup == false, char.row["canCall"]?.bool != false, !archivedChat {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { calling = char } label: { NavIcon("phone") }
+                    Button { calling = CallTarget(char: char, incoming: false) } label: { NavIcon("phone") }
                         .accessibilityLabel("语音通话")
                         .disabled(isBusy)
                 }
@@ -313,7 +318,12 @@ struct ConversationView: View {
             }
         }
         .fullScreenCover(item: $calling) { c in
-            CallView(chatId: chatId, char: c) { reload() }
+            CallView(chatId: chatId, char: c.char, incoming: c.incoming) { reload() }
+        }
+        // 角色打电话过来（回复里写了 [去电]）：正看着这段对话才响铃，正在通话时不再响
+        .onReceive(NotificationCenter.default.publisher(for: .eiraIncomingCall)) { note in
+            guard (note.object as? String) == chatId, calling == nil, let char else { return }
+            calling = CallTarget(char: char, incoming: true)
         }
         .sheet(isPresented: $recordingVoice) {
             VoiceComposeView(chatId: chatId, quote: quoting) { m in

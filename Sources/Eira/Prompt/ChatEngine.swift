@@ -406,6 +406,13 @@ enum ChatEngine {
             var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[\(char.name)改了手机的锁屏密码]", kind: "notice", turnId: turnId)
             m.row["lockUndo"] = .object(["charId": .string(char.id), "prev": prev])
             return m
+        case .ring:
+            // 角色打电话过来：正看着这段对话就响铃，否则记一条未接来电。群里没有一个对象可以接
+            let off = (AppSettings.load().raw["capsOff"]?.array ?? []).compactMap(\.string)
+            guard !chat.isGroup, char.row["canCall"]?.bool != false, !off.contains("ring") else { return nil }
+            let chatId = chat.id, charId = char.id
+            Task { @MainActor in CallEngine.ring(chatId: chatId, charId: charId) }
+            return nil
         case .keep:
             // 往自己那台手机的相册存一张。你刚发过来的那张图就是它要存的那张（同一个 id，不另拷一份）
             guard !p.text.isEmpty else { return nil }
@@ -510,7 +517,7 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

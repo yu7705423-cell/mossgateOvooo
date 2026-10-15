@@ -370,7 +370,7 @@ enum ChatPrompt {
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
-    static let capIds = ["image", "voice", "ties", "listen", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
+    static let capIds = ["image", "voice", "ties", "listen", "ring", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
@@ -417,6 +417,11 @@ enum ChatPrompt {
         cap("listen", on: char.row["canListen"]?.bool != false, hot: listening || used(#"^(listen|song)$|[\[【](一起听|点歌|建歌单|加入歌单|分享歌曲)"#),
             line: "Music: [一起听] to listen together, [点歌：song title - artist] to change the track, [分享歌曲：song title - artist] to send a song, [加入歌单：playlist | song - artist] to keep songs") {
             Templates.get("skeleton.listen", settings: s)
+        }
+        // 打电话过来（网页版 capabilities.js 的 ring）：角色卡上「可以打电话」没关就有
+        cap("ring", on: char.row["canCall"]?.bool != false, hot: used(#"^call$|[\[【](视频)?(去电|来电)"#),
+            line: "Call: write a line on its own, [去电]; for video, write [视频去电]") {
+            Templates.get("skeleton.ring", settings: s)
         }
         // 今天的安排：今天排了日程才有，一直给全文（网页版 capabilities.js 的 agenda，always）
         cap("agenda", on: DayPlan.brief(char) != nil, hot: true, line: nil) {

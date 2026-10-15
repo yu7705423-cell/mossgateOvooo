@@ -779,6 +779,7 @@ struct CapsView: View {
         Cap(id: "lockcode", label: "改锁屏密码", group: "互动", info: "角色可以修改自己的锁屏密码。距上次修改不满角色卡设定的天数（默认 30）时不提供，聊到密码时除外"),
         Cap(id: "remark", label: "改备注", group: "互动", info: "角色可以修改给用户的备注"),
         Cap(id: "dice", label: "骰子", group: "互动", info: "角色可以掷骰子"),
+        Cap(id: "ring", label: "打电话过来", group: "互动", info: "角色可以给用户打语音电话。正在看这段会话时响铃，否则记为未接来电。接听后每说一轮调用一次接口，与自己打出去相同"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
         Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),

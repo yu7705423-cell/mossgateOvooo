@@ -67,4 +67,32 @@ final class CallTests: StoreTestCase {
         try setSettings(["callSummary": .bool(false)])
         XCTAssertFalse(CallEngine.autoSummary(outcome: "done", lines: lines))
     }
+    /// 角色写了 [去电] 而人不在这段对话里：不响铃，记一条未接来电，不调接口
+    func testRingWhenAwayIsMissed() async throws {
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let before = try XCTUnwrap(Repo.chat("chat_a")).unread
+        await MainActor.run { CallEngine.ring(chatId: "chat_a", charId: "char_a") }
+        let last = try XCTUnwrap(Repo.messages(chatId: "chat_a").last)
+        XCTAssertEqual(last.kind, "call")
+        XCTAssertEqual(last.row.string("direction"), "in")
+        XCTAssertEqual(last.row.string("outcome"), "missed")
+        XCTAssertEqual(last.content, "[未接语音通话]")
+        XCTAssertEqual(try XCTUnwrap(Repo.chat("chat_a")).unread, before + 1)
+        XCTAssertEqual(MockNet.count, 0)
+    }
+
+    /// 回复里的 [去电] 不落气泡；提示词里写着怎么打
+    func testRingMarkInReply() async throws {
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let built = try ChatPrompt.build(chat: chat, char: XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue((built.system + built.messages.map(\.content).joined()).contains("[去电]"))
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("等一下\n[去电]")) }
+        let before = try Repo.messages(chatId: "chat_a").count
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let after = try Repo.messages(chatId: "chat_a")
+        XCTAssertFalse(after.contains { $0.content.contains("去电") })
+        // 回复那一条落下；来电在主线程上随后记下（不在这段对话里，记为未接）
+        XCTAssertEqual(after.dropFirst(before).first?.content, "等一下")
+    }
 }

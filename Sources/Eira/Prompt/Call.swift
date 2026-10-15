@@ -1,4 +1,5 @@
 import Foundation
+import UIKit
 
 /// 通话（网页版 system/call.js 与 engine.js 的 buildCallSystem、streamCall）。
 ///
@@ -142,4 +143,35 @@ enum CallEngine {
         try Database.shared.put(Collections.messages, row)
         return text
     }
+
+    // MARK: - 角色打进来（网页版 call.ring，回复里的 [去电]）
+
+    /// 角色在回复里写了 [去电]。正看着这段对话就响铃；不在就直接记一条未接来电（网页版：人不在这段对话里就不响铃）。
+    /// 打不打由角色自己决定（第 22 条）；这里只落成状态，不调接口。接起来之后每轮的花费和自己打出去一样
+    @MainActor
+    static func ring(chatId: String, charId: String) {
+        if UIApplication.shared.applicationState == .active && Notifier.shared.visibleChat == chatId {
+            NotificationCenter.default.post(name: .eiraIncomingCall, object: chatId)
+            return
+        }
+        do { try missed(chatId: chatId, charId: charId) }
+        catch { Problems.report("未接来电未能记下：\(error.localizedDescription)") }
+    }
+
+    /// 记一条未接来电
+    @discardableResult
+    static func missed(chatId: String, charId: String) throws -> Message {
+        let m = try finish(chatId: chatId, charId: charId, direction: "in", outcome: "missed", seconds: 0, lines: [], userName: "", charName: "")
+        if var c = try Repo.chat(chatId) {
+            c.row["unread"] = .number(Double(c.unread + 1))
+            try Repo.save(c)
+        }
+        NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+        return m
+    }
+}
+
+extension Notification.Name {
+    /// 角色打来电话（object 是 chatId）。正开着那段会话的页面弹出来电
+    static let eiraIncomingCall = Notification.Name("eira.incomingCall")
 }

@@ -23,6 +23,8 @@ enum ReplyParser {
         case pact, pactDone, letter
         // 角色手机：存图（text 是角色给这张写的一句）、改密码（text 是数字，extra 是这串数字是什么）
         case keep, lockcode
+        // 角色打电话过来（flag 为真是视频，原生版先按语音接）
+        case ring
     }
 
     struct Part: Equatable, Sendable {
@@ -69,8 +71,9 @@ enum ReplyParser {
     private static let recallPostLine = lineMark("撤回动态|删除动态")
     // 原生版还没有的那几件事（来电、一起看、出行、情侣账户、群管理、千丝万缕）：标记认出来就不落气泡，
     // 从前原样变成一条文字（网页版 reply.js 里各自是一件事，不占气泡）
+    // 「来电」是用户那边收到的结果。两个词都认，免得模型偶尔写回旧的那个
+    static let ringLine = lineMark("(视频)?(?:去电|来电|打电话|拨打|通话|call)")
     private static let unsupportedLines: [NSRegularExpression] = [
-        lineMark("(视频)?(?:去电|来电|打电话|拨打|通话|call)"),
         regex(#"^[\[【(（]\s*(?:暂停|暂停一下)\s*[\]】)）]$"#, []),
         regex(#"^[\[【(（]\s*(?:继续|继续播放|接着看)\s*[\]】)）]$"#, []),
         regex(#"^[\[【(（]\s*(?:倒回|回到|快进)\s*[:：]\s*([\d:：.]+)\s*[\]】)）]$"#, []),
@@ -321,6 +324,13 @@ enum ReplyParser {
             if ReplyParser.matches(ReplyParser.recallPostLine, t) { push(Part(type: .recallPost, text: "")); return }
             if let m = ReplyParser.match(ReplyParser.keepLine, t) {
                 push(Part(type: .keep, text: m[1].trimmingCharacters(in: .whitespaces)))
+                return
+            }
+            // 它要打电话过来。不占气泡：电话是一件事，不是一条消息
+            if let m = ReplyParser.match(ReplyParser.ringLine, t) {
+                var p = Part(type: .ring, text: "")
+                p.flag = !m[1].isEmpty
+                push(p)
                 return
             }
             if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }

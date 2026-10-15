@@ -4,16 +4,20 @@ import SwiftUI
 /// 一通电话的状态。按回合：你说一句（打字或录一句），角色回一句；字幕是主角，出不出声由喇叭决定。
 @MainActor
 final class CallSession: ObservableObject {
-    enum Phase { case connecting, active, ended }
+    enum Phase { case ringing, connecting, active, ended }
 
     let chatId: String
     let char: Character
+    /// out：我打出去；in：角色打进来（响铃，接了才接通）
+    let direction: String
     @Published var phase: Phase = .connecting
     @Published var lines: [CallEngine.Line] = []
     @Published var draft = ""
     @Published var thinking = false
     @Published var error: String?
     @Published var seconds = 0
+    /// 挂断时的结果：done / cancelled / declined / missed
+    @Published var outcome = ""
     @Published var speak: Bool
     @Published var transcribing = false
 
@@ -25,9 +29,11 @@ final class CallSession: ObservableObject {
     private var finished = false
     let recorder = VoiceRecorder()
 
-    init(chatId: String, char: Character) {
+    init(chatId: String, char: Character, incoming: Bool = false) {
         self.chatId = chatId
         self.char = char
+        self.direction = incoming ? "in" : "out"
+        if incoming { phase = .ringing }
         // 喇叭：默认关，按了才记住开着（网页版 callSpeak === true）。开着且有音色时每句走一次语音合成接口，
         // 是会多花钱的那一种，登记在 ExtraCalls 的 callVoice（第 15 条：默认关）
         speak = AppSettings.load().raw["callSpeak"]?.bool == true
@@ -40,6 +46,24 @@ final class CallSession: ObservableObject {
         if char.row["canSendVoice"]?.bool == false { return "该角色的语音已关闭，当前使用系统自带的合成。" }
         if !VoiceGen.canSpeak(char, s) { return "该角色在当前语音接口上尚未设置音色，当前使用系统自带的合成。" }
         return ""
+    }
+
+    /// 角色打进来时先响铃：响够 20 秒没人接就是未接来电（网页版 call.ring）
+    func ring() {
+        guard phase == .ringing else { return }
+        clock = Timer.scheduledTimer(withTimeInterval: 20, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.phase == .ringing else { return }
+                self.end(outcome: "missed")
+            }
+        }
+    }
+
+    func accept() {
+        guard phase == .ringing else { return }
+        clock?.invalidate()
+        phase = .connecting
+        start()
     }
 
     func start() {
@@ -60,7 +84,7 @@ final class CallSession: ObservableObject {
             }
         }
         // 接通之后由角色先开口
-        turn(opening: CallEngine.openingLine(outgoing: true))
+        turn(opening: CallEngine.openingLine(outgoing: direction == "out"))
     }
 
     /// 我说了一句。正在说的那一轮掐掉，已经出现在字幕上的半句留下来。
@@ -179,13 +203,18 @@ final class CallSession: ObservableObject {
 
     /// 挂断：落一条通话记录。接通过、有对白的按设置写总结（默认开，失败只记在那条记录上不重试）。
     func hangUp() {
+        // 响铃时挂掉是拒接，拨号中挂掉是已取消
+        end(outcome: phase == .active ? "done" : phase == .ringing ? "declined" : "cancelled")
+    }
+
+    func end(outcome: String) {
         guard !finished else { return }
         finished = true
+        self.outcome = outcome
         job?.cancel()
         hush()
         recorder.cancel()
         clock?.invalidate()
-        let outcome = phase == .active ? "done" : "cancelled"
         let secs = outcome == "done" ? max(1, Int(Date().timeIntervalSince(startedAt ?? Date()))) : 0
         var all = lines
         let cut = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -194,7 +223,7 @@ final class CallSession: ObservableObject {
         do {
             let chat = try Repo.chat(chatId)
             let me = try chat.flatMap { c in try Repo.personas().first { $0.id == c.personaId } } ?? Repo.activePersona()
-            let m = try CallEngine.finish(chatId: chatId, charId: char.id, direction: "out", outcome: outcome, seconds: secs,
+            let m = try CallEngine.finish(chatId: chatId, charId: char.id, direction: direction, outcome: outcome, seconds: secs,
                                           lines: all, userName: me?.name ?? "", charName: char.name)
             if CallEngine.autoSummary(outcome: outcome, lines: all) {
                 let id = m.id
@@ -217,8 +246,8 @@ struct CallView: View {
     @State private var typed = ""
     var onEnd: () -> Void
 
-    init(chatId: String, char: Character, onEnd: @escaping () -> Void) {
-        let s = CallSession(chatId: chatId, char: char)
+    init(chatId: String, char: Character, incoming: Bool = false, onEnd: @escaping () -> Void) {
+        let s = CallSession(chatId: chatId, char: char, incoming: incoming)
         _session = StateObject(wrappedValue: s)
         _recorder = ObservedObject(wrappedValue: s.recorder)
         self.onEnd = onEnd
@@ -286,17 +315,50 @@ struct CallView: View {
             .padding(.bottom, Theme.pad * 2)
         }
         .background(Theme.background)
-        .onAppear { session.start() }
+        .overlay(alignment: .bottom) { if session.phase == .ringing { ringingBar } }
+        .onAppear { session.phase == .ringing ? session.ring() : session.start() }
+        .onChange(of: session.outcome) { _, o in
+            // 响够了没人接：未接来电已经记下，收起来电页
+            if o == "missed" { onEnd(); dismiss() }
+        }
     }
 
     private var status: String {
         if recorder.recording { return "正在录音 \(recorder.seconds)\u{2033}" }
         if session.transcribing { return "正在识别" }
         switch session.phase {
+        case .ringing: return "邀请你语音通话"
         case .connecting: return "正在接通"
         case .active: return CallEngine.duration(session.seconds)
         case .ended: return "通话结束"
         }
+    }
+
+    /// 响铃时盖在底部：拒接、接听
+    private var ringingBar: some View {
+        HStack(spacing: Theme.pad * 4) {
+            Button {
+                session.hangUp()
+                onEnd()
+                dismiss()
+            } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: "phone.down.fill").font(.title).foregroundStyle(Theme.danger)
+                    Text("拒接").font(.footnote).foregroundStyle(Theme.text2)
+                }
+            }
+            .accessibilityLabel("拒接")
+            Button { session.accept() } label: {
+                VStack(spacing: 6) {
+                    Image(systemName: "phone.fill").font(.title).foregroundStyle(Theme.text)
+                    Text("接听").font(.footnote).foregroundStyle(Theme.text2)
+                }
+            }
+            .accessibilityLabel("接听")
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, Theme.pad * 2)
+        .background(Theme.background)
     }
 
     private func line(_ who: String, _ text: String, mine: Bool) -> some View {
