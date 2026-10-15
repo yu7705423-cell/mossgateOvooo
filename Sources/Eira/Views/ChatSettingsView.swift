@@ -159,6 +159,8 @@ struct ChatSettingsView: View {
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "", keys: "总结 记住",
             dest: AnyView(MenuPage("记忆总结") { summarySection }))
+        add("otd", "记忆", "那年今天", keys: "往年 去年今天 回忆",
+            dest: AnyView(OnThisDayView(chatId: chatId)))
         if !c.isGroup {
             add("bond", "记忆", "关系底色", keys: "你们之间 关系 现状 S 级",
                 dest: AnyView(BondView(chatId: chatId)))

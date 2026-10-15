@@ -177,3 +177,80 @@ struct DraftsView: View {
 
     private func reload() { rows = Drafts.list(chatId) }
 }
+
+/// 那年今天：往年的这一天这段对话里说过什么，默认看今天，可以前后翻。每一年先露几条（默认值，不是上限）
+struct OnThisDayView: View {
+    let chatId: String
+    @State private var at = Date()
+    @State private var years: [OnThisDay.Year] = []
+    @State private var open: Set<Int> = []
+    @State private var meName = "我"
+
+    var body: some View {
+        List {
+            Section {
+                HStack {
+                    Button("前一天") { step(-1) }.buttonStyle(.borderless)
+                    Spacer()
+                    Text(title).font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Button("后一天") { step(1) }.buttonStyle(.borderless)
+                }
+                if !Calendar.current.isDateInToday(at) {
+                    Button("回到今天") { at = Date(); load() }
+                }
+                HelpNote("往年的同一天这段对话里说过什么。只列出你与角色都发过消息的日子；可以翻看前后的日期。只在本机查找，不调用接口。", title: "那年今天")
+            }
+            if years.isEmpty {
+                Section { Text("往年的这一天没有对话记录。").foregroundStyle(Theme.text2) }
+            }
+            ForEach(years) { y in
+                Section {
+                    let shown = open.contains(y.year) ? y.msgs : Array(y.msgs.prefix(6))
+                    ForEach(shown, id: \.id) { m in
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: Theme.sp2) {
+                                Text(m.role == .user ? meName : name(m.authorId)).font(.system(size: 13, weight: .semibold))
+                                Text(Self.hm(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                            }
+                            Text(OnThisDay.textOf(m)).font(.system(size: 14))
+                        }
+                    }
+                    if y.msgs.count > 6 {
+                        Button(open.contains(y.year) ? "收起" : "展开全部 \(y.msgs.count) 条") {
+                            if open.contains(y.year) { open.remove(y.year) } else { open.insert(y.year) }
+                        }
+                    }
+                } header: { Text("\(y.ago) 年前 · \(String(y.year)) 年 · 共 \(y.msgs.count) 条") }
+            }
+        }
+        .navigationTitle("那年今天")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let chat = (try? Repo.chat(chatId)) ?? nil
+            let ps = (try? Repo.personas()) ?? []
+            meName = (ps.first { $0.id == chat?.personaId } ?? ((try? Repo.activePersona()) ?? nil))?.name ?? "我"
+            load()
+        }
+    }
+
+    private var title: String {
+        let c = Calendar.current.dateComponents([.month, .day], from: at)
+        return "\(c.month ?? 0) 月 \(c.day ?? 0) 日" + (Calendar.current.isDateInToday(at) ? " · 今天" : "")
+    }
+
+    private func step(_ n: Int) {
+        at = Calendar.current.date(byAdding: .day, value: n, to: at) ?? at
+        open = []
+        load()
+    }
+
+    private func load() { years = OnThisDay.ofChat(chatId, at: at) }
+
+    private func name(_ id: String) -> String { ((try? Repo.character(id)) ?? nil)?.name ?? "角色" }
+
+    static func hm(_ ms: Double) -> String {
+        let c = Calendar.current.dateComponents([.hour, .minute], from: Date(millis: ms))
+        return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
+    }
+}
