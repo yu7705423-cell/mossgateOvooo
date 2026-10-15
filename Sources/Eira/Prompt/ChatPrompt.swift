@@ -573,7 +573,8 @@ enum ChatPrompt {
         // 译文：这段会话设了目标语言时，每条消息同一行跟一句 [译文：…]（随回复一起那一档，不多调接口）。
         // 「这几种标记各跟一句译文」只列这段会话实际开着的那几样（网页版 4.373）
         let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
-        cap("translate", on: !lang.isEmpty, hot: true, line: nil) {
+        // 选了单独的翻译接口时，模型不写译文，由那套接口另翻（网页版 translate.mode）
+        cap("translate", on: !lang.isEmpty && s.translateMode == "inline", hot: true, line: nil) {
             var marks: [String] = []
             let voiceOn = VoiceGen.canSpeak(char, s) && !off.contains("voice") && !(chat.isGroup && !groupCaps.contains("voice"))
             if voiceOn { marks.append("[语音：…]") }

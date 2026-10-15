@@ -144,6 +144,12 @@ struct ServicesView: View {
                     status("语音识别", model.s.asrReady ? model.s.asrConfig["model"]?.string : nil, model.s.asrReady ? "" : "系统识别")
                 }
             }
+            Section("翻译") {
+                NavigationLink { TranslateSettingsView() } label: {
+                    status("翻译", model.s.translateMode == "api" ? model.s.translatePreset?.model : nil,
+                           model.s.translateMode == "api" ? "单独接口" : "随回复一起")
+                }
+            }
             Section("其他") {
                 NavigationLink { WeatherSettingsView() } label: {
                     status("和风天气", nil, Weather.ready(model.s) ? "" : "未配置")
@@ -342,6 +348,45 @@ struct VisionSettingsView: View {
     private var modeBinding: Binding<String> {
         Binding(get: { model.s.visionMode },
                 set: { v in model.update { $0.setService("vision", ["mode": .string(v)]) } })
+    }
+}
+
+/// 译文怎么来（网页版 services.translate）：随回复一起写，或者单独的翻译接口另翻
+struct TranslateSettingsView: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("译文怎么来", selection: modeBinding) {
+                    Text("随回复一起").tag("inline")
+                    Text("单独的接口").tag("api")
+                }
+                .pickerStyle(.segmented)
+            } footer: {
+                if model.s.service("translate")["mode"]?.string == "api" {
+                    Text("每轮回复之后多调用一次翻译接口。")
+                    HelpNote("设了翻译语言的会话，角色每说完一轮，把这一轮的文字、语音、旁白与心声一批交给下面这套接口翻译，只送要翻的句子与这段会话的翻译要求，人设、记忆与聊天记录不送。翻译失败不影响消息本身。下面这套没填全时，按「随回复一起」处理。消息上的「翻译」也走这套接口。", title: "单独的翻译接口")
+                } else {
+                    HelpNote("角色在同一次回复里给每条消息附上译文，不另调用接口。每段会话的翻译语言在会话设置的「翻译」里设置。", title: "随回复一起翻译")
+                }
+            }
+            if model.s.service("translate")["mode"]?.string == "api" {
+                ServiceConnSection(name: "translate", modelHint: "任意能对话的模型。") { model.s.translatePreset }
+                Section {
+                    Button("清空配置", role: .destructive) {
+                        model.update { $0.setService("translate", ["apiKey": .string(""), "model": .string(""), "baseUrl": .string(""), "endpointId": .string("")]) }
+                    }
+                }
+            }
+            ProblemSection(text: model.problem)
+        }
+        .navigationTitle("翻译")
+    }
+
+    private var modeBinding: Binding<String> {
+        Binding(get: { model.s.service("translate")["mode"]?.string == "api" ? "api" : "inline" },
+                set: { v in model.update { $0.setService("translate", ["mode": .string(v)]) } })
     }
 }
 

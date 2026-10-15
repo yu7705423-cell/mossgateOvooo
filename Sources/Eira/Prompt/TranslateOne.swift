@@ -66,7 +66,7 @@ enum TranslateOne {
         guard can(m, lang: lang) else { throw StoreError(message: "这一条不能翻译") }
         let s = AppSettings.load()
         let p = payload([src], lang: lang, extra: chat.row.string("translateRules"), settings: s)
-        let r = try await AIService.shared.send(task: "translate.lines", system: p.system,
+        let r = try await AIService.shared.send(task: "translate.lines", preset: s.translatePreset, system: p.system,
                                                 messages: [AIMessage(role: .user, content: p.user)],
                                                 maxTokens: max(600, src.count * 4), retries: 1)
         guard let out = rows(r.text, want: 1).first, !out.isEmpty else { throw StoreError(message: "没有得到译文") }
@@ -74,5 +74,58 @@ enum TranslateOne {
             throw StoreError(message: "这条消息已不存在")
         }
         return try MessageActions.setTranslation(fresh, out)
+    }
+
+    // MARK: - 单独那套翻译接口（网页版 reply.js 的 startTranslate / applyTranslate）
+
+    /// 这一轮落下的几条里要翻的：文字、语音、旁白没有译文的，文字上的心声没有译文的。一批一次请求
+    static func items(_ created: [Message]) -> [(id: String, field: String, text: String)] {
+        var out: [(id: String, field: String, text: String)] = []
+        for m in created where m.role == .char && !m.isError {
+            switch m.kind {
+            case "text", "voice":
+                let t = source(m)
+                if !t.isEmpty && m.row.string("translation").isEmpty { out.append((m.id, "translation", t)) }
+            case "narration":
+                let t = m.row.string("narration").isEmpty ? m.content : m.row.string("narration")
+                if !t.isEmpty && m.row.string("translation").isEmpty { out.append((m.id, "translation", t)) }
+            default: break
+            }
+            let inner = m.row.string("inner")
+            if m.kind == "text" && !inner.isEmpty && m.row.string("innerTrans").isEmpty { out.append((m.id, "innerTrans", inner)) }
+        }
+        return out
+    }
+
+    /// 开了单独的翻译接口时，这一轮的译文由它来给。翻译挂了不连累这一轮：原文已经发出去，少一行译文而已
+    @discardableResult
+    static func applyApi(chat: Chat, created: [Message]) async -> Int {
+        let s = AppSettings.load()
+        let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+        guard !lang.isEmpty, s.translateMode == "api", let preset = s.translatePreset else { return 0 }
+        let list = items(created)
+        guard !list.isEmpty else { return 0 }
+        let p = payload(list.map(\.text), lang: lang, extra: chat.row.string("translateRules"), settings: s)
+        do {
+            let r = try await AIService.shared.send(task: "translate.lines", preset: preset, system: p.system,
+                                                    messages: [AIMessage(role: .user, content: p.user)],
+                                                    maxTokens: max(600, list.map(\.text).joined().count * 4))
+            let out = rows(r.text, want: list.count)
+            var n = 0
+            for (k, it) in list.enumerated() where k < out.count {
+                let t = out[k].trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !t.isEmpty, t.filter({ !$0.isWhitespace }) != it.text.filter({ !$0.isWhitespace }),
+                      var row = try Database.shared.get(Collections.messages, id: it.id) else { continue }
+                row[it.field] = .string(t)
+                row.touch()
+                try Database.shared.put(Collections.messages, row)
+                n += 1
+            }
+            if n > 0 { await MainActor.run { NotificationCenter.default.post(name: .eiraChatChanged, object: chat.id) } }
+            return n
+        } catch {
+            Diagnostics.shared.record("translate-failed", ["error": error.localizedDescription])
+            return 0
+        }
     }
 }

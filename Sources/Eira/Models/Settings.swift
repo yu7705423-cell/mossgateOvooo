@@ -174,6 +174,20 @@ struct AppSettings: Sendable {
         return p.usable ? p : nil
     }
 
+    /// 单独的翻译接口（网页版 services.translate）。OpenAI 兼容，填全了才有
+    var translatePreset: ChatPreset? {
+        var json = service("translate")
+        json["id"] = .string("translate")
+        json["name"] = .string("翻译接口")
+        if (json["provider"]?.string ?? "").isEmpty { json["provider"] = .string("openai") }
+        json["temperature"] = .null
+        let p = ChatPreset(json: json)
+        return p.usable ? p : nil
+    }
+
+    /// 译文怎么来：inline 随回复一起写（不多调接口）；api 由单独的翻译接口另翻（每轮多一次）。选了 api 却没填全，按 inline
+    var translateMode: String { service("translate")["mode"]?.string == "api" && translatePreset != nil ? "api" : "inline" }
+
     /// 图片到底能不能被看见。
     var visionActive: Bool { visionMode == "chat" || (visionMode == "api" && visionPreset != nil) }
 

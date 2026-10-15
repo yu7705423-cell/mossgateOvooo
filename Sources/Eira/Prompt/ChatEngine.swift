@@ -130,6 +130,8 @@ enum ChatEngine {
                                       held: held, redrawHeld: imageKeep == .redraw, onRow: onRow)
         // 心声「单独生成」那一档：整轮说完之后另调一次（默认关，在会话设置里开）
         if let m = await InnerVoice.attach(chat: chat, char: char, created: created) { onRow(m) }
+        // 单独的翻译接口：这一轮要翻的几条一批一次（选了这一档才有，登记在 ExtraCalls）
+        await TranslateOne.applyApi(chat: chat, created: created)
         // 我的自动回复：角色这一轮说完，替我回一句固定的（不调接口；重新生成那一轮不回）
         if old == nil, !created.isEmpty {
             for m in (try? AutoReply.fire(chat.id, AutoReply.mine)) ?? [] { onRow(m) }
