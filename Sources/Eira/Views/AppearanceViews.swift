@@ -350,3 +350,21 @@ struct LookPresetsSection: View {
         catch { problem = "未能保存：\(error.localizedDescription)" }
     }
 }
+
+/// 锁屏：开关与锁屏壁纸
+struct LockLookSection: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        Section {
+            Toggle("锁屏", isOn: model.bool("showLockScreen", true))
+            if model.s.raw["showLockScreen"]?.bool != false {
+                WallpaperSection(slot: "lock", label: "锁屏壁纸", desc: "位于时钟与通知下层", bare: true)
+            }
+        } header: {
+            Text("锁屏")
+        } footer: {
+            HelpNote("开启时，打开应用先显示锁屏：时间、日期与有未读消息的会话，上滑进入主界面，点一条会话直接进入。关闭时直接进入主界面。", title: "锁屏")
+        }
+    }
+}

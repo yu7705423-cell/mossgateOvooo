@@ -3,13 +3,22 @@ import SwiftUI
 
 /// 主屏壁纸（网页版 AppearancePage 的 WallpaperRow）：在「设置 - 主题」里。
 struct WallpaperSection: View {
-    @State private var current = Shell.layout().wallpaperHome
+    var slot = "home"
+    var label = "主界面"
+    var desc = "位于图标与小组件下层"
+    /// 只画那一行，不另起一组（锁屏壁纸放在「锁屏」那一组里）
+    var bare = false
+    @State private var current = ""
     @State private var picking = false
     @State private var photo: PhotosPickerItem?
     @State private var problem: String?
 
     var body: some View {
-        Section {
+        if bare { row } else { Section { row } header: { Text("壁纸") } }
+    }
+
+    private var row: some View {
+        Group {
             HStack(spacing: Theme.sp3) {
                 Group {
                     if current.isEmpty {
@@ -22,8 +31,8 @@ struct WallpaperSection: View {
                 .background(Theme.groupFill)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.rSm, style: .continuous))
                 VStack(alignment: .leading, spacing: Theme.sp2) {
-                    Text("主界面")
-                    Text("位于图标与小组件下层").font(.caption).foregroundStyle(Theme.text3)
+                    Text(label)
+                    Text(desc).font(.caption).foregroundStyle(Theme.text3)
                     HStack(spacing: Theme.sp3) {
                         Button(current.isEmpty ? "选择" : "更换") { picking = true }.buttonStyle(.borderless)
                         if !current.isEmpty {
@@ -34,7 +43,8 @@ struct WallpaperSection: View {
                 }
             }
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
-        } header: { Text("壁纸") }
+        }
+        .onAppear { current = slot == "lock" ? Shell.layout().wallpaperLock : Shell.layout().wallpaperHome }
         .photosPicker(isPresented: $picking, selection: $photo, matching: .images)
         .onChange(of: photo) { _, item in
             guard let item else { return }
@@ -53,7 +63,7 @@ struct WallpaperSection: View {
 
     private func save(_ id: String?) {
         do {
-            try HomeEdit.setWallpaper(id)
+            try HomeEdit.setWallpaper(id, slot: slot)
             current = id ?? ""
             problem = nil
         } catch {

@@ -132,9 +132,24 @@ struct HomeScreen: View {
     @State private var target: ArrangeTarget?
     /// 一屏放得下几行（量出来的，至少 6）
     @State private var fitRows = HomeLayout.minRows
+    @State private var searching = false
+    @State private var fxSheet = false
 
     private var home: HomeLook { HomeLook(wallpaper: !layout.wallpaperHome.isEmpty, dark: scheme == .dark, s: settings) }
     private var cols: Int { Shell.cols(settings) }
+    /// 网页版 homePageFx：slide、fade、scale、none
+    private var fx: String {
+        let v = settings["homePageFx"]?.string ?? ""
+        return ["slide", "fade", "scale", "none"].contains(v) ? v : "slide"
+    }
+    private var pullSearch: Bool { settings["homePullSearch"]?.bool != false }
+    private var swipe: Bool { settings["homeSwipe"]?.bool != false }
+
+    /// 在主屏中间往下拉一段（竖着为主）打开搜索
+    private func pulled(_ v: DragGesture.Value) {
+        guard !editing, pullSearch, v.translation.height > 70, abs(v.translation.width) < v.translation.height * 0.6 else { return }
+        searching = true
+    }
 
     var body: some View {
         GeometryReader { geo in
@@ -149,6 +164,17 @@ struct HomeScreen: View {
                             grid(p, index: i, size: size)
                                 .frame(width: g.size.width, height: g.size.height, alignment: .top)
                                 .contentShape(Rectangle())
+                                .visualEffect { [fx] content, proxy in
+                                    // 翻页效果：跟着手指走的那一段按进度变；淡入淡出、缩放、无都让两页叠在原地交替
+                                    let w = max(1, proxy.size.width)
+                                    let minX = proxy.frame(in: .global).minX
+                                    let a = min(1, abs(minX / w))
+                                    let still = fx != "slide"
+                                    return content
+                                        .offset(x: still ? -minX : 0)
+                                        .scaleEffect(fx == "scale" ? 1 - 0.12 * a : 1)
+                                        .opacity(fx == "none" ? (a < 0.5 ? 1 : 0) : still ? 1 - a : 1)
+                                }
                                 // 整理时这一手势让开，按住是拖动
                                 .gesture(LongPressGesture(minimumDuration: 0.5).onEnded { _ in enterEdit() },
                                          including: editing ? .subviews : .all)
@@ -156,6 +182,9 @@ struct HomeScreen: View {
                         }
                     }
                     .tabViewStyle(.page(indexDisplayMode: .never))
+                    // 下滑搜索；关了左右滑动翻页时，横着的拖动在这里截下，只能点圆点翻页
+                    .simultaneousGesture(DragGesture(minimumDistance: 24).onEnded(pulled), including: editing || !pullSearch ? .subviews : .all)
+                    .highPriorityGesture(DragGesture(minimumDistance: 10).onEnded(pulled), including: !editing && !swipe ? .all : .subviews)
                     .task(id: g.size.height) {
                         let n = Int(((g.size.height + HomeLook.gap) / (byW + HomeLook.gap)).rounded(.down))
                         fitRows = max(HomeLayout.minRows, n)
@@ -176,6 +205,11 @@ struct HomeScreen: View {
             FolderSheet(cell: f, settings: settings, home: home) { id in folder = nil; open(id) }
                 .presentationDetents([.medium])
         }
+        .fullScreenCover(isPresented: $searching) {
+            SpotlightView(settings: settings, open: open, openChat: openChat) { searching = false }
+                .eiraLook()
+        }
+        .sheet(isPresented: $fxSheet) { PageFxSheet().presentationDetents([.medium]) }
         .sheet(item: $target, onDismiss: changed) { t in
             ArrangeMenu(target: t, settings: settings, apply: apply, startMove: { picked = $0 }, close: { target = nil })
                 .presentationDetents([.medium, .large])
@@ -335,6 +369,8 @@ struct HomeScreen: View {
                 if picked != nil {
                     Button("取消移动") { picked = nil }
                 }
+                Button { fxSheet = true } label: { Image(systemName: "rectangle.stack") }
+                    .accessibilityLabel("翻页设置")
                 Button {
                     if apply({ _ = $0.addPage() }) { page = layout.pages.count }
                 } label: { Image(systemName: "plus.rectangle.on.rectangle") }
@@ -692,6 +728,42 @@ struct RecentChatsWidget: View {
             let last = (try? Repo.messages(chatId: c.id, limit: 1))?.last
             let sub = last.map { $0.isRecalled ? "撤回了一条消息" : $0.content } ?? ""
             return Row(id: c.id, title: title, sub: sub)
+        }
+    }
+}
+
+/// 翻页设置（网页版主屏整理时的「翻页」）：下滑搜索、左右滑动翻页、翻页效果
+struct PageFxSheet: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section {
+                    Toggle("下滑搜索", isOn: model.bool("homePullSearch", true))
+                    Toggle("左右滑动翻页", isOn: model.bool("homeSwipe", true))
+                } footer: {
+                    HelpNote("下滑搜索：在主屏中间向下滑动，打开搜索，可查找应用、角色与会话。只在本机查找，不调用接口。左右滑动翻页：关闭后，只能点击页面下方的圆点切换。", title: "翻页")
+                }
+                Section {
+                    Picker("翻页效果", selection: Binding(get: {
+                        let v = model.s.raw["homePageFx"]?.string ?? ""
+                        return ["slide", "fade", "scale", "none"].contains(v) ? v : "slide"
+                    }, set: { model.set("homePageFx", .string($0)) })) {
+                        Text("滑动").tag("slide")
+                        Text("淡入淡出").tag("fade")
+                        Text("缩放").tag("scale")
+                        Text("无").tag("none")
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("翻页效果")
+                } footer: {
+                    HelpNote("切换页面时两页的过渡方式。选择「无」时不播放过渡。", title: "翻页效果")
+                }
+            }
+            .navigationTitle("翻页")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

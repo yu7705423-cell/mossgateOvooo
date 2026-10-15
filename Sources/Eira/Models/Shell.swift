@@ -114,6 +114,7 @@ enum Shell {
         var dockHidden: Bool
         var currentPage: Int
         var wallpaperHome: String
+        var wallpaperLock = ""
     }
 
     static let dockSize = 4
@@ -153,7 +154,8 @@ enum Shell {
                       dock: dock,
                       dockHidden: o["dockHidden"]?.bool == true,
                       currentPage: Int(o["currentPage"]?.number ?? 0),
-                      wallpaperHome: o["wallpaper"]?.object?["home"]?.string ?? "")
+                      wallpaperHome: o["wallpaper"]?.object?["home"]?.string ?? "",
+                      wallpaperLock: o["wallpaper"]?.object?["lock"]?.string ?? "")
     }
 
     /// 消息的未读角标（网页版 Dock.js 的 unreadFor）：当前身份的会话未读之和。

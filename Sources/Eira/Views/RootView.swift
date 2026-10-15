@@ -9,6 +9,8 @@ struct RootView: View {
     @State private var layout = Shell.layout()
     @State private var opened: OpenedApp?
     @State private var unread = Shell.chatUnread()
+    /// 锁屏：打开应用时先显示（网页版 showLockScreen，没写过按开启）
+    @State private var locked = AppSettings.load().raw["showLockScreen"]?.bool != false
     /// 打开 app 时从那个图标放大出来、关上时缩回去（iOS 18 起）
     @Namespace private var appZoom
 
@@ -32,9 +34,20 @@ struct RootView: View {
         }
         // 换了配色或字号：主屏整个重画一遍，取色时读到新的那一套。打开的 app 下次打开时换上
         .id("\(Palette.key)|\(Palette.fontScale)")
+        .overlay {
+            if locked && !onboarding {
+                LockScreenView(wallpaper: layout.wallpaperLock) { chat in
+                    withAnimation(.easeOut(duration: 0.25)) { locked = false }
+                    if let chat { notifier.openChat = chat }
+                }
+                .transition(.move(edge: .top))
+                .zIndex(1)
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
         // 点了通知或主屏的会话：打开聊天，由会话列表打开那一段
         .onChange(of: notifier.openChat) { _, id in
+            if id != nil { locked = false }
             if id != nil, opened?.id != "chat" { opened = OpenedApp(id: "chat") }
         }
         .fullScreenCover(item: $opened, onDismiss: refresh) { app in

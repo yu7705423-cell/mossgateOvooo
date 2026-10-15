@@ -7,12 +7,13 @@ import Foundation
 enum HomeEdit {
     static let iconScale = (min: 50.0, max: 160.0, def: 100.0)
 
-    static func setWallpaper(_ imageId: String?) throws {
+    /// slot：home 主界面，lock 锁屏
+    static func setWallpaper(_ imageId: String?, slot: String = "home") throws {
         let stored = try Database.shared.kv(KVKey.layout)
         var o = (stored ?? Shell.defaultLayout).object ?? [:]
         var w = o["wallpaper"]?.object ?? [:]
-        w["home"] = imageId.map { .string($0) } ?? .null
-        if w["lock"] == nil { w["lock"] = .null }
+        w[slot] = imageId.map { .string($0) } ?? .null
+        for k in ["home", "lock"] where w[k] == nil { w[k] = .null }
         o["wallpaper"] = .object(w)
         try Database.shared.setKV(KVKey.layout, .object(o))
     }
