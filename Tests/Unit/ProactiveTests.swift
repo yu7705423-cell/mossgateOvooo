@@ -139,7 +139,10 @@ final class ProactiveTests: StoreTestCase {
     /// 群里主动开口：默认关；接口一直失败时到点只打一次，落点先挪走；应用在后台时不发
     func testGroupFailingOncePerInterval() async throws {
         let z = try People.createCharacter(name: "小周")
-        let g = try GroupChat.create(memberIds: ["char_a", z.id], title: "", personaId: "me_root")
+        var g = try GroupChat.create(memberIds: ["char_a", z.id], title: "", personaId: "me_root")
+        // 刚建的群算「正在聊」（落点会顺延），放到很久以前
+        g.row["lastMessageAt"] = .number(1_000_000)
+        try Repo.save(g)
         XCTAssertFalse(GroupProactive.config(g).on)
         XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "groupProactive" })
         try GroupProactive.save(g.id, Proactive.Config(on: true, minutes: 60, quietFrom: 0, quietTo: 0))
