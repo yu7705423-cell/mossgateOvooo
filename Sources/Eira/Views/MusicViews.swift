@@ -156,6 +156,7 @@ struct MusicFrontView: View {
                     }
                 }
             }
+            QQMusicSection()
             Section {
                 NavigationLink { LibraryView() } label: {
                     HStack { Text("本机曲库"); Spacer(); Text("已收 \(librarySize) 首").foregroundStyle(Theme.secondaryText) }
@@ -179,27 +180,50 @@ struct MusicFrontView: View {
 struct MusicSearchView: View {
     @ObservedObject private var player = MusicPlayer.shared
     @State private var key = ""
+    @State private var source = "netease"
     @State private var results: [NeTrack] = []
+    @State private var qqResults: [QQMusic.Track] = []
     @State private var searching = false
     @State private var problem: String?
     @State private var sharing: MusicLibrary.Song?
 
     var body: some View {
         List {
+            Picker("来源", selection: $source) {
+                Text("网易云").tag("netease")
+                Text("QQ 音乐").tag("qq")
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: source) { _, _ in if !key.trimmingCharacters(in: .whitespaces).isEmpty { run() } }
             TextField("搜索歌曲、歌手", text: $key).submitLabel(.search).onSubmit(run)
             if searching { ProgressView() }
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
-            ForEach(Array(results.enumerated()), id: \.offset) { i, t in
-                TrackRow(title: t.title, artist: [t.artist, t.album].filter { !$0.isEmpty }.joined(separator: " · "), cover: t.cover,
-                         right: AnyView(Menu {
-                             Button("收入本机曲库") { _ = try? MusicLibrary.fromNetease(t) }
-                             Button("分享到会话") { sharing = try? MusicLibrary.fromNetease(t) }
-                         } label: { Image(systemName: "ellipsis") })) {
-                    player.play(neSongs(results), at: i)
+            if source == "netease" {
+                ForEach(Array(results.enumerated()), id: \.offset) { i, t in
+                    TrackRow(title: t.title, artist: [t.artist, t.album].filter { !$0.isEmpty }.joined(separator: " · "), cover: t.cover,
+                             right: AnyView(Menu {
+                                 Button("收入本机曲库") { _ = try? MusicLibrary.fromNetease(t) }
+                                 Button("分享到会话") { sharing = try? MusicLibrary.fromNetease(t) }
+                             } label: { Image(systemName: "ellipsis") })) {
+                        player.play(neSongs(results), at: i)
+                    }
+                }
+            } else {
+                ForEach(Array(qqResults.enumerated()), id: \.offset) { i, t in
+                    TrackRow(title: t.title, artist: t.artist, cover: t.cover,
+                             right: AnyView(Menu {
+                                 Button("收入本机曲库") { _ = try? MusicLibrary.fromQQ(t) }
+                                 Button("分享到会话") { sharing = try? MusicLibrary.fromQQ(t) }
+                             } label: { Image(systemName: "ellipsis") })) {
+                        player.play(qqSongs(qqResults), at: i)
+                    }
                 }
             }
-            if results.isEmpty && !searching {
-                Text("输入关键词后按回车开始搜索。点击结果即可播放。").font(.footnote).foregroundStyle(Theme.secondaryText)
+            if results.isEmpty && qqResults.isEmpty && !searching {
+                Text(source == "qq" && !QQMusic.loggedIn()
+                     ? "未登录 QQ 音乐也可以搜索；播放取不到地址时，在「设置 - 音乐服务」登录 QQ 音乐后再试。"
+                     : "输入关键词后按回车开始搜索。点击结果即可播放。")
+                    .font(.footnote).foregroundStyle(Theme.secondaryText)
             }
         }
         .sheet(item: $sharing) { s in NavigationStack { ShareSongView(song: s) } }
@@ -210,13 +234,19 @@ struct MusicSearchView: View {
         guard !k.isEmpty else { return }
         searching = true
         problem = nil
-        Task {
-            do { results = try await Netease.search(k); if results.isEmpty { problem = "没有匹配的歌曲" } }
-            catch { problem = "搜索失败：\(error.localizedDescription)" }
+        let src = source
+        Task { @MainActor in
+            do {
+                if src == "qq" { qqResults = try await QQMusic.search(k); results = []; if qqResults.isEmpty { problem = "没有匹配的歌曲" } }
+                else { results = try await Netease.search(k); qqResults = []; if results.isEmpty { problem = "没有匹配的歌曲" } }
+            } catch { problem = "搜索失败：\(error.localizedDescription)" }
             searching = false
         }
     }
 }
+
+/// QQ 音乐的结果收进曲库再交给播放器（收过的不重复收）
+func qqSongs(_ list: [QQMusic.Track]) -> [MusicLibrary.Song] { list.compactMap { try? MusicLibrary.fromQQ($0) } }
 
 /// 选一段会话，把这首歌分享过去。
 struct ShareSongView: View {
@@ -346,10 +376,10 @@ struct LibraryView: View {
             }
             Section("歌曲 · \(songs.count)") {
                 ForEach(Array(songs.enumerated()), id: \.offset) { i, s in
-                    TrackRow(title: s.title, artist: s.source == "netease" ? "网易云" + (s.artist.isEmpty ? "" : " · \(s.artist)") : "本机文件" + (s.artist.isEmpty ? "" : " · \(s.artist)"),
+                    TrackRow(title: s.title, artist: (s.source == "netease" ? "网易云" : s.source == "qq" ? "QQ 音乐" : "本机文件") + (s.artist.isEmpty ? "" : " · \(s.artist)"),
                              cover: s.cover, right: AnyView(Menu {
                                  Button("分享到会话") { sharing = s }
-                                 Button(s.source == "netease" ? "编辑歌词" : "编辑") { editing = .song(s.id) }
+                                 Button(s.source == "netease" || s.source == "qq" ? "编辑歌词" : "编辑") { editing = .song(s.id) }
                                  Button("移除", role: .destructive) { try? MusicLibrary.remove(s.id); reload() }
                              } label: { Image(systemName: "ellipsis") })) {
                         player.play(songs, at: i)
@@ -447,11 +477,11 @@ struct SongEditView: View {
     private var song: MusicLibrary.Song? { if case .song(let id) = target { return MusicLibrary.song(id) }; return nil }
 
     var body: some View {
-        let netease = song?.source == "netease"
+        let netease = song?.source == "netease" || song?.source == "qq"
         Form {
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             if netease {
-                Text("该曲目来自网易云，名称、歌手与播放地址以网易云为准，此处只能编辑歌词。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                Text("该曲目来自\(song?.source == "qq" ? "QQ 音乐" : "网易云")，名称、歌手与播放地址以那边为准，此处只能编辑歌词。").font(.footnote).foregroundStyle(Theme.secondaryText)
             } else {
                 Section {
                     TextField("歌曲名称", text: $title)
@@ -714,6 +744,7 @@ struct NeLoginView: View {
 struct MusicSettingsView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var login = false
+    @State private var qqLogin = false
     @State private var problem: String?
 
     var body: some View {
@@ -735,6 +766,21 @@ struct MusicSettingsView: View {
                 HelpNote("原生版直接连接网易云，不需要另外部署接口服务器。登录后可读最近播放与歌单，在本机播放的歌曲会记入该账号的听歌记录。")
             }
             Section {
+                if QQMusic.loggedIn(model.s) {
+                    LabeledContent("已登录", value: "QQ 号 \(QQMusic.uin(model.s))")
+                    Button("退出登录", role: .destructive) {
+                        do { try QQMusic.logout(); model.reload() } catch { problem = error.localizedDescription }
+                    }
+                } else {
+                    Button("扫码登录 QQ 音乐") { qqLogin = true }
+                }
+            } header: {
+                Text("我的 QQ 音乐账号")
+            } footer: {
+                Text("非官方接入，QQ 音乐改版后可能暂时不能用。")
+                HelpNote("原生版直接连接 QQ 音乐，走的是 QQ 音乐网页与客户端自己用的接口，不是公开接口。用手机 QQ 扫码登录；登录信息只存在本机。登录后可以播放、读自己建的歌单；会员歌曲需要会员账号。网易云找不到角色点的歌时，会到 QQ 音乐找。QQ 音乐的歌导出给网页版时只保留名称与歌手。", title: "QQ 音乐")
+            }
+            Section {
                 TextField("来源地址 realIP（可不填）", text: realIPBinding).keyboardType(.numbersAndPunctuation)
             } footer: {
                 HelpNote("网易云按出口 IP 风控（提示 -462）时，填一个中国大陆 IP 后重试。未填写时用本机随机生成的一个国内 IP。")
@@ -754,6 +800,9 @@ struct MusicSettingsView: View {
         .navigationTitle("音乐服务")
         .sheet(isPresented: $login, onDismiss: { model.reload() }) {
             NavigationStack { NeLoginView(charId: "") { login = false } }
+        }
+        .sheet(isPresented: $qqLogin, onDismiss: { model.reload() }) {
+            NavigationStack { QQLoginView { qqLogin = false } }
         }
     }
 
@@ -917,6 +966,133 @@ struct SongPickView: View {
             do { results = try await Netease.search(k); if results.isEmpty { problem = "没有匹配的歌曲" } }
             catch { problem = "搜索失败：\(error.localizedDescription)" }
             searching = false
+        }
+    }
+}
+
+/// QQ 音乐扫码登录：显示二维码，每两秒问一次进度；确认之后换成 QQ 音乐的登录信息。每一步出错都写在屏幕上
+struct QQLoginView: View {
+    var done: () -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var qr: QQMusic.QR?
+    @State private var status = "正在取二维码"
+    @State private var problem: String?
+    @State private var job: Task<Void, Never>?
+
+    var body: some View {
+        VStack(spacing: Theme.sp4) {
+            if let qr, let img = UIImage(data: qr.image) {
+                Image(uiImage: img).interpolation(.none).resizable().scaledToFit().frame(width: 220, height: 220)
+                    .padding(Theme.sp3).background(Color.white, in: RoundedRectangle(cornerRadius: Theme.rMd))
+            } else {
+                ProgressView().frame(width: 220, height: 220)
+            }
+            Text(status).font(.footnote).foregroundStyle(Theme.secondaryText)
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger).multilineTextAlignment(.center) }
+            Text("用手机 QQ 扫描二维码，在手机上确认登录。可以截图后在手机 QQ 里从相册识别。")
+                .font(.footnote).foregroundStyle(Theme.secondaryText).multilineTextAlignment(.center)
+            Button("换一张") { start() }
+            Spacer()
+        }
+        .padding(Theme.pad)
+        .navigationTitle("登录 QQ 音乐")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消") { job?.cancel(); dismiss() } } }
+        .onAppear(perform: start)
+        .onDisappear { job?.cancel() }
+    }
+
+    private func start() {
+        job?.cancel()
+        problem = nil
+        qr = nil
+        status = "正在取二维码"
+        job = Task { @MainActor in
+            do {
+                let q = try await QQMusic.qrStart()
+                qr = q
+                status = "等待扫码"
+                while !Task.isCancelled {
+                    try await Task.sleep(nanoseconds: 2_000_000_000)
+                    let r = try await QQMusic.qrCheck(q.qrsig)
+                    switch r.state {
+                    case .waiting: status = "等待扫码"
+                    case .scanned: status = "已扫码，请在手机上确认"
+                    case .expired: status = "二维码已过期，点「换一张」"; return
+                    case .failed(let m): problem = m; return
+                    case .done(let url):
+                        status = "正在完成登录"
+                        _ = try await QQMusic.finishLogin(checkSigURL: url, cookies: r.cookies)
+                        done()
+                        return
+                    }
+                }
+            } catch is CancellationError {
+            } catch { problem = error.localizedDescription; status = "未能登录" }
+        }
+    }
+}
+
+/// QQ 音乐的一张歌单：读出来点一首就放
+struct QQPlaylistView: View {
+    let id: String
+    var name = ""
+    @ObservedObject private var player = MusicPlayer.shared
+    @State private var tracks: [QQMusic.Track] = []
+    @State private var title = ""
+    @State private var problem: String?
+    @State private var loading = true
+
+    var body: some View {
+        List {
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+            if loading { ProgressView() }
+            if !tracks.isEmpty {
+                Button("全部播放（共 \(tracks.count) 首）") { player.play(qqSongs(tracks), at: 0) }
+            }
+            ForEach(Array(tracks.enumerated()), id: \.offset) { i, t in
+                TrackRow(title: t.title, artist: t.artist, cover: t.cover) { player.play(qqSongs(tracks), at: i) }
+            }
+        }
+        .navigationTitle(title.isEmpty ? (name.isEmpty ? "歌单" : name) : title)
+        .task {
+            do { let r = try await QQMusic.playlistTracks(id); tracks = r.tracks; title = r.name; problem = tracks.isEmpty ? "这张歌单是空的，或者不公开" : nil }
+            catch { problem = error.localizedDescription }
+            loading = false
+        }
+    }
+}
+
+/// 首页里的 QQ 音乐一块：登录了列出自己建的歌单；也可以贴一张歌单的链接打开
+struct QQMusicSection: View {
+    @State private var lists: [QQMusic.Playlist] = []
+    @State private var problem: String?
+    @State private var link = ""
+
+    var body: some View {
+        Section {
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+            ForEach(lists) { l in
+                NavigationLink { QQPlaylistView(id: l.id, name: l.name) } label: {
+                    HStack {
+                        CoverView(url: l.cover.replacingOccurrences(of: "http://", with: "https://"), name: l.name, size: 44)
+                        VStack(alignment: .leading) {
+                            Text(l.name)
+                            Text("\(l.count) 首").font(.footnote).foregroundStyle(Theme.secondaryText)
+                        }
+                    }
+                }
+            }
+            TextField("粘贴 QQ 音乐歌单链接或编号", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
+            if let id = QQMusic.playlistId(link) {
+                NavigationLink { QQPlaylistView(id: id) } label: { Text("打开这张歌单（\(id)）") }
+            } else if !link.trimmingCharacters(in: .whitespaces).isEmpty {
+                Text("没有从这段文字里认出歌单编号").font(.footnote).foregroundStyle(Theme.secondaryText)
+            }
+        } header: { Text("QQ 音乐") }
+        .task {
+            guard QQMusic.loggedIn() else { return }
+            do { lists = try await QQMusic.myPlaylists() } catch { problem = error.localizedDescription }
         }
     }
 }

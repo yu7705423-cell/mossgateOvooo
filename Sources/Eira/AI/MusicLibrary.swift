@@ -16,6 +16,8 @@ enum MusicLibrary {
         var artist: String { row.string("artist") }
         var source: String { row.string("source").isEmpty ? "local" : row.string("source") }
         var neteaseId: String { row.string("neteaseId") }
+        /// QQ 音乐的歌（原生版独有，source 为 qq）。网页版读到时只剩名字与歌手
+        var qqMid: String { row.string("qqMid") }
         var audioId: String { row.string("audioId") }
         var url: String { row.string("url") }
         var cover: String { row.string("cover") }
@@ -41,6 +43,19 @@ enum MusicLibrary {
             "title": .string(String(t.title.prefix(60))), "artist": .string(String(t.artist.prefix(40))), "url": .string(""),
             "audioId": .null, "lyric": .string(""), "coverId": .null, "seconds": .number(Double(t.seconds)),
             "source": .string("netease"), "neteaseId": .string(t.id), "cover": .string(t.cover),
+        ])
+        try Database.shared.put("songs", row)
+        return Song(row: row)
+    }
+
+    /// 收一首 QQ 音乐的歌。已经收过的不重复收
+    @discardableResult
+    static func fromQQ(_ t: QQMusic.Track) throws -> Song {
+        if let s = try songs().first(where: { $0.source == "qq" && $0.qqMid == t.mid }) { return s }
+        let row = Row.new(prefix: "song", [
+            "title": .string(String(t.title.prefix(60))), "artist": .string(String(t.artist.prefix(40))), "url": .string(""),
+            "audioId": .null, "lyric": .string(""), "coverId": .null, "seconds": .number(Double(t.seconds)),
+            "source": .string("qq"), "qqMid": .string(t.mid), "qqId": .number(Double(t.songId)), "cover": .string(t.cover),
         ])
         try Database.shared.put("songs", row)
         return Song(row: row)
@@ -88,7 +103,7 @@ enum MusicLibrary {
     /// 改一首（网页版 updateSong）：网易云的只改歌词，名称、歌手与地址以网易云为准
     static func edit(_ id: String, title: String, artist: String, url: String, lyric: String) throws {
         guard let s = song(id) else { throw StoreError(message: "这首歌已不在曲库中") }
-        if s.source == "netease" { try update(id, ["lyric": .string(lyric)]); return }
+        if s.source == "netease" || s.source == "qq" { try update(id, ["lyric": .string(lyric)]); return }
         let t = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
         guard !t.isEmpty else { throw StoreError(message: "请填写歌曲名称") }
         let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -189,9 +204,15 @@ enum MusicLibrary {
     static func resolve(_ q: String) async -> Song? {
         if let s = findLocal(q) { return s }
         let (title, artist) = splitQuery(q)
-        guard let list = try? await Netease.search([title, artist].filter { !$0.isEmpty }.joined(separator: " "), limit: 5), !list.isEmpty else { return nil }
+        let q2 = [title, artist].filter { !$0.isEmpty }.joined(separator: " ")
+        if let list = try? await Netease.search(q2, limit: 5), !list.isEmpty {
+            let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
+            return try? fromNetease(pick)
+        }
+        // 网易云找不到时，登录了 QQ 音乐就到那边找
+        guard QQMusic.loggedIn(), let list = try? await QQMusic.search(q2, limit: 5), !list.isEmpty else { return nil }
         let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
-        return try? fromNetease(pick)
+        return try? fromQQ(pick)
     }
 
     // MARK: - 歌词
@@ -231,6 +252,11 @@ enum MusicLibrary {
     /// 歌词：本机写了就用本机的，网易云的歌去网易云取。
     static func lyricOf(_ s: Song) async -> (lines: [Line], pure: Bool) {
         if !s.lyric.isEmpty { return (merge(parseLyric(s.lyric), []), false) }
+        if !s.qqMid.isEmpty {
+            guard let r = try? await QQMusic.lyric(s.qqMid) else { return ([], false) }
+            let lines = merge(parseLyric(r.lrc), parseLyric(r.trans))
+            return (lines, lines.count <= 2 && r.lrc.contains("纯音乐"))
+        }
         guard !s.neteaseId.isEmpty, let r = try? await Netease.lyric(s.neteaseId) else { return ([], false) }
         let lines = merge(parseLyric(r.lrc), parseLyric(r.tlrc))
         return (lines, r.pure || (lines.count <= 2 && r.lrc.contains("纯音乐")))
@@ -374,6 +400,7 @@ final class MusicPlayer: ObservableObject {
         if !s.url.isEmpty, let u = URL(string: s.url) { return u }
         if !s.audioId.isEmpty, let u = MediaStore.url(.files, id: s.audioId) { return u }
         if !s.neteaseId.isEmpty, let u = URL(string: try await Netease.songUrl(s.neteaseId)) { return u }
+        if !s.qqMid.isEmpty, let u = URL(string: try await QQMusic.songUrl(s.qqMid)) { return u }
         throw StoreError(message: "这首歌放不出来")
     }
 
