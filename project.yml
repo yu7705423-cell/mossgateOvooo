@@ -42,6 +42,7 @@ targets:
         BGTaskSchedulerPermittedIdentifiers:
           - eira.bgpush.refresh
         NSMicrophoneUsageDescription: 录制发送给角色的语音消息。
+        NSCameraUsageDescription: 视频通话时显示你这边的画面；识图交给聊天模型时，画面随你说的话一起发给角色。
         NSSpeechRecognitionUsageDescription: 未配置语音识别接口时，用系统识别把语音消息转成文字。
     settings:
       base:

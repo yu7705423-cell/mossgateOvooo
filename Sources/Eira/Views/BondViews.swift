@@ -261,8 +261,13 @@ struct BadgesView: View {
     @State private var chat: Chat?
     @State private var show = true
     @State private var aware = false
+    @State private var remind = true
+    @State private var hour = 21
     @State private var loaded = false
     @State private var problem: String?
+    @State private var granting = false
+    @State private var awardName = ""
+    @State private var awardReason = ""
 
     var body: some View {
         List {
@@ -270,6 +275,10 @@ struct BadgesView: View {
             Section {
                 Toggle("显示标识", isOn: $show)
                 Toggle("让角色知道", isOn: $aware)
+                Toggle("火花快熄灭时提醒", isOn: $remind)
+                if remind {
+                    Stepper("提醒时间 \(hour):00", value: $hour, in: 0...23)
+                }
                 HelpNote("显示标识：在会话顶部的名字后面显示火花与连续互发的天数。让角色知道：连续互发的天数、今天是否已经互发、等级与刚解锁的标识写进提示词，默认关闭。标识全部在本机按聊天记录计算，不调用接口。一天里你与角色都至少发过一条，这一天才算互发。", title: "互动标识")
                 Button("重新统计") {
                     do { try Badges.sync(chatId, full: true); reload() } catch { problem = "统计失败：\(error.localizedDescription)" }
@@ -284,10 +293,20 @@ struct BadgesView: View {
             reload()
             show = Badges.shown(chat)
             aware = Badges.aware(chat)
+            remind = Badges.remindOn(chat)
+            hour = Badges.remindHour(chat)
             loaded = true
         }
         .onChange(of: show) { _, v in set("badgeShow", v) }
         .onChange(of: aware) { _, v in set("badgeAware", v) }
+        .onChange(of: remind) { _, v in set("badgeRemind", v) }
+        .onChange(of: hour) { _, v in setValue("badgeRemindHour", .number(Double(v))) }
+        .alert("颁发一枚标识", isPresented: $granting) {
+            TextField("名字（24 字以内）", text: $awardName)
+            TextField("理由（可不填）", text: $awardReason)
+            Button("颁发") { grant() }
+            Button("取消", role: .cancel) {}
+        }
     }
 
     @ViewBuilder
@@ -306,6 +325,26 @@ struct BadgesView: View {
         Section("等级") {
             row(lv.name, "第 \(lv.level) / \(lv.max) 级")
             ProgressView(value: lv.progress)
+            NavigationLink("等级名称") { LevelNamesView(chatId: chatId) }
+            NavigationLink("年度回顾") { YearReviewView(chatId: chatId) }
+        }
+        let aws = Badges.awards(chat)
+        Section("颁发") {
+            ForEach(aws) { a in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(a.name)
+                    Text([a.by == "me" ? "你颁发" : "\(charName(a.by))颁发", a.reason, BadgeTime.day(a.at)].filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(.footnote).foregroundStyle(Theme.text2)
+                }
+                .swipeActions {
+                    Button("收回", role: .destructive) {
+                        do { try Badges.dropAward(chatId, id: a.id); reload() } catch { problem = "未能收回：\(error.localizedDescription)" }
+                    }
+                }
+            }
+            if aws.isEmpty { Text("尚无颁发的标识。").foregroundStyle(Theme.text2) }
+            Button("颁发一枚") { awardName = ""; awardReason = ""; granting = true }
+            HelpNote("颁发的标识记在这段对话里，左滑可以收回。角色在回复中写 [授予：名字｜理由] 时同样记进这里；删掉那一条消息时一并收回。每一枚都计入等级。", title: "颁发标识")
         }
         Section("成长") {
             ForEach(Badges.tiers.filter { !$0.onlyLove || (chat.row.number("loveStartAt") ?? 0) > 0 }, id: \.id) { t in
@@ -343,10 +382,127 @@ struct BadgesView: View {
 
     private func reload() { chat = (try? Repo.chat(chatId)) ?? nil }
 
+    private func charName(_ id: String) -> String { ((try? Repo.character(id)) ?? nil)?.name ?? "角色" }
+
+    private func grant() {
+        let to = chat?.characterIds.first ?? ""
+        do {
+            guard try Badges.addAward(chatId, name: awardName, reason: awardReason, by: "me", to: to) != nil else { problem = "请填写名字"; return }
+            reload()
+        } catch { problem = "未能颁发：\(error.localizedDescription)" }
+    }
+
+    private func setValue(_ key: String, _ v: JSONValue) {
+        guard loaded, var c = (try? Repo.chat(chatId)) ?? nil else { return }
+        c.row[key] = v
+        c.row.touch()
+        do { try Repo.save(c); reload() } catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+
     private func set(_ key: String, _ v: Bool) {
         guard loaded, var c = (try? Repo.chat(chatId)) ?? nil else { return }
         c.row[key] = .bool(v)
         c.row.touch()
         do { try Repo.save(c); reload() } catch { problem = "保存失败：\(error.localizedDescription)" }
     }
+}
+
+/// 每一级叫什么由用户自己填（网页版 chat.levelNames），系统不替人定义关系
+struct LevelNamesView: View {
+    let chatId: String
+    @State private var names: [String] = Array(repeating: "", count: Badges.levels.count)
+    @State private var problem: String?
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(names.indices, id: \.self) { i in
+                    TextField("第 \(i + 1) 级", text: $names[i])
+                }
+                HelpNote("等级按连续互发、消息数、通话与一起听的时长、相识天数、解锁与颁发的标识合成，共六级。名称空着时显示「第几级」。", title: "等级名称")
+            }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle("等级名称")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let cur = (((try? Repo.chat(chatId)) ?? nil)?.row["levelNames"]?.array ?? []).compactMap(\.string)
+            names = (0..<Badges.levels.count).map { $0 < cur.count ? cur[$0] : "" }
+        }
+        .onDisappear {
+            do { try Badges.setLevelNames(chatId, names) } catch { Problems.report("等级名称未能保存：\(error.localizedDescription)") }
+        }
+    }
+}
+
+/// 年度回顾（网页版 yearOf）：全部在本机按聊天记录算，不调接口
+struct YearReviewView: View {
+    let chatId: String
+    @State private var year = Calendar.current.component(.year, from: Date())
+    @State private var data: Badges.Year?
+    @State private var years: [Int] = []
+
+    var body: some View {
+        List {
+            if years.count > 1 {
+                Picker("年份", selection: $year) { ForEach(years, id: \.self) { Text(String($0)).tag($0) } }
+            }
+            if let d = data {
+                Section("这一年") {
+                    row("消息", "\(d.n) 条（你 \(d.nU)，对方 \(d.nC)）")
+                    row("有消息的日子", "\(d.activeDays) 天")
+                    row("互发的日子", "\(d.bothDays) 天")
+                    row("最长连续互发", "\(d.bestStreak) 天")
+                    if let b = d.busiest { row("聊得最多的一天", "\(BadgeTime.day(b.at)) · \(b.n) 条") }
+                    if let l = d.latest { row("最晚的一次", BadgeTime.clock(l)) }
+                }
+                if !d.words.isEmpty {
+                    Section("最常说的词") {
+                        ForEach(d.words.indices, id: \.self) { i in row(d.words[i].w, "\(d.words[i].n) 次") }
+                    }
+                }
+                if !d.unlocked.isEmpty || !d.limited.isEmpty || !d.awards.isEmpty {
+                    Section("这一年得到的标识") {
+                        ForEach(d.unlocked + d.limited, id: \.self) { id in Text(Badges.label(id)) }
+                        ForEach(d.awards) { a in Text(a.name) }
+                    }
+                }
+                if d.n == 0 { Text("这一年没有消息。").foregroundStyle(Theme.text2) }
+            } else {
+                ProgressView()
+            }
+        }
+        .navigationTitle("年度回顾")
+        .navigationBarTitleDisplayMode(.inline)
+        .task(id: year) { await load() }
+    }
+
+    private func row(_ k: String, _ v: String) -> some View {
+        HStack { Text(k); Spacer(); Text(v).foregroundStyle(Theme.text2) }
+    }
+
+    private func load() async {
+        guard let chat = (try? Repo.chat(chatId)) ?? nil else { return }
+        let msgs = (try? Repo.messages(chatId: chatId)) ?? []
+        if years.isEmpty {
+            let cal = Calendar.current
+            let ys = Set(msgs.map { cal.component(.year, from: Date(millis: $0.createdAt)) })
+            years = ys.isEmpty ? [year] : ys.sorted(by: >)
+            if !years.contains(year), let f = years.first { year = f; return }
+        }
+        data = Badges.yearOf(chat, msgs: msgs, year: year)
+    }
+}
+
+private enum BadgeTime {
+    private static func make(_ fmt: String) -> DateFormatter {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = fmt
+        return f
+    }
+    private static let ymd = make("yyyy年M月d日"), hm = make("HH:mm")
+    static func day(_ t: Double) -> String { t > 0 ? ymd.string(from: Date(millis: t)) : "" }
+    /// 哪一天的几点
+    static func clock(_ t: Double) -> String { "\(day(t)) \(hm.string(from: Date(millis: t)))" }
 }

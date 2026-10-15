@@ -416,8 +416,8 @@ enum ChatEngine {
             // 角色打电话过来：正看着这段对话就响铃，否则记一条未接来电。群里没有一个对象可以接
             let off = (AppSettings.load().raw["capsOff"]?.array ?? []).compactMap(\.string)
             guard !chat.isGroup, char.row["canCall"]?.bool != false, !off.contains("ring") else { return nil }
-            let chatId = chat.id, charId = char.id
-            Task { @MainActor in CallEngine.ring(chatId: chatId, charId: charId) }
+            let chatId = chat.id, charId = char.id, video = p.flag
+            Task { @MainActor in CallEngine.ring(chatId: chatId, charId: charId, video: video) }
             return nil
         case .keep:
             // 往自己那台手机的相册存一张。你刚发过来的那张图就是它要存的那张（同一个 id，不另拷一份）
@@ -531,6 +531,13 @@ enum ChatEngine {
             m = make("card", HtmlCard.block(name: p.text, values: values, fields: fields))
             m.row["card"] = .object(["name": .string(p.text), "bookId": .string(entry?.bookId ?? ""),
                                      "entryId": .string(entry?.id ?? ""), "values": .object(values)])
+        case .award:
+            // 角色颁给你的一枚标识：消息照常落一条（历史里看得见），标识记在会话的收藏里（网页版 badges.addAward）
+            let name = String(p.text.prefix(24)), reason = p.extra ?? ""
+            m = make("award", "[授予：\(name)\(reason.isEmpty ? "" : "｜" + reason)]")
+            m.row["awardName"] = .string(name)
+            m.row["awardReason"] = .string(reason)
+            _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
         case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
         }

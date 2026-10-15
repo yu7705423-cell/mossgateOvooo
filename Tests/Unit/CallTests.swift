@@ -24,8 +24,42 @@ final class CallTests: StoreTestCase {
         let p = try CallEngine.prepare(chat: chat, char: XCTUnwrap(Repo.character("char_a")))
         XCTAssertTrue(p.system.contains("[正在通话中]"))
         XCTAssertTrue(p.system.contains("a phone call"))
-        // 通话里不夹译文
-        XCTAssertFalse(p.system.contains("[译文"))
+        // 设了翻译语言：每句后面跟 [译文：…]，同一次回复里写（网页版 4.633）；聊天那一段「顺带给出译文」不进通话
+        XCTAssertTrue(p.system.contains("[译文：<that sentence in English>]"))
+        XCTAssertFalse(p.system.contains("[顺带给出译文]"))
+        XCTAssertTrue(p.system.contains("Use no bracketed markers of any kind"))
+        chat.row["translateTo"] = .string("")
+        let plain = try CallEngine.prepare(chat: chat, char: XCTUnwrap(Repo.character("char_a")))
+        XCTAssertTrue(plain.system.contains("Do not repeat your line or add a translation"))
+    }
+
+    func testVideoCall() async throws {
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let p = try CallEngine.prepare(chat: chat, char: XCTUnwrap(Repo.character("char_a")), video: true)
+        XCTAssertTrue(p.system.contains("a video call"))
+        XCTAssertTrue(p.system.contains("[动作：…]"))
+        XCTAssertTrue(p.system.contains("frames from their camera"))
+        // 画面挂在我最后那句上，一轮仍是一次请求
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("[动作：挥手]你好")) }
+        let frame = AIImage(mediaType: "image/jpeg", base64: "AAAA")
+        _ = try await CallEngine.turn(p, lines: [.init(role: "user", text: "看得见吗")], image: frame)
+        XCTAssertEqual(MockNet.count, 1)
+        let body = try XCTUnwrap(MockNet.requests.first?.httpBodyStreamData())
+        XCTAssertTrue(String(decoding: body, as: UTF8.self).contains("AAAA"))
+
+        // 动作不念、字幕里换成括号；译文不念、另起一行
+        let line = "[动作：挥手]你好 [译文：Hello]"
+        XCTAssertEqual(CallEngine.speakable(line), "你好")
+        XCTAssertEqual(CallEngine.subtitle(line), "（挥手）你好\nHello")
+        XCTAssertEqual(CallEngine.lastAct(line), "挥手")
+        XCTAssertEqual(CallEngine.speakable("好的[动"), "好的")
+        XCTAssertEqual(CallEngine.label(direction: "in", outcome: "missed", seconds: 0, video: true), "未接视频通话")
+
+        let m = try CallEngine.finish(chatId: "chat_a", charId: "char_a", direction: "out", outcome: "done", seconds: 65,
+                                      lines: [.init(role: "char", text: line)], userName: "小于", charName: "林", video: true)
+        XCTAssertTrue(m.content.hasPrefix("[视频通话 01:05]"))
+        XCTAssertEqual(m.row["callKind"], .string("video"))
+        XCTAssertTrue(m.content.contains("（挥手）"))
     }
 
     func testTurnIsOneRequestWithCap() async throws {

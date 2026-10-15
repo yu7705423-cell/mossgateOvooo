@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 格子多了一屏放不下，分两层：常用的留在面板上，其余收进「更多」。哪些留在面板上、按什么顺序由用户自己定，代码只给默认。
 /// 顺序（settings.panelOrder）与「在不在更多里」（settings.panelMore）分开存，和网页版同两个键：挪进挪出都不动顺序。
-/// 原生版还没有的格子（一起看、申请、视频通话……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
+/// 原生版还没有的格子（一起看、申请……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
 enum Panel {
     struct Item: Identifiable, Equatable {
         let id: String
@@ -18,6 +18,7 @@ enum Panel {
         Item(id: "voice", icon: "mic", label: "语音"),
         Item(id: "transfer", icon: "wallet", label: "转账"),
         Item(id: "call", icon: "phone", label: "通话"),
+        Item(id: "video", icon: "film", label: "视频通话"),
         Item(id: "gift", icon: "gift", label: "礼物"),
         Item(id: "location", icon: "map", label: "位置"),
         Item(id: "listen", icon: "headphone", label: "一起听"),
@@ -32,7 +33,7 @@ enum Panel {
 
     private static let all = items.map(\.id)
     /// 默认收进「更多」的：网页版 DEFAULT_MORE 里原生版也有的那几格
-    static let defaultMore = ["lore", "dice", "file", "share"]
+    static let defaultMore = ["lore", "video", "dice", "file", "share"]
     /// 群里说得通的那几格（网页版 GROUP_TAPS）：转账、礼物、通话这些都是对着一个人的
     static let groupOK: Set<String> = ["photo", "voice", "dice", "song", "offline"]
 

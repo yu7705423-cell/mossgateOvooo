@@ -401,11 +401,11 @@ enum ChatPrompt {
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
-    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "narration", "inner", "ties"]
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "narration", "inner", "ties"]
 
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
@@ -534,6 +534,11 @@ enum ChatPrompt {
         cap("drafts", on: Drafts.on(chat), hot: used(#"[\[【]草稿"#),
             line: "Keep words you wrote but did not send: a line on its own, [草稿：the unsent words]") {
             Templates.get("skeleton.drafts", settings: s)
+        }
+        // 颁发标识（网页版 capabilities.js 的 award）：角色卡上没关就有
+        cap("award", on: char.row["canAward"]?.bool != false, hot: used(#"^award$|[\[【]授予[:：]"#),
+            line: "Give them a badge: write a line on its own, [授予：badge name｜reason]") {
+            Templates.get("skeleton.award", settings: s)
         }
         // HTML 卡片（网页版 capabilities.js 的 card）：世界书里的卡片条目，常驻的或这一轮扫到关键词的才有，有就给整段
         let cardHits = HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s)

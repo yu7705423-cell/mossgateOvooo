@@ -10,6 +10,11 @@ final class CallSession: ObservableObject {
     let char: Character
     /// out：我打出去；in：角色打进来（响铃，接了才接通）
     let direction: String
+    /// 视频通话：角色把看得见的动作写成 [动作：…]；我这边开了摄像头、识图交给聊天模型时，角色看得见画面
+    let video: Bool
+    /// 我这边用真实摄像头，而不是头像（记住上次怎么选的，网页版 callSelfReal）
+    @Published var selfReal: Bool
+    let camera = CallCamera()
     @Published var phase: Phase = .connecting
     @Published var lines: [CallEngine.Line] = []
     @Published var draft = ""
@@ -27,12 +32,15 @@ final class CallSession: ObservableObject {
     private var startedAt: Date?
     private let synth = AVSpeechSynthesizer()
     private var finished = false
+    private var framedAt: Date?
     let recorder = VoiceRecorder()
 
-    init(chatId: String, char: Character, incoming: Bool = false) {
+    init(chatId: String, char: Character, incoming: Bool = false, video: Bool = false) {
         self.chatId = chatId
         self.char = char
         self.direction = incoming ? "in" : "out"
+        self.video = video
+        selfReal = AppSettings.load().raw["callSelfReal"]?.bool == true
         if incoming { phase = .ringing }
         // 喇叭：默认关，按了才记住开着（网页版 callSpeak === true）。开着且有音色时每句走一次语音合成接口，
         // 是会多花钱的那一种，登记在 ExtraCalls 的 callVoice（第 15 条：默认关）
@@ -70,7 +78,7 @@ final class CallSession: ObservableObject {
         guard phase == .connecting else { return }
         do {
             guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
-            prepared = try CallEngine.prepare(chat: chat, char: char)
+            prepared = try CallEngine.prepare(chat: chat, char: char, video: video)
         } catch {
             self.error = "准备通话内容时出错：\(error.localizedDescription)"
             return
@@ -83,8 +91,45 @@ final class CallSession: ObservableObject {
                 self.seconds = Int(Date().timeIntervalSince(at))
             }
         }
+        if video && selfReal { Task { await openCamera() } }
         // 接通之后由角色先开口
         turn(opening: CallEngine.openingLine(outgoing: direction == "out"))
+    }
+
+    /// 角色看不看得见我：视频通话、开着摄像头、识图是「交给聊天模型」那一档（另配识图接口要先多调一次，通话里不用）
+    var charCanSee: Bool { video && selfReal && camera.running && AppSettings.load().visionMode == "chat" }
+
+    /// 开着摄像头却看不见时说清楚为什么
+    var seeWhy: String {
+        guard video && selfReal else { return "" }
+        if AppSettings.load().visionMode != "chat" { return "识图未设为「交给聊天模型」，角色看不到画面。" }
+        return ""
+    }
+
+    private func openCamera() async {
+        do { try await camera.start() }
+        catch {
+            selfReal = false
+            self.error = "打不开摄像头：\(error.localizedDescription)"
+        }
+    }
+
+    /// 我这边给对方看头像还是摄像头
+    func toggleSelf() {
+        selfReal.toggle()
+        SettingsModel.shared.set("callSelfReal", .bool(selfReal))
+        if !selfReal { camera.stop(); return }
+        if phase == .active && video { Task { await openCamera() } }
+    }
+
+    /// 这一轮要不要带一帧画面：两帧之间至少隔 callFrameGap 秒（默认 0，每轮都带）
+    private func frame() -> AIImage? {
+        guard charCanSee else { return nil }
+        let gap = max(0, AppSettings.load().raw["callFrameGap"]?.number ?? 0)
+        if let at = framedAt, Date().timeIntervalSince(at) < gap { return nil }
+        guard let img = camera.grab() else { return nil }
+        framedAt = Date()
+        return img
     }
 
     /// 我说了一句。正在说的那一轮掐掉，已经出现在字幕上的半句留下来。
@@ -103,12 +148,13 @@ final class CallSession: ObservableObject {
     private func turn(opening: String) {
         guard let prepared else { return }
         let snapshot = lines
+        let image = frame()
         thinking = true
         error = nil
         draft = ""
         job = Task {
             do {
-                let text = try await CallEngine.turn(prepared, lines: snapshot, opening: opening) { whole in
+                let text = try await CallEngine.turn(prepared, lines: snapshot, opening: opening, image: image) { whole in
                     Task { @MainActor in
                         guard !Task.isCancelled else { return }
                         self.thinking = false
@@ -133,7 +179,8 @@ final class CallSession: ObservableObject {
 
     /// 念一句：能用语音接口就用这个角色的声音（一轮一次，存进文件挂在这一句上），否则用系统合成，不花钱。
     private func voice(_ text: String, at index: Int) async {
-        let spoken = CallEngine.prose(text)
+        let spoken = CallEngine.speakable(text)
+        guard !spoken.isEmpty else { return }
         let s = AppSettings.load()
         if VoiceGen.canSpeak(char, s), let p = s.activeVoice {
             do {
@@ -214,6 +261,7 @@ final class CallSession: ObservableObject {
         job?.cancel()
         hush()
         recorder.cancel()
+        camera.stop()
         clock?.invalidate()
         let secs = outcome == "done" ? max(1, Int(Date().timeIntervalSince(startedAt ?? Date()))) : 0
         var all = lines
@@ -224,7 +272,7 @@ final class CallSession: ObservableObject {
             let chat = try Repo.chat(chatId)
             let me = try chat.flatMap { c in try Repo.personas().first { $0.id == c.personaId } } ?? Repo.activePersona()
             let m = try CallEngine.finish(chatId: chatId, charId: char.id, direction: direction, outcome: outcome, seconds: secs,
-                                          lines: all, userName: me?.name ?? "", charName: char.name)
+                                          lines: all, userName: me?.name ?? "", charName: char.name, video: video)
             if CallEngine.autoSummary(outcome: outcome, lines: all) {
                 let id = m.id
                 Task.detached {
@@ -242,32 +290,38 @@ final class CallSession: ObservableObject {
 struct CallView: View {
     @StateObject private var session: CallSession
     @ObservedObject private var recorder: VoiceRecorder
+    @ObservedObject private var camera: CallCamera
     @Environment(\.dismiss) private var dismiss
     @State private var typed = ""
     var onEnd: () -> Void
 
-    init(chatId: String, char: Character, incoming: Bool = false, onEnd: @escaping () -> Void) {
-        let s = CallSession(chatId: chatId, char: char, incoming: incoming)
+    init(chatId: String, char: Character, incoming: Bool = false, video: Bool = false, onEnd: @escaping () -> Void) {
+        let s = CallSession(chatId: chatId, char: char, incoming: incoming, video: video)
         _session = StateObject(wrappedValue: s)
         _recorder = ObservedObject(wrappedValue: s.recorder)
+        _camera = ObservedObject(wrappedValue: s.camera)
         self.onEnd = onEnd
     }
 
     var body: some View {
         VStack(spacing: Theme.pad) {
-            VStack(spacing: 6) {
-                Avatar(imageId: session.char.avatar, name: session.char.displayName, size: 72)
-                Text(session.char.displayName).font(.title3)
-                Text(status).font(.footnote.monospacedDigit()).foregroundStyle(Theme.secondaryText)
+            if session.video {
+                screen
+            } else {
+                VStack(spacing: 6) {
+                    Avatar(imageId: session.char.avatar, name: session.char.displayName, size: 72)
+                    Text(session.char.displayName).font(.title3)
+                    Text(status).font(.footnote.monospacedDigit()).foregroundStyle(Theme.secondaryText)
+                }
+                .padding(.top, Theme.pad * 2)
             }
-            .padding(.top, Theme.pad * 2)
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.gap) {
                         ForEach(Array(session.lines.enumerated()), id: \.offset) { _, l in
-                            line(l.role == "user" ? "我" : session.char.displayName, l.text, mine: l.role == "user")
+                            line(l.role == "user" ? "我" : session.char.displayName, CallEngine.subtitle(l.text), mine: l.role == "user")
                         }
-                        if !session.draft.isEmpty { line(session.char.displayName, session.draft, mine: false) }
+                        if !CallEngine.subtitle(session.draft).isEmpty { line(session.char.displayName, CallEngine.subtitle(session.draft), mine: false) }
                         if session.thinking { Text("对方正在说").font(.footnote).foregroundStyle(Theme.tertiaryText) }
                         Color.clear.frame(height: 1).id("end")
                     }
@@ -277,6 +331,9 @@ struct CallView: View {
                 .onChange(of: session.draft) { _, _ in proxy.scrollTo("end") }
             }
             if let e = session.error { Text(e).font(.footnote).foregroundStyle(Theme.danger).padding(.horizontal, Theme.pad) }
+            if !session.seeWhy.isEmpty {
+                Text(session.seeWhy).font(.caption).foregroundStyle(Theme.secondaryText).padding(.horizontal, Theme.pad)
+            }
             if session.speak, !session.voiceWhy.isEmpty {
                 Text(session.voiceWhy).font(.caption).foregroundStyle(Theme.secondaryText).padding(.horizontal, Theme.pad)
             }
@@ -303,6 +360,12 @@ struct CallView: View {
                 }
                 .accessibilityLabel(recorder.recording ? "说完了" : "录一句")
                 .disabled(session.phase != .active || session.transcribing)
+                if session.video {
+                    Button(action: session.toggleSelf) {
+                        Image(systemName: session.selfReal ? "video.fill" : "video.slash").font(.title2)
+                    }
+                    .accessibilityLabel(session.selfReal ? "关闭摄像头" : "打开摄像头")
+                }
                 Button {
                     session.hangUp()
                     onEnd()
@@ -327,11 +390,55 @@ struct CallView: View {
         if recorder.recording { return "正在录音 \(recorder.seconds)\u{2033}" }
         if session.transcribing { return "正在识别" }
         switch session.phase {
-        case .ringing: return "邀请你语音通话"
+        case .ringing: return session.video ? "邀请你视频通话" : "邀请你语音通话"
         case .connecting: return "正在接通"
         case .active: return CallEngine.duration(session.seconds)
         case .ended: return "通话结束"
         }
+    }
+
+    /// 视频通话的画面：对方是头像（或「见面」时的形象），最近一个动作叠在下沿；右上角是我这边
+    private var screen: some View {
+        let act = CallEngine.lastAct(session.draft.isEmpty ? (session.lines.last(where: { $0.role == "char" })?.text ?? "") : session.draft)
+        return ZStack(alignment: .topTrailing) {
+            ZStack(alignment: .bottom) {
+                Group {
+                    if session.char.avatar.isEmpty {
+                        Avatar(imageId: "", name: session.char.displayName, size: 120)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        LocalImage(id: session.char.avatar, maxPixel: 900)
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                            .clipped()
+                    }
+                }
+                VStack(spacing: 4) {
+                    if !act.isEmpty {
+                        Text(act).font(.footnote).multilineTextAlignment(.center)
+                    }
+                    Text("\(session.char.displayName)  \(status)").font(.caption.monospacedDigit())
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, Theme.pad).padding(.vertical, 8)
+                .frame(maxWidth: .infinity)
+                .background(Color.black.opacity(0.45))
+            }
+            Group {
+                if session.selfReal && camera.running {
+                    CameraPreview(session: camera.session)
+                } else {
+                    ZStack {
+                        Theme.bubbleTheirs
+                        Image(systemName: "video.slash").foregroundStyle(Theme.secondaryText)
+                    }
+                }
+            }
+            .frame(width: 90, height: 120)
+            .clipShape(RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+            .padding(Theme.gap)
+        }
+        .frame(height: 320)
+        .background(Theme.bubbleTheirs)
     }
 
     /// 响铃时盖在底部：拒接、接听

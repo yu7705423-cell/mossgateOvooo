@@ -27,21 +27,34 @@ enum CallEngine {
     }
 
     /// 接通时拼一次。聊天记录照常带上，后面不挂此刻的状态与召回。
-    static func prepare(chat: Chat, char: Character) throws -> Prepared {
+    /// 视频通话要说一句是视频：画面挂在对方的话上，不说模型不知道那是摄像头；对方看得见，动作单独写成 [动作：…]（网页版 4.483）。
+    /// 这段对话设了翻译语言时，每句后面跟 [译文：…]，同一次回复里写，不另调接口（网页版 4.633）
+    static func prepare(chat: Chat, char: Character, video: Bool = false) throws -> Prepared {
         let s = AppSettings.load().forChat(chat)
-        let rule = Templates.render("skeleton.call", ["kind": "a phone call", "camera": "",
-                                                       "actions": Templates.get("skeleton.call-voice", settings: s)], settings: s)
+        let lang = transLang(chat)
+        let rule = Templates.render("skeleton.call", [
+            "kind": video ? "a video call" : "a phone call",
+            "camera": video ? "Images attached to their turns are frames from their camera." : "",
+            "actions": Templates.get(video ? "skeleton.call-video" : "skeleton.call-voice", settings: s),
+            "translation": lang.isEmpty ? Templates.get("skeleton.call-notrans", settings: s)
+                : Templates.render("skeleton.call-translate", ["lang": lang], settings: s),
+        ], settings: s)
             .replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
         let built = try ChatPrompt.build(chat: chat, char: char, settings: s, call: (rule: rule, script: ""))
         return Prepared(system: built.system, history: built.messages)
     }
 
     /// 通话中的一轮。opening 是「电话刚接通，你先开口」这一类一次性的指示。
-    static func turn(_ p: Prepared, lines: [Line], opening: String = "",
+    /// image：视频通话里我这边摄像头的那一帧，挂在我最后说的那句上；挂不上就自己起一条（网页版 streamCall）
+    static func turn(_ p: Prepared, lines: [Line], opening: String = "", image: AIImage? = nil,
                      onDelta: @escaping @Sendable (String) -> Void = { _ in }) async throws -> String {
         let talk = lines.map { AIMessage(role: $0.role == "user" ? .user : .assistant, content: $0.text) }
         let tail = opening.isEmpty ? [] : [AIMessage(role: .user, content: opening)]
-        let messages = mergeAdjacent(p.history + talk + tail)
+        var messages = mergeAdjacent(p.history + talk + tail)
+        if let image {
+            if let i = messages.lastIndex(where: { $0.role == .user }) { messages[i].images.append(image) }
+            else { messages.append(AIMessage(role: .user, content: "(this is the view from my side)", images: [image])) }
+        }
         let max = Int(AppSettings.load().raw["callMaxTokens"]?.number ?? 400)
         let r = try await AIService.shared.send(task: "chat.call", system: p.system, messages: messages,
                                                 maxTokens: max, retries: 1, onDelta: onDelta)
@@ -52,14 +65,52 @@ enum CallEngine {
         Templates.render("task.call-open", ["origin": outgoing ? "; they called you" : "; you called them"], settings: .load())
     }
 
-    /// 去掉思考段；语音通话不写动作，写了也只当括号里的一句。
+    /// 去掉思考段。动作与译文原样留着：下一轮还给模型时它看得到自己的写法
     static func clean(_ raw: String) -> String {
         ReplyParser.stripThink(raw).0.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// 存进聊天记录正文的写法：[动作：…] 换成（…）。
     static func prose(_ text: String) -> String {
-        text.replacingOccurrences(of: #"[\[【]\s*动作\s*[:：]\s*([^\]】]*)[\]】]"#, with: "（$1）", options: .regularExpression)
+        text.replacingOccurrences(of: actRe, with: "（$1）", options: .regularExpression)
+    }
+
+    /// 随回复写译文的那一档才在通话里写 [译文：…]：这段对话设了翻译语言
+    static func transLang(_ chat: Chat) -> String {
+        chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+    }
+
+    // 动作与译文（网页版 call.js 的 ACT、TR 与没写完的那半个）
+    static let actRe = #"[\[【]\s*动作\s*[:：]\s*([^\]】]*)[\]】]"#
+    static let transRe = #"[ \t]*[\[【]\s*译文\s*[:：]\s*([^\]】]*)[\]】]"#
+    private static let actHalf = #"[\[【](\s*动(\s*作(\s*[:：][^\]】]*)?)?)?\s*$"#
+    private static let transHalf = #"[\[【](\s*译(\s*文(\s*[:：][^\]】]*)?)?)?\s*$"#
+
+    private static func drop(_ s: String, _ p: String) -> String {
+        s.replacingOccurrences(of: p, with: "", options: .regularExpression)
+    }
+
+    /// 念出来的部分：动作、译文不念，没写完的那半个从开口处起不念
+    static func speakable(_ text: String) -> String {
+        drop(drop(drop(drop(text, transRe), transHalf), actRe), actHalf).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 字幕：动作换成（…），译文另起一行；流式时没写完的半个先不显示
+    static func subtitle(_ text: String) -> String {
+        let t = drop(drop(text, transHalf), actHalf)
+        return prose(t).replacingOccurrences(of: transRe, with: "\n$1", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 最近一个写完的动作（画面上叠着的那一行）
+    static func lastAct(_ text: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: actRe) else { return "" }
+        let ns = text as NSString
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)).reversed() {
+            let v = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            if !v.isEmpty { return v }
+        }
+        return ""
     }
 
     /// 相邻同角色的合成一条：部分接口不接受连续同角色。带图的不合。
@@ -80,30 +131,31 @@ enum CallEngine {
         return String(format: "%02d:%02d", n / 60, n % 60)
     }
 
-    static func label(direction: String, outcome: String, seconds: Int) -> String {
+    static func label(direction: String, outcome: String, seconds: Int, video: Bool = false) -> String {
+        let what = video ? "视频通话" : "语音通话"
         switch outcome {
-        case "done": return "语音通话 \(duration(seconds))"
-        case "missed": return direction == "out" ? "语音通话未接听" : "未接语音通话"
-        case "declined": return direction == "out" ? "语音通话已被拒接" : "语音通话已拒接"
-        default: return "语音通话已取消"
+        case "done": return "\(what) \(duration(seconds))"
+        case "missed": return direction == "out" ? "\(what)未接听" : "未接\(what)"
+        case "declined": return direction == "out" ? "\(what)已被拒接" : "\(what)已拒接"
+        default: return "\(what)已取消"
         }
     }
 
     /// 挂断：合成一条通话记录。接通过、有对白的，按设置写总结（默认开）。
     @discardableResult
     static func finish(chatId: String, charId: String, direction: String, outcome: String, seconds: Int,
-                       lines: [Line], userName: String, charName: String) throws -> Message {
+                       lines: [Line], userName: String, charName: String, video: Bool = false) throws -> Message {
         let me = userName.isEmpty ? "我" : userName
         let body = lines.map { "\($0.role == "user" ? me : (charName.isEmpty ? "对方" : charName))：\(prose($0.text))" }.joined(separator: "\n")
         let out = direction == "out"
         var m = Message.new(chatId: chatId, role: out ? .user : .char, authorId: out ? "me" : charId,
-                            content: "[\(label(direction: direction, outcome: outcome, seconds: seconds))]" + (body.isEmpty ? "" : "\n" + body),
+                            content: "[\(label(direction: direction, outcome: outcome, seconds: seconds, video: video))]" + (body.isEmpty ? "" : "\n" + body),
                             kind: "call")
         m.row["direction"] = .string(direction)
         m.row["outcome"] = .string(outcome)
         m.row["seconds"] = .number(Double(seconds))
         m.row["callLog"] = .array(lines.map(\.json))
-        m.row["callKind"] = .string("voice")
+        m.row["callKind"] = .string(video ? "video" : "voice")
         m.row["status"] = .string("done")
         m = try Repo.append(m)
         if var c = try Repo.chat(chatId) {
@@ -149,19 +201,19 @@ enum CallEngine {
     /// 角色在回复里写了 [去电]。正看着这段对话就响铃；不在就直接记一条未接来电（网页版：人不在这段对话里就不响铃）。
     /// 打不打由角色自己决定（第 22 条）；这里只落成状态，不调接口。接起来之后每轮的花费和自己打出去一样
     @MainActor
-    static func ring(chatId: String, charId: String) {
+    static func ring(chatId: String, charId: String, video: Bool = false) {
         if UIApplication.shared.applicationState == .active && Notifier.shared.visibleChat == chatId {
-            NotificationCenter.default.post(name: .eiraIncomingCall, object: chatId)
+            NotificationCenter.default.post(name: .eiraIncomingCall, object: chatId, userInfo: ["video": video])
             return
         }
-        do { try missed(chatId: chatId, charId: charId) }
+        do { try missed(chatId: chatId, charId: charId, video: video) }
         catch { Problems.report("未接来电未能记下：\(error.localizedDescription)") }
     }
 
     /// 记一条未接来电
     @discardableResult
-    static func missed(chatId: String, charId: String) throws -> Message {
-        let m = try finish(chatId: chatId, charId: charId, direction: "in", outcome: "missed", seconds: 0, lines: [], userName: "", charName: "")
+    static func missed(chatId: String, charId: String, video: Bool = false) throws -> Message {
+        let m = try finish(chatId: chatId, charId: charId, direction: "in", outcome: "missed", seconds: 0, lines: [], userName: "", charName: "", video: video)
         if var c = try Repo.chat(chatId) {
             c.row["unread"] = .number(Double(c.unread + 1))
             try Repo.save(c)

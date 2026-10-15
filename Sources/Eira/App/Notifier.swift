@@ -103,6 +103,22 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
         }
     }
 
+    /// 断火提醒（互动标识）：按 Badges.remindPlan 排一条定时的本地通知，或者撤掉。每段会话一个标识，重排即替换
+    nonisolated static func planStreak(_ chat: Chat, title: String) {
+        let id = "streak-\(chat.id)"
+        let center = UNUserNotificationCenter.current()
+        center.removePendingNotificationRequests(withIdentifiers: [id])
+        guard isOn(), !chat.muted, let plan = Badges.remindPlan(chat) else { return }
+        let c = UNMutableNotificationContent()
+        c.title = title.isEmpty ? "Eiraowo" : title
+        c.body = "连续互发 \(plan.n) 天，今天尚未互发。零点之后火花熄灭。"
+        c.sound = .default
+        c.userInfo = ["chatId": chat.id]
+        c.threadIdentifier = chat.id
+        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: plan.at)
+        center.add(UNNotificationRequest(identifier: id, content: c, trigger: UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)))
+    }
+
     /// 角标是全部会话的未读之和。
     static func updateBadge() async {
         guard isOn() else { return }

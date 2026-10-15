@@ -372,4 +372,148 @@ enum Badges {
         if !fresh.isEmpty { lines.append("Unlocked just now: \(fresh.joined(separator: "; ")).") }
         return "\n\n[互动标识]\n" + lines.joined(separator: "\n")
     }
+
+    // MARK: - 颁发（网页版 addAward / dropAward）
+
+    struct Award: Identifiable, Equatable {
+        var id: String, name: String, reason: String, by: String, to: String, msgId: String, at: Double
+    }
+
+    static func awards(_ chat: Chat?) -> [Award] {
+        (chat?.row["awards"]?.array ?? []).compactMap(\.object).map { o in
+            Award(id: o["id"]?.string ?? "", name: o["name"]?.string ?? "", reason: o["reason"]?.string ?? "",
+                  by: o["by"]?.string ?? "", to: o["to"]?.string ?? "", msgId: o["msgId"]?.string ?? "", at: o["at"]?.number ?? 0)
+        }
+    }
+
+    /// 记一枚颁发的标识。by：谁颁的（me 或角色 id），to：颁给谁
+    @discardableResult
+    static func addAward(_ chatId: String, name: String, reason: String = "", by: String, to: String, msgId: String = "",
+                         at: Double = Date().millis) throws -> Award? {
+        let n = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        guard !n.isEmpty, var chat = try Repo.chat(chatId) else { return nil }
+        let a = Award(id: "aw_" + String(Int(at), radix: 36) + String(UUID().uuidString.prefix(4)).lowercased(), name: n,
+                      reason: String(reason.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80)), by: by, to: to, msgId: msgId, at: at)
+        var list = chat.row["awards"]?.array ?? []
+        list.append(.object(["id": .string(a.id), "name": .string(a.name), "reason": .string(a.reason), "by": .string(by),
+                             "to": .string(to), "msgId": .string(msgId), "at": .number(at)]))
+        chat.row["awards"] = .array(list)
+        try Repo.save(chat)
+        return a
+    }
+
+    static func dropAward(_ chatId: String, id: String? = nil, msgId: String? = nil) throws {
+        guard var chat = try Repo.chat(chatId) else { return }
+        let list = chat.row["awards"]?.array ?? []
+        let kept = list.filter { v in
+            if let id, v["id"]?.string == id { return false }
+            if let msgId, !msgId.isEmpty, v["msgId"]?.string == msgId { return false }
+            return true
+        }
+        guard kept.count != list.count else { return }
+        chat.row["awards"] = .array(kept)
+        try Repo.save(chat)
+    }
+
+    /// 每一级的名字由用户填，空着就是「第 n 级」
+    static func setLevelNames(_ chatId: String, _ names: [String]) throws {
+        guard var chat = try Repo.chat(chatId) else { return }
+        chat.row["levelNames"] = .array(names.map { .string(String($0.trimmingCharacters(in: .whitespaces).prefix(12))) })
+        try Repo.save(chat)
+    }
+
+    // MARK: - 年度回顾（网页版 yearOf，全部本地算）
+
+    struct Year {
+        var year: Int, n = 0, nU = 0, nC = 0, activeDays = 0, bothDays = 0
+        var busiest: (at: Double, n: Int)?
+        var latest: Double?
+        var bestStreak = 0
+        var words: [(w: String, n: Int)] = []
+        var unlocked: [String] = [], limited: [String] = []
+        var awards: [Award] = []
+    }
+
+    private static let stop: Set<String> = ["我们", "你们", "他们", "她们", "什么", "一个", "这个", "那个", "没有", "就是",
+        "还是", "可以", "知道", "现在", "今天", "怎么", "不是", "已经", "因为", "所以", "然后", "但是",
+        "自己", "这样", "真的", "一下", "时候", "觉得", "那么", "这么", "一点", "有点", "如果", "的话"]
+
+    /// 最常说的几个词：系统分词，去掉方括号标记与虚词
+    static func topWords(_ texts: [String], n: Int = 5) -> [(w: String, n: Int)] {
+        var count: [String: Int] = [:]
+        for raw in texts {
+            let t = raw.replacingOccurrences(of: #"\[[^\]]*\]"#, with: " ", options: .regularExpression)
+            t.enumerateSubstrings(in: t.startIndex..<t.endIndex, options: .byWords) { w, _, _, _ in
+                guard let w, w.count >= 2, !stop.contains(w), w.rangeOfCharacter(from: .letters) != nil else { return }
+                count[w, default: 0] += 1
+            }
+        }
+        return count.sorted { $0.value != $1.value ? $0.value > $1.value : $0.key < $1.key }.prefix(n).map { ($0.key, $0.value) }
+    }
+
+    static func yearOf(_ chat: Chat, msgs: [Message], year: Int, words: Bool = true) -> Year {
+        let cal = Calendar.current
+        let from = cal.date(from: DateComponents(year: year, month: 1, day: 1))?.millis ?? 0
+        let to = cal.date(from: DateComponents(year: year + 1, month: 1, day: 1))?.millis ?? 0
+        let list = msgs.filter { $0.createdAt >= from && $0.createdAt < to && !$0.isError && ($0.role == .user || $0.role == .char) && $0.kind != "notice" }
+        var y = Year(year: year)
+        y.n = list.count
+        y.nU = list.filter { $0.role == .user }.count
+        y.nC = list.count - y.nU
+        var byDay: [Int: Int] = [:]
+        var days: [Int: (u: Bool, c: Bool)] = [:]
+        var latestMins = -1
+        for m in list {
+            let k = dayNo(m.createdAt)
+            byDay[k, default: 0] += 1
+            var d = days[k] ?? (false, false)
+            if m.role == .user { d.u = true } else { d.c = true }
+            days[k] = d
+            // 「最晚」指一天里最晚的钟点：五点为一天的开始，凌晨四点比晚上十一点更晚
+            let comp = cal.dateComponents([.hour, .minute], from: Date(millis: m.createdAt))
+            let mins = (((comp.hour ?? 0) + 19) % 24) * 60 + (comp.minute ?? 0)
+            if mins > latestMins { latestMins = mins; y.latest = m.createdAt }
+        }
+        var run = 0, last: Int?
+        for k in days.keys.sorted() {
+            guard let d = days[k], d.u && d.c else { continue }
+            run = last == k - 1 ? run + 1 : 1
+            last = k
+            y.bestStreak = max(y.bestStreak, run)
+        }
+        y.activeDays = byDay.count
+        y.bothDays = days.values.filter { $0.u && $0.c }.count
+        if let b = byDay.max(by: { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }),
+           let first = list.first(where: { dayNo($0.createdAt) == b.key }) {
+            y.busiest = (first.createdAt, b.value)
+        }
+        if words { y.words = topWords(list.filter { $0.kind == "text" }.map(\.content)) }
+        let inYear = { (at: Double) in at >= from && at < to }
+        y.unlocked = (chat.row["unlocked"]?.object ?? [:]).filter { inYear($0.value.number ?? 0) }.keys.sorted()
+        y.limited = (chat.row["limited"]?.object ?? [:]).filter { inYear($0.value.number ?? 0) }.keys.sorted()
+        y.awards = awards(chat).filter { inYear($0.at) }
+        return y
+    }
+
+    // MARK: - 断火提醒（网页版 tick 的提醒那一半）
+
+    /// 快断了提醒（默认开）；几点提醒（默认 21 点）
+    static func remindOn(_ chat: Chat?) -> Bool { chat?.row["badgeRemind"]?.bool != false }
+    static func remindHour(_ chat: Chat?) -> Int {
+        let h = Int(chat?.row["badgeRemindHour"]?.number ?? 21)
+        return (0...23).contains(h) ? h : 21
+    }
+
+    /// 本地通知，不调接口。火花连着三天以上、某天还没互发时，那天 remindHour 点提醒一次：
+    /// 今天还没互发就排今天，今天已经互发就排明天（明天不打开应用也照样提醒）；熄了、关了提醒就不排。
+    /// 系统按标识只留一条，排几次都只响一次
+    static func remindPlan(_ chat: Chat, now: Date = Date()) -> (at: Date, n: Int)? {
+        guard shown(chat), remindOn(chat) else { return nil }
+        let s = streak(chat, now: now)
+        guard s.n >= 3, s.state == "risk" || s.state == "lit" else { return nil }
+        let cal = Calendar.current
+        guard let day = s.state == "lit" ? cal.date(byAdding: .day, value: 1, to: now) : now,
+              let at = cal.date(bySettingHour: remindHour(chat), minute: 0, second: 0, of: day), at > now else { return nil }
+        return (at, s.n)
+    }
 }

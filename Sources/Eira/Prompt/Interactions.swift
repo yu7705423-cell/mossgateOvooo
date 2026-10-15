@@ -296,6 +296,8 @@ enum Interact {
 
     /// 「已收款」「已拆开」那一行删掉，就当这次处理没发生过，那一笔回到待处理（网页版 dropMessage）。
     static func unsettle(_ notice: Message) throws {
+        // 颁标识的那一条删了，标识也收回。重新生成那一轮时，旧的那一枚不该留在收藏里
+        if notice.kind == "award" { try Badges.dropAward(notice.chatId, msgId: notice.id); return }
         // 角色改锁屏密码的那一行：放回换之前那一份
         if notice.kind == "notice", let u = notice.row["lockUndo"]?.object, let charId = u["charId"]?.string {
             try Theirs.restoreLock(charId, u["prev"])

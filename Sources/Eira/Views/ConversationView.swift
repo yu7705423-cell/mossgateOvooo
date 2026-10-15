@@ -100,7 +100,8 @@ struct ConversationView: View {
     struct CallTarget: Identifiable {
         let char: Character
         let incoming: Bool
-        var id: String { char.id + (incoming ? ":in" : ":out") }
+        var video = false
+        var id: String { char.id + (incoming ? ":in" : ":out") + (video ? ":video" : "") }
     }
     private let dueTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
@@ -379,12 +380,12 @@ struct ConversationView: View {
             }
         }
         .fullScreenCover(item: $calling) { c in
-            CallView(chatId: chatId, char: c.char, incoming: c.incoming) { reload() }
+            CallView(chatId: chatId, char: c.char, incoming: c.incoming, video: c.video) { reload() }
         }
         // 角色打电话过来（回复里写了 [去电]）：正看着这段对话才响铃，正在通话时不再响
         .onReceive(NotificationCenter.default.publisher(for: .eiraIncomingCall)) { note in
             guard (note.object as? String) == chatId, calling == nil, let char else { return }
-            calling = CallTarget(char: char, incoming: true)
+            calling = CallTarget(char: char, incoming: true, video: (note.userInfo?["video"] as? Bool) == true)
         }
         .sheet(isPresented: $recordingVoice) {
             VoiceComposeView(chatId: chatId, quote: quoting) { m in
@@ -670,6 +671,11 @@ struct ConversationView: View {
             panelButton("phone", "通话") {
                 guard let char, !archivedChat else { notice = "封存的角色不再接听电话。"; return }
                 calling = CallTarget(char: char, incoming: false)
+            }
+        case "video":
+            panelButton("film", "视频通话") {
+                guard let char, !archivedChat else { notice = "封存的角色不再接听电话。"; return }
+                calling = CallTarget(char: char, incoming: false, video: true)
             }
         case "transfer": panelButton("wallet", "转账") { composing = .transfer }
         case "gift": panelButton("gift", "礼物") { composing = .gift }
@@ -1390,6 +1396,7 @@ struct ConversationView: View {
             archivedChat = chat.map(Archive.chatArchived) ?? false
             skin = Skins.look(Skins.of(chat))
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
+            if let chat { Notifier.planStreak(chat, title: chat.isGroup ? GroupChat.title(chat, members: GroupChat.members(chat)) : (char?.name ?? "")) }
             me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()
             if let chat, chat.isGroup {
                 members = Dictionary(GroupChat.members(chat).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })

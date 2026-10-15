@@ -105,11 +105,12 @@ struct UsageLimitsView: View {
             Section {
                 Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
                 NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
+                NumberRow(title: "视频通话两帧画面的间隔", value: model.number("callFrameGap", 0), unit: "秒", placeholder: "每轮都带")
             } header: {
                 Text("通话")
             } footer: {
-                Text("通话每轮调用一次接口；开启总结时每通电话多调用一次。")
-                HelpNote("通话每说一轮调用一次接口。总结默认开启：每通接通过、有对白的电话挂断时多调用一次（走副用接口），关闭后可在通话记录上手动生成。回复上限填 0 表示不限。")
+                Text("通话每轮调用一次接口；开启总结时每通电话多调用一次。视频通话里每带一帧画面都是一次图片费用。")
+                HelpNote("通话每说一轮调用一次接口。总结默认开启：每通接通过、有对白的电话挂断时多调用一次（走副用接口），关闭后可在通话记录上手动生成。回复上限填 0 表示不限。视频通话中打开摄像头、且识图设为「交给聊天模型」时，画面随你说的那句一起发出，不另调接口；画面间隔填 0 表示每轮都带一帧，画面最新，费用也最高。")
             }
 
             Section {

@@ -23,12 +23,14 @@ enum ReplyParser {
         case pact, pactDone, letter
         // 角色手机：存图（text 是角色给这张写的一句）、改密码（text 是数字，extra 是这串数字是什么）
         case keep, lockcode
-        // 角色打电话过来（flag 为真是视频，原生版先按语音接）
+        // 角色打电话过来（flag 为真是视频通话）
         case ring
         // 草稿箱：写了又没发出去的话（不落进聊天）
         case draft
         // HTML 卡片：text 是卡片名，extra 是「字段：值」那一段
         case card
+        // 颁发互动标识：text 是标识名，extra 是理由
+        case award
     }
 
     struct Part: Equatable, Sendable {
@@ -303,6 +305,15 @@ enum ReplyParser {
                 var p = Part(type: .lockcode, text: (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces))
                 p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
                 push(p)
+            case "授予", "award":
+                // 竖线前是标识的名字，后面是理由。没写竖线就整段是名字
+                let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                let name = (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty {
+                    var p = Part(type: .award, text: name)
+                    p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
+                    push(p)
+                }
             case "卡片", "card":
                 if body.hasPrefix("#"), let i = Int(body.dropFirst()), cards.indices.contains(i) {
                     var p = Part(type: .card, text: cards[i].name)
