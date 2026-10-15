@@ -619,7 +619,7 @@ struct ProactiveSection: View {
         do {
             try Database.shared.put(Collections.characters, c.row)
             Proactive.reschedule(charId)
-            next = Proactive.upcoming(charId, count: 1).first ?? 0
+            self.next = Proactive.upcoming(charId, count: 1).first ?? 0
             problem = nil
         } catch {
             problem = "保存失败：\(error.localizedDescription)"
