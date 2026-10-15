@@ -70,6 +70,36 @@ enum MusicLibrary {
         try Database.shared.put("songs", r)
     }
 
+    /// 按播放地址收一首（网页版 addSong 的地址那一路）
+    @discardableResult
+    static func addURL(title: String, artist: String, url: String, lyric: String) throws -> Song {
+        let t = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !t.isEmpty else { throw StoreError(message: "请填写歌曲名称") }
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty else { throw StoreError(message: "请填写播放地址或上传音频文件") }
+        let row = Row.new(prefix: "song", [
+            "title": .string(t), "artist": .string(String(artist.trimmingCharacters(in: .whitespaces).prefix(40))), "url": .string(u),
+            "audioId": .null, "lyric": .string(lyric), "coverId": .null, "seconds": .number(0), "source": .string("local"),
+        ])
+        try Database.shared.put("songs", row)
+        return Song(row: row)
+    }
+
+    /// 改一首（网页版 updateSong）：网易云的只改歌词，名称、歌手与地址以网易云为准
+    static func edit(_ id: String, title: String, artist: String, url: String, lyric: String) throws {
+        guard let s = song(id) else { throw StoreError(message: "这首歌已不在曲库中") }
+        if s.source == "netease" { try update(id, ["lyric": .string(lyric)]); return }
+        let t = String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+        guard !t.isEmpty else { throw StoreError(message: "请填写歌曲名称") }
+        let u = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !u.isEmpty || !s.audioId.isEmpty else { throw StoreError(message: "请填写播放地址或上传音频文件") }
+        try update(id, ["title": .string(t), "artist": .string(String(artist.trimmingCharacters(in: .whitespaces).prefix(40))),
+                        "url": .string(u), "lyric": .string(lyric)])
+    }
+
+    /// 删一整个歌单。歌留在曲库里
+    static func removeList(_ id: String) throws { try Database.shared.delete("playlists", id: id) }
+
     /// 移除一首：歌单里的这一首一并去掉。上传的音频文件留着，交给「存储」统一清理（原生版不自己删文件）。
     static func remove(_ id: String) throws {
         for var l in try Database.shared.all("playlists") where l.strings("trackIds").contains(id) {

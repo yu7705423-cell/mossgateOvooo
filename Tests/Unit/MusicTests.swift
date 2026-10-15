@@ -123,4 +123,29 @@ final class MusicTests: StoreTestCase {
         XCTAssertEqual(r.first?.seconds, 269)
         XCTAssertTrue(MockNet.requests.contains { $0.url?.absoluteString == "https://interface.music.163.com/eapi/cloudsearch/pc" })
     }
+
+    /// 曲库：按地址添加、编辑（网易云的只改歌词）、删歌单不删歌
+    func testAddEditSongAndRemoveList() throws {
+        XCTAssertThrowsError(try MusicLibrary.addURL(title: "歌", artist: "", url: " ", lyric: ""))
+        let s = try MusicLibrary.addURL(title: "晴天", artist: "某人", url: "https://x.test/a.mp3", lyric: "")
+        try MusicLibrary.edit(s.id, title: "晴天（现场）", artist: "", url: "https://x.test/b.mp3", lyric: "[00:01.00]第一句")
+        let e = try XCTUnwrap(MusicLibrary.song(s.id))
+        XCTAssertEqual(e.title, "晴天（现场）")
+        XCTAssertEqual(e.url, "https://x.test/b.mp3")
+        XCTAssertEqual(MusicLibrary.parseLyric(e.lyric).count, 1)
+        XCTAssertThrowsError(try MusicLibrary.edit(s.id, title: " ", artist: "", url: "https://x", lyric: ""))
+
+        var ne = Row.new(prefix: "song", ["title": .string("网易"), "source": .string("netease"), "neteaseId": .string("1")])
+        try Database.shared.put("songs", ne)
+        try MusicLibrary.edit(ne.id, title: "改不了", artist: "", url: "", lyric: "[00:02.00]词")
+        ne = try XCTUnwrap(Database.shared.get("songs", id: ne.id))
+        XCTAssertEqual(ne.string("title"), "网易")
+        XCTAssertEqual(ne.string("lyric"), "[00:02.00]词")
+
+        let l = try MusicLibrary.listNamed(MusicLibrary.me, "雨天")
+        try MusicLibrary.addTrack(l.id, s.id)
+        try MusicLibrary.removeList(l.id)
+        XCTAssertNil(try Database.shared.get("playlists", id: l.id))
+        XCTAssertNotNil(MusicLibrary.song(s.id))
+    }
 }

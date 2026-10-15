@@ -319,6 +319,7 @@ struct LibraryView: View {
     @State private var importing = false
     @State private var problem: String?
     @State private var sharing: MusicLibrary.Song?
+    @State private var editing: SongEditView.Target?
 
     var body: some View {
         List {
@@ -326,6 +327,7 @@ struct LibraryView: View {
             Section {
                 Button("全部播放") { player.play(songs, at: 0) }.disabled(songs.isEmpty)
                 Button("导入本机音频") { importing = true }
+                Button("按播放地址添加") { editing = .new }
             } footer: {
                 HelpNote("网易云收入的曲目只保存标识，播放地址在每次播放时重新获取。导入的音频文件存在本机。")
             }
@@ -334,6 +336,7 @@ struct LibraryView: View {
                     TrackRow(title: s.title, artist: s.source == "netease" ? "网易云" + (s.artist.isEmpty ? "" : " · \(s.artist)") : "本机文件" + (s.artist.isEmpty ? "" : " · \(s.artist)"),
                              cover: s.cover, right: AnyView(Menu {
                                  Button("分享到会话") { sharing = s }
+                                 Button(s.source == "netease" ? "编辑歌词" : "编辑") { editing = .song(s.id) }
                                  Button("移除", role: .destructive) { try? MusicLibrary.remove(s.id); reload() }
                              } label: { Image(systemName: "ellipsis") })) {
                         player.play(songs, at: i)
@@ -366,6 +369,7 @@ struct LibraryView: View {
             reload()
         }
         .sheet(item: $sharing) { s in NavigationStack { ShareSongView(song: s) } }
+        .sheet(item: $editing, onDismiss: reload) { t in NavigationStack { SongEditView(target: t) } }
         .onAppear(perform: reload)
     }
 
@@ -378,10 +382,14 @@ struct LibraryView: View {
 struct LocalListView: View {
     let listId: String
     @ObservedObject private var player = MusicPlayer.shared
+    @Environment(\.dismiss) private var dismiss
     @State private var tracks: [MusicLibrary.Song] = []
+    @State private var confirmDelete = false
+    @State private var problem: String?
 
     var body: some View {
         List {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
             Button("全部播放（共 \(tracks.count) 首）") { player.play(tracks, at: 0) }.disabled(tracks.isEmpty)
             ForEach(Array(tracks.enumerated()), id: \.offset) { i, s in
                 TrackRow(title: s.title, artist: s.artist, cover: s.cover) { player.play(tracks, at: i) }
@@ -389,13 +397,104 @@ struct LocalListView: View {
             }
         }
         .navigationTitle((try? Database.shared.get("playlists", id: listId))?.string("name") ?? "歌单")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Menu {
+                    Button("删除歌单", role: .destructive) { confirmDelete = true }
+                } label: { NavIcon("more") }
+            }
+        }
+        .confirmationDialog("删除这个歌单。里面的歌留在曲库中。", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除歌单", role: .destructive) {
+                do { try MusicLibrary.removeList(listId); dismiss() } catch { problem = "未能删除：\(error.localizedDescription)" }
+            }
+        }
         .onAppear { tracks = MusicLibrary.tracks(listId) }
+    }
+}
+
+/// 添加或编辑一首（网页版 LibraryPage 的 EditSheet）：名称、歌手、播放地址、歌词（可粘贴 LRC 或导入 .lrc 文件）。
+/// 网易云的只改歌词
+struct SongEditView: View {
+    enum Target: Identifiable {
+        case new, song(String)
+        var id: String { if case .song(let x) = self { return x }; return "new" }
+    }
+
+    let target: Target
+    @Environment(\.dismiss) private var dismiss
+    @State private var title = ""
+    @State private var artist = ""
+    @State private var url = ""
+    @State private var lyric = ""
+    @State private var problem: String?
+    @State private var pickingLrc = false
+    @State private var loaded = false
+
+    private var song: MusicLibrary.Song? { if case .song(let id) = target { return MusicLibrary.song(id) }; return nil }
+
+    var body: some View {
+        let netease = song?.source == "netease"
+        Form {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            if netease {
+                Text("该曲目来自网易云，名称、歌手与播放地址以网易云为准，此处只能编辑歌词。").font(.footnote).foregroundStyle(Theme.secondaryText)
+            } else {
+                Section {
+                    TextField("歌曲名称", text: $title)
+                    TextField("歌手，可留空", text: $artist)
+                    TextField(song?.audioId.isEmpty == false ? "播放地址（已有本机文件，可留空）" : "播放地址 https://...", text: $url)
+                        .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                } footer: {
+                    HelpNote("播放地址直接指向音频文件。地址与本机文件二选一；已导入本机文件的歌曲可以不填地址。", title: "音乐：编辑歌曲")
+                }
+            }
+            Section {
+                TextField("粘贴 LRC 歌词，每行形如 [00:12.30]歌词", text: $lyric, axis: .vertical)
+                    .lineLimit(6...20).font(.system(size: 13, design: .monospaced))
+                Button("导入 .lrc 文件") { pickingLrc = true }
+            } header: { Text("歌词") } footer: {
+                let n = MusicLibrary.parseLyric(lyric).count
+                Text(lyric.isEmpty ? "未填写歌词" : n > 0 ? "识别到 \(n) 行带时间的歌词" : "没有识别到带时间的歌词行")
+            }
+        }
+        .navigationTitle(song == nil ? "添加歌曲" : "编辑歌曲")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) { Button("保存", action: save) }
+        }
+        .documentPicker(isPresented: $pickingLrc, types: [.plainText, .data]) { urls in
+            guard let u = urls.first else { return }
+            let ok = u.startAccessingSecurityScopedResource()
+            defer { if ok { u.stopAccessingSecurityScopedResource() } }
+            if let d = try? Data(contentsOf: u), let t = String(data: d, encoding: .utf8) ?? String(data: d, encoding: .utf16) {
+                lyric = t
+                problem = nil
+            } else { problem = "读不出这个文件，请确认是 UTF-8 编码的 .lrc 文本" }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            if let s = song { title = s.title; artist = s.artist; url = s.url; lyric = s.lyric }
+        }
+    }
+
+    private func save() {
+        do {
+            if let s = song { try MusicLibrary.edit(s.id, title: title, artist: artist, url: url, lyric: lyric) }
+            else { try MusicLibrary.addURL(title: title, artist: artist, url: url, lyric: lyric) }
+            dismiss()
+        } catch { problem = error.localizedDescription }
     }
 }
 
 /// 正在播放：封面、歌词、进度与控制。
 struct NowPlayingView: View {
     @ObservedObject private var player = MusicPlayer.shared
+    @State private var lyricView = false
+    @State private var showTrans = true
+    @State private var heldUntil = Date.distantPast
     @State private var lines: [MusicLibrary.Line] = []
     @State private var pure = false
     @State private var drag: Double?
@@ -403,27 +502,72 @@ struct NowPlayingView: View {
     var body: some View {
         VStack(spacing: Theme.pad) {
             if let s = player.current {
-                CoverView(url: s.cover, name: s.title, size: 220).padding(.top, Theme.pad * 2)
-                Text(s.title).font(.title3)
-                Text(s.artist).foregroundStyle(Theme.secondaryText)
-                if !player.error.isEmpty { Text(player.error).font(.footnote).foregroundStyle(Theme.danger) }
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(spacing: 8) {
-                            if lines.isEmpty { Text(pure ? "纯音乐，请欣赏" : "暂无歌词").foregroundStyle(Theme.secondaryText) }
-                            ForEach(lines.indices, id: \.self) { i in
-                                let on = i == activeLine
-                                VStack {
-                                    Text(lines[i].text).foregroundStyle(on ? Theme.bubbleTheirsText : Theme.tertiaryText)
-                                    if !lines[i].trans.isEmpty { Text(lines[i].trans).font(.footnote).foregroundStyle(Theme.tertiaryText) }
+                let hasTrans = lines.contains { !$0.trans.isEmpty }
+                if !lyricView {
+                    // 封面一面：大封面与当前这一句，点一下看整页歌词（网页版 NowPage 的 cover / lyric 两面）
+                    Button { lyricView = true } label: {
+                        VStack(spacing: Theme.pad) {
+                            CoverView(url: s.cover, name: s.title, size: 220).padding(.top, Theme.pad * 2)
+                            Text(s.title).font(.title3).foregroundStyle(Theme.text)
+                            Text(s.artist).foregroundStyle(Theme.secondaryText)
+                            VStack(spacing: 4) {
+                                Text(lines.isEmpty ? (pure ? "纯音乐，请欣赏" : "暂无歌词") : lines[activeLine].text)
+                                    .foregroundStyle(Theme.bubbleTheirsText)
+                                if showTrans, !lines.isEmpty, !lines[activeLine].trans.isEmpty {
+                                    Text(lines[activeLine].trans).font(.footnote).foregroundStyle(Theme.tertiaryText)
                                 }
-                                .id(i)
-                                .onTapGesture { player.seek(lines[i].at) }
                             }
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: .infinity)
                         }
-                        .frame(maxWidth: .infinity)
                     }
-                    .onChange(of: activeLine) { _, i in withAnimation { proxy.scrollTo(i, anchor: .center) } }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("查看歌词")
+                    Spacer(minLength: 0)
+                } else {
+                    Button { lyricView = false } label: {
+                        VStack(spacing: 2) {
+                            Text(s.title).font(.headline).foregroundStyle(Theme.text)
+                            Text(s.artist).font(.footnote).foregroundStyle(Theme.secondaryText)
+                        }
+                        .padding(.top, Theme.pad)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("回到封面")
+                    ScrollViewReader { proxy in
+                        ScrollView {
+                            VStack(spacing: 8) {
+                                if lines.isEmpty { Text(pure ? "纯音乐，请欣赏" : "暂无歌词").foregroundStyle(Theme.secondaryText) }
+                                ForEach(lines.indices, id: \.self) { i in
+                                    let on = i == activeLine
+                                    VStack {
+                                        Text(lines[i].text).foregroundStyle(on ? Theme.bubbleTheirsText : Theme.tertiaryText)
+                                        if showTrans && !lines[i].trans.isEmpty { Text(lines[i].trans).font(.footnote).foregroundStyle(Theme.tertiaryText) }
+                                    }
+                                    .id(i)
+                                    .onTapGesture { player.seek(lines[i].at) }
+                                }
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .simultaneousGesture(DragGesture().onChanged { _ in heldUntil = Date().addingTimeInterval(3) })
+                        .onChange(of: activeLine) { _, i in
+                            // 手动滑过之后三秒内不自动跟随
+                            guard Date() > heldUntil else { return }
+                            withAnimation { proxy.scrollTo(i, anchor: .center) }
+                        }
+                        .onAppear { proxy.scrollTo(activeLine, anchor: .center) }
+                    }
+                }
+                if !player.error.isEmpty { Text(player.error).font(.footnote).foregroundStyle(Theme.danger) }
+                if hasTrans {
+                    HStack {
+                        Spacer()
+                        Button { showTrans.toggle() } label: {
+                            Image(systemName: "character.bubble").foregroundStyle(showTrans ? Theme.text : Theme.tertiaryText)
+                        }
+                        .accessibilityLabel(showTrans ? "隐藏翻译" : "显示翻译")
+                    }
                 }
                 Slider(value: Binding(get: { drag ?? player.seconds }, set: { drag = $0 }), in: 0...max(1, player.duration)) { editing in
                     if !editing, let d = drag { player.seek(d); drag = nil }
