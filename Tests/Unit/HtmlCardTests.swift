@@ -95,4 +95,25 @@ final class HtmlCardTests: StoreTestCase {
         XCTAssertEqual(MockNet.count, 1)
         XCTAssertTrue(MsgPreview.text(card).hasPrefix("[卡片] 微博"))
     }
+
+    func testUserSendAndFill() async throws {
+        let e = try XCTUnwrap(HtmlCard.builtinEntries.first { $0["comment"]?.string == "微博" })
+        let entry = HtmlCard.Entry(json: e, bookId: HtmlCard.builtinBookId)
+        let form = ["昵称": "小于", "热评": "甲｜好看｜12\n乙｜一般｜3"]
+        let values = HtmlCard.parseValues(HtmlCard.formBlock(entry.fields, form), fields: entry.fields)
+        XCTAssertEqual(values["热评"]?.array?.count, 2)
+        XCTAssertEqual(HtmlCard.toForm(entry.fields, values)["热评"], "甲｜好看｜12\n乙｜一般｜3")
+        let m = try HtmlCard.send(entry, values: values, chatId: "chat_a")
+        XCTAssertEqual(m.kind, "card")
+        XCTAssertEqual(m.role, .user)
+        XCTAssertTrue(m.content.hasPrefix("[卡片：微博]"))
+        XCTAssertThrowsError(try HtmlCard.send(entry, values: [:], chatId: "chat_a"))
+
+        // 帮我填：点一次一次请求，取方括号之间那几行
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("好的\n[卡片：微博]\n昵称：林\n正文：下雨\n[/卡片]")) }
+        let filled = try await HtmlCard.fillByModel(entry, idea: "", charName: "林", userName: "小于", recent: "")
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(filled["昵称"], .string("林"))
+        XCTAssertEqual(filled["正文"], .string("下雨"))
+    }
 }

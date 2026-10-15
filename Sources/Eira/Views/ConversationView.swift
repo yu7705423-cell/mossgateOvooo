@@ -93,6 +93,7 @@ struct ConversationView: View {
     @State private var fire: Badges.StreakState?
     @State private var panelMore = false
     @State private var editingPanel = false
+    @State private var sendingCard = false
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -377,6 +378,12 @@ struct ConversationView: View {
                     }
                     composing = nil
                 }
+            }
+        }
+        .sheet(isPresented: $sendingCard) {
+            if let char {
+                CardSendView(chatId: chatId, char: char, meName: me?.name ?? "我",
+                             meAvatar: chat.map { ChatFaces.of($0, key: ChatFaces.me, fallback: me?.avatar ?? "") } ?? (me?.avatar ?? "")) { reload() }
             }
         }
         .fullScreenCover(item: $calling) { c in
@@ -684,6 +691,7 @@ struct ConversationView: View {
         case "pat": panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
         case "share": panelButton("compass", "共享位置") { showGeo = true }
         case "file": panelButton("folder", "文件") { filePicking = true }
+        case "card": panelButton("layers", "卡片") { if char != nil { sendingCard = true } }
         default: EmptyView()
         }
     }

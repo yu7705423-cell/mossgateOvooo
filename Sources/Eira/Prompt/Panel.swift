@@ -29,11 +29,12 @@ enum Panel {
         Item(id: "dice", icon: "grid", label: "骰子"),
         Item(id: "offline", icon: "book", label: "线下"),
         Item(id: "file", icon: "folder", label: "文件"),
+        Item(id: "card", icon: "layers", label: "卡片"),
     ]
 
     private static let all = items.map(\.id)
     /// 默认收进「更多」的：网页版 DEFAULT_MORE 里原生版也有的那几格
-    static let defaultMore = ["lore", "video", "dice", "file", "share"]
+    static let defaultMore = ["lore", "video", "share", "dice", "card", "file"]
     /// 群里说得通的那几格（网页版 GROUP_TAPS）：转账、礼物、通话这些都是对着一个人的
     static let groupOK: Set<String> = ["photo", "voice", "dice", "song", "offline"]
 

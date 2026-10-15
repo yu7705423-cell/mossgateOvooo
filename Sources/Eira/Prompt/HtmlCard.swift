@@ -522,4 +522,62 @@ enum HtmlCard {
             return out.joined(separator: "\n")
         }.joined(separator: "\n")
     }
+
+    // MARK: - 用户自己发卡片（网页版 CardSendSheet，4.253）
+
+    /// 表单里一个字段一段文字；列表一行一项、子字段用｜隔开。转成角色那种写法再交给 parseValues 读
+    static func formBlock(_ fields: [Field], _ form: [String: String]) -> String {
+        fields.compactMap { f -> String? in
+            let v = (form[f.name] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !v.isEmpty else { return nil }
+            if f.list {
+                return v.components(separatedBy: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                    .map { "\(f.name)：\($0)" }.joined(separator: "\n")
+            }
+            return "\(f.name)：\(v)"
+        }.joined(separator: "\n")
+    }
+
+    static func toForm(_ fields: [Field], _ values: [String: JSONValue]) -> [String: String] {
+        var out: [String: String] = [:]
+        for f in fields {
+            guard let v = values[f.name] else { out[f.name] = ""; continue }
+            if let a = v.array {
+                out[f.name] = a.map { x in x.object.map { o in f.sub.map { o[$0]?.string ?? "" }.joined(separator: "｜") } ?? (plain(x) ?? "") }
+                    .joined(separator: "\n")
+            } else { out[f.name] = plain(v) ?? "" }
+        }
+        return out
+    }
+
+    /// 发出去的是一条 kind 为 card 的消息，正文是角色那种写法，角色读到的就是它
+    @discardableResult
+    static func send(_ entry: Entry, values: [String: JSONValue], chatId: String) throws -> Message {
+        guard !values.isEmpty else { throw StoreError(message: "请至少填写一个字段") }
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: block(name: entry.name, values: values, fields: entry.fields), kind: "card")
+        m.row["card"] = .object(["name": .string(entry.name), "bookId": .string(entry.bookId), "entryId": .string(entry.id), "values": .object(values)])
+        m = try Repo.append(m)
+        if var c = try Repo.chat(chatId) { c.row["lastMessageAt"] = .number(Date().millis); try Repo.save(c) }
+        return m
+    }
+
+    /// 「帮我填」：用户点了才发，一次请求。交回来的是角色那种写法，取出方括号之间那几行
+    static func fillByModel(_ entry: Entry, idea: String, charName: String, userName: String, recent: String) async throws -> [String: JSONValue] {
+        let sys = Templates.render("task.card-fill", [
+            "card": promptList([entry]), "name": entry.name,
+            "idea": idea.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "(nothing specific; fit the recent chat)" : idea,
+            "char": charName.isEmpty ? "the character" : charName, "user": userName.isEmpty ? "the user" : userName,
+            "recent": recent.isEmpty ? "(none)" : recent,
+        ], settings: .load())
+        let r = try await AIService.shared.send(task: "card.fill", system: sys, messages: [AIMessage(role: .user, content: "Fill in the card.")], maxTokens: 2000)
+        let text = ReplyParser.stripThink(r.text).0
+        let body: String
+        if let m = text.range(of: #"[\[【]\s*(?:卡片|card)\s*[:：][^\]】\n]*[\]】]"#, options: [.regularExpression, .caseInsensitive]) {
+            let rest = String(text[m.upperBound...])
+            if let e = rest.range(of: #"[\[【]\s*/\s*(?:卡片|card)\s*[\]】]"#, options: [.regularExpression, .caseInsensitive]) {
+                body = String(rest[..<e.lowerBound])
+            } else { body = rest }
+        } else { body = text }
+        return parseValues(body.trimmingCharacters(in: .whitespacesAndNewlines), fields: entry.fields)
+    }
 }
