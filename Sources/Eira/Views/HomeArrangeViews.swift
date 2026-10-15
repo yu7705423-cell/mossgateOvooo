@@ -33,7 +33,7 @@ enum HomeWidgets {
         Def(id: "note", label: "文字块", sizes: [(2, 1), (2, 2), (4, 1), (4, 2)], editable: true),
         Def(id: "photo", label: "图片块", sizes: [(2, 2), (4, 2), (2, 1)], editable: true),
         Def(id: "recent-chats", label: "最近会话", sizes: [(2, 2), (4, 2)], editable: false),
-    ]
+    ] + MoreWidgets.all.map { Def(id: $0.id, label: $0.label, sizes: $0.sizes, editable: !$0.fields.isEmpty) }
     static func def(_ id: String) -> Def? { all.first { $0.id == id } }
     static func label(_ id: String) -> String { def(id)?.label ?? "小组件" }
 }
@@ -141,7 +141,13 @@ struct ArrangeMenu: View {
             if c.kind == "widget" {
                 Button("名称") { titleText = c.title; naming = true }
                 if HomeWidgets.def(c.ref)?.editable == true {
-                    NavigationLink("编辑内容") { WidgetEditView(cell: c, apply: apply, done: close) }
+                    NavigationLink("编辑内容") {
+                        if let more = MoreWidgets.all.first(where: { $0.id == c.ref }) {
+                            WidgetFieldsView(cell: c, def: more, apply: apply, done: close)
+                        } else {
+                            WidgetEditView(cell: c, apply: apply, done: close)
+                        }
+                    }
                 }
             }
             if c.kind == "app" {
@@ -440,6 +446,86 @@ struct RemovedAppsSection: View {
             load()
         } catch {
             problem = "未能放回：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 其余小组件的内容：按各自登记的几项（图片、文字、角色）逐项填（网页版 WidgetEditor 的 fields）
+struct WidgetFieldsView: View {
+    let cell: Shell.Cell
+    let def: MoreWidgets.Def
+    let apply: HomeApply
+    var done: () -> Void
+
+    @State private var values: [String: String] = [:]
+    @State private var chars: [Character] = []
+    @State private var picking: String?
+    @State private var item: PhotosPickerItem?
+    @State private var problem: String?
+    @State private var loaded = false
+
+    var body: some View {
+        Form {
+            ForEach(def.fields, id: \.key) { f in
+                Section {
+                    switch f.kind {
+                    case "image":
+                        let id = values[f.key] ?? ""
+                        if !id.isEmpty {
+                            LocalImage(id: id, maxPixel: 400).frame(height: 110).clipShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        Button(id.isEmpty ? "选择图片" : "更换图片") { picking = f.key }
+                        if !id.isEmpty { Button("去掉图片", role: .destructive) { values[f.key] = "" } }
+                    case "char":
+                        Picker("角色", selection: Binding(get: { values[f.key] ?? "" }, set: { values[f.key] = $0 })) {
+                            Text("默认").tag("")
+                            ForEach(chars, id: \.id) { c in Text(c.displayName).tag(c.id) }
+                        }
+                    default:
+                        TextField(f.placeholder.isEmpty ? f.label : f.placeholder, text: Binding(get: { values[f.key] ?? "" }, set: { values[f.key] = $0 }))
+                    }
+                } header: {
+                    Text(f.label)
+                } footer: {
+                    if f.kind == "image" && !f.placeholder.isEmpty { Text(f.placeholder) }
+                }
+            }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle(def.label)
+        .navigationBarTitleDisplayMode(.inline)
+        .photosPicker(isPresented: Binding(get: { picking != nil }, set: { if !$0 && item == nil { picking = nil } }), selection: $item, matching: .images)
+        .toolbar {
+            ToolbarItem(placement: .confirmationAction) {
+                Button("完成") {
+                    var cfg: [String: JSONValue] = [:]
+                    for f in def.fields {
+                        let v = values[f.key] ?? ""
+                        cfg[f.key] = f.kind == "image" && v.isEmpty ? .null : .string(v)
+                    }
+                    if apply({ $0.setConfig(cell.id, cfg) }) { done() }
+                }
+            }
+        }
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            for f in def.fields { values[f.key] = cell.config[f.key]?.string ?? "" }
+            chars = ((try? Repo.characters()) ?? []).filter { !$0.archived }
+        }
+        .onChange(of: item) { _, it in
+            guard let it, let key = picking else { return }
+            item = nil
+            picking = nil
+            Task {
+                do {
+                    guard let data = try await it.loadTransferable(type: Data.self) else { throw StoreError(message: "无法读取所选图片") }
+                    let id = try Images.save(data, maxPixel: Images.photoMax)
+                    await MainActor.run { values[key] = id }
+                } catch {
+                    await MainActor.run { problem = "图片未能保存：\(error.localizedDescription)" }
+                }
+            }
         }
     }
 }

@@ -589,13 +589,20 @@ struct HomeWidget: View {
     var open: (String) -> Void
     var openChat: (String) -> Void
 
+    /// 网页版 frameless 的那几种（圆、拱、叠放的相框）自己画形状，不垫卡片
+    private var framed: Bool { MoreWidgets.all.first(where: { $0.id == cell.ref })?.framed ?? true }
+
     var body: some View {
-        content
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(cell.config["bare"]?.bool == true ? Color.clear : home.widgetBg))
-            .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(home.capsuleBorder, lineWidth: 1))
-            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
-            .shadow(color: .black.opacity(home.wallpaper ? 0 : (home.dark ? 0.6 : 0.10)), radius: 8, y: 4)
+        if framed {
+            content
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(cell.config["bare"]?.bool == true ? Color.clear : home.widgetBg))
+                .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(home.capsuleBorder, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+                .shadow(color: .black.opacity(home.wallpaper ? 0 : (home.dark ? 0.6 : 0.10)), radius: 8, y: 4)
+        } else {
+            content.frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
     }
 
     @ViewBuilder private var content: some View {
@@ -604,6 +611,7 @@ struct HomeWidget: View {
         case "note": note
         case "photo": photo
         case "recent-chats": RecentChatsWidget(home: home, open: open, openChat: openChat)
+        case let id where MoreWidgets.has(id): MoreWidgets.view(cell, home: home, open: open, openChat: openChat)
         default:
             Text("此组件暂未支持").font(.system(size: 12)).foregroundStyle(home.subText)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
