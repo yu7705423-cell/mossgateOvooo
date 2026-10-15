@@ -401,7 +401,7 @@ enum ChatPrompt {
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -534,6 +534,11 @@ enum ChatPrompt {
         cap("drafts", on: Drafts.on(chat), hot: used(#"[\[【]草稿"#),
             line: "Keep words you wrote but did not send: a line on its own, [草稿：the unsent words]") {
             Templates.get("skeleton.drafts", settings: s)
+        }
+        // HTML 卡片（网页版 capabilities.js 的 card）：世界书里的卡片条目，常驻的或这一轮扫到关键词的才有，有就给整段
+        let cardHits = HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s)
+        cap("card", on: !cardHits.isEmpty, hot: true, line: nil) {
+            Templates.render("skeleton.card", ["cards": HtmlCard.promptList(cardHits)], settings: s)
         }
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
             line: "Withdraw a message: write [撤回] on its own line directly after that message.") {

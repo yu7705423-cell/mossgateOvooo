@@ -523,6 +523,14 @@ enum ChatEngine {
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
             m.row["songState"] = .string("pending")
+        case .card:
+            // HTML 卡片（网页版 reply.js 的 card）：按名字找到那一张，按它的字段读值；找不到也照样落一条，气泡退回成纯文字
+            let entry = HtmlCard.resolve(bookId: "", entryId: "", name: p.text, char: char)
+            let fields = entry?.fields ?? []
+            let values = HtmlCard.parseValues(p.extra ?? "", fields: fields)
+            m = make("card", HtmlCard.block(name: p.text, values: values, fields: fields))
+            m.row["card"] = .object(["name": .string(p.text), "bookId": .string(entry?.bookId ?? ""),
+                                     "entryId": .string(entry?.id ?? ""), "values": .object(values)])
         case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
         }

@@ -27,6 +27,8 @@ enum ReplyParser {
         case ring
         // 草稿箱：写了又没发出去的话（不落进聊天）
         case draft
+        // HTML 卡片：text 是卡片名，extra 是「字段：值」那一段
+        case card
     }
 
     struct Part: Equatable, Sendable {
@@ -120,8 +122,10 @@ enum ReplyParser {
     /// autoSplitAt：整轮只有一条很长的纯文字时按句子再切的字数（网页版 settings.autoSplitAt，默认 40，0 为不切）
     static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
-        let (text, stamp) = stripStamps(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines))))
+        let (stamped, stamp) = stripStamps(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines))))
+        let (text, cards) = liftCards(stamped)
         var state = State()
+        state.cards = cards
 
         let ns = text as NSString
         var last = 0
@@ -148,10 +152,58 @@ enum ReplyParser {
         return Result(parts: parts, think: think, stamp: stamp)
     }
 
+    // MARK: - HTML 卡片（网页版 liftCards，ARCHITECTURE 4.250）
+
+    // 角色写的是一整段：[卡片：名字]、几行「字段：值」、[/卡片]。逐行分条会把它拆成好几个气泡，
+    // 所以先整段摘出来，原位换成 [卡片：#序号]。漏写收尾的：往下只收像字段的几行，碰到别的就停
+    private static let cardHead = regex(#"[\[【]\s*(?:卡片|card)\s*[:：]\s*([^\]】\n#][^\]】\n]*?)\s*[\]】]"#, [.caseInsensitive])
+    private static let cardEnd = regex(#"[\[【]\s*/\s*(?:卡片|card)\s*[\]】]"#, [.caseInsensitive])
+    private static let fieldLine = regex(#"^[^：:\n\[【]{1,24}[：:]"#, [])
+
+    static func liftCards(_ text: String) -> (String, [(name: String, body: String)]) {
+        let ns = text as NSString
+        var cards: [(name: String, body: String)] = []
+        var out = ""
+        var last = 0
+        var from = 0
+        while from < ns.length, let m = cardHead.firstMatch(in: text, range: NSRange(location: from, length: ns.length - from)) {
+            let name = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let start = m.range.location + m.range.length
+            let restRange = NSRange(location: start, length: ns.length - start)
+            var body: String
+            var stop: Int
+            if let e = cardEnd.firstMatch(in: text, range: restRange) {
+                body = ns.substring(with: NSRange(location: start, length: e.range.location - start))
+                stop = e.range.location + e.range.length
+            } else {
+                let lines = ns.substring(with: restRange).components(separatedBy: "\n")
+                var kept: [String] = []
+                var used = (lines[0] as NSString).length + 1
+                if !lines[0].trimmingCharacters(in: .whitespaces).isEmpty { kept.append(lines[0]) }
+                for l in lines.dropFirst() {
+                    let t = l.trimmingCharacters(in: .whitespaces)
+                    guard fieldLine.firstMatch(in: t, range: NSRange(location: 0, length: (t as NSString).length)) != nil else { break }
+                    kept.append(l)
+                    used += (l as NSString).length + 1
+                }
+                body = kept.joined(separator: "\n")
+                stop = min(ns.length, start + used)
+            }
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last)) + "\n[卡片：#\(cards.count)]\n"
+            while body.hasPrefix("\n") { body.removeFirst() }
+            while body.hasSuffix("\n") { body.removeLast() }
+            cards.append((name, body))
+            last = stop
+            from = max(stop, m.range.location + 1)
+        }
+        return (out + ns.substring(from: last), cards)
+    }
+
     // MARK: - 逐段
 
     private struct State {
         var parts: [Part] = []
+        var cards: [(name: String, body: String)] = []
         var pendingQuote: String?
         var pendingInner: (String, String?)?
         var pendingTrans: String?
@@ -251,6 +303,12 @@ enum ReplyParser {
                 var p = Part(type: .lockcode, text: (bar.map { String(body[..<$0]) } ?? body).trimmingCharacters(in: .whitespaces))
                 p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? "").trimmingCharacters(in: .whitespaces)
                 push(p)
+            case "卡片", "card":
+                if body.hasPrefix("#"), let i = Int(body.dropFirst()), cards.indices.contains(i) {
+                    var p = Part(type: .card, text: cards[i].name)
+                    p.extra = cards[i].body
+                    push(p)
+                }
             case "草稿":
                 let t = body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !t.isEmpty { push(Part(type: .draft, text: t)) }

@@ -1656,7 +1656,7 @@ struct MessageRow: View, Equatable {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card":
                         bubbleRow
                     case "narration":
                         Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
@@ -1910,6 +1910,8 @@ struct MessageRow: View, Equatable {
             CallCard(message: message)
         case "song":
             SongCard(message: message)
+        case "card":
+            HtmlCardBubble(message: message, char: char, meName: meName, meAvatar: meAvatar, mine: mine)
         case "voice":
             VoiceBubble(message: message, mine: mine) { onAction?(.revoice) }
         case "location":

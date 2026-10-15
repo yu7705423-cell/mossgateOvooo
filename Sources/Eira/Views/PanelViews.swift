@@ -42,6 +42,7 @@ struct PanelEditView: View {
 /// 和「设定集 - 世界书」改的是同一份；全局生效的书在这里关掉，对所有角色停用
 struct LoreQuickView: View {
     let charId: String
+    @ObservedObject private var model = SettingsModel.shared
     @State private var char: Character?
     @State private var books: [Lorebook] = []
     @State private var open: Set<String> = []
@@ -76,11 +77,48 @@ struct LoreQuickView: View {
                 if books.isEmpty { Text("还没有对话用途的世界书。在「设定集 - 世界书」中新建或导入。").foregroundStyle(Theme.text2) }
                 HelpNote("开关表示该角色是否使用这本世界书。全局生效的书对所有角色生效，在此关闭后对所有角色停用。展开可以逐条开关。与「设定集 - 世界书」里的是同一份。", title: "会话里的世界书")
             } header: { Text(char.map { "「\($0.name)」用的世界书" } ?? "世界书") }
+            builtinSection
             ProblemSection(text: problem)
         }
         .navigationTitle("世界书")
         .navigationBarTitleDisplayMode(.inline)
         .onAppear(perform: reload)
+    }
+
+    /// 内置卡片（微博、小红书等帖子卡片）：和一本世界书一样挂在角色上或全局生效，逐张可停用（网页版 LoreSheet）
+    @ViewBuilder private var builtinSection: some View {
+        let st = HtmlCard.builtinState(model.s)
+        let on = st.global || (char?.lorebookIds.contains(HtmlCard.builtinBookId) ?? false)
+        Section {
+            Toggle(isOn: Binding(get: { on }, set: { flipBuiltin($0, global: st.global) })) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("内置卡片")
+                    Text("\(HtmlCard.builtinEntries.count) 张\(st.global ? " · 全局生效" : "")").font(.footnote).foregroundStyle(Theme.text2)
+                }
+            }
+            Toggle("对全部角色生效", isOn: Binding(get: { st.global }, set: { v in model.update { HtmlCard.setBuiltin(&$0, global: v) } }))
+            Button(open.contains(HtmlCard.builtinBookId) ? "收起卡片" : "展开卡片") {
+                if open.contains(HtmlCard.builtinBookId) { open.remove(HtmlCard.builtinBookId) } else { open.insert(HtmlCard.builtinBookId) }
+            }
+            .font(.footnote)
+            if open.contains(HtmlCard.builtinBookId) {
+                ForEach(HtmlCard.builtinEntries.indices, id: \.self) { i in
+                    let e = HtmlCard.builtinEntries[i]
+                    let id = e["id"]?.string ?? ""
+                    Toggle(isOn: Binding(get: { !st.off.contains(id) }, set: { v in model.update { HtmlCard.setBuiltin(&$0, card: id, on: v) } })) {
+                        Text(e["comment"]?.string ?? id).font(.system(size: 14))
+                    }
+                    .padding(.leading, Theme.sp4)
+                }
+            }
+            HelpNote("内置卡片是应用自带的一组帖子样式的 HTML 卡片。开启后，聊天中出现卡片的关键词时，角色可以按卡片的格式发一张卡片。卡片只显示文字与样式，不运行脚本、不联网。", title: "内置卡片")
+        }
+    }
+
+    private func flipBuiltin(_ v: Bool, global: Bool) {
+        if global { model.update { HtmlCard.setBuiltin(&$0, global: v) }; return }
+        do { try Knowledge.setAttached(v, bookId: HtmlCard.builtinBookId, charId: charId); reload() }
+        catch { problem = "保存失败：\(error.localizedDescription)" }
     }
 
     private func reload() {

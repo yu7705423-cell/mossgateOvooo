@@ -189,6 +189,9 @@ enum MsgPreview {
         case "narration": return with("旁白", r.string("narration").isEmpty ? SpecialCards.stripped(m.content) : r.string("narration"))
         case "notice": return m.content.replacingOccurrences(of: #"^\[|\]$"#, with: "", options: .regularExpression)
         case "side": return SpecialCards.sideLabel(m) ?? ""
+        case "card":
+            let c = r["card"]?.object ?? [:]
+            return HtmlCard.preview(name: c["name"]?.string ?? "卡片", values: c["values"]?.object ?? [:])
         default:
             if let f = SpecialCards.face(m) { return with(f.foot.isEmpty ? "消息" : f.foot, f.title) }
             // 一条回复里可能有多段，用空行分隔：列表里显示最后一段
