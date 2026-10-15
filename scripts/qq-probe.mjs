@@ -26,8 +26,29 @@ try {
 
 try {
   const r = await fetch(`https://c.y.qq.com/soso/fcgi-bin/client_search_cp?w=${encodeURIComponent('晴天')}&format=json&p=1&n=2&cr=1`, { headers: H });
-  show('old search', { status: r.status, body: (await r.text()).slice(0, 600) });
+  const j = JSON.parse(await r.text());
+  const s = j?.data?.song?.list?.[0];
+  if (s) {
+    show('old search first keys', Object.keys(s));
+    show('old search first', { songmid: s.songmid, songid: s.songid, songname: s.songname, singer: s.singer, albummid: s.albummid, interval: s.interval, pay: s.pay, strMediaMid: s.strMediaMid, media_mid: s.media_mid, size128: s.size128, sizeogg: s.sizeogg });
+    if (!mid) { mid = s.songmid; songId = s.songid; albumMid = s.albummid; }
+  } else show('old search raw', j);
 } catch (e) { show('old search error', String(e)); }
+
+// 搜歌的新接口换一个模块再试
+try {
+  const r = await musicu({ comm: { ...comm, cv: '4747474', format: 'json', inCharset: 'utf-8', outCharset: 'utf-8' },
+    req_1: { module: 'music.search.SearchCgiService', method: 'DoSearchForQQMusicMobile',
+      param: { query: '晴天', search_type: 0, num_per_page: 2, page_num: 1, highlight: 0, nqc_flag: 0, multi_zhida: 0, cat: 2, grp: 1, sin: 0, sem: 0 } } });
+  show('search mobile', { status: r.status, code: r.json?.req_1?.code, n: r.json?.req_1?.data?.body?.item_song?.length ?? r.json?.req_1?.data?.body?.song?.list?.length });
+} catch (e) { show('search mobile error', String(e)); }
+
+// 歌单：不登录读一张公开歌单
+try {
+  const r = await fetch('https://c.y.qq.com/qzone/fcg-bin/fcg_ucc_getcdinfo_byids_cp.fcg?type=1&json=1&utf8=1&onlysong=0&disstid=7256912512&format=json', { headers: H });
+  const t = await r.text();
+  show('playlist', { status: r.status, head: t.slice(0, 300) });
+} catch (e) { show('playlist error', String(e)); }
 
 if (mid) {
   try {
