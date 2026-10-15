@@ -45,6 +45,11 @@ struct StorageView: View {
             } footer: {
                 Text("角色卡、世界书、记忆、聊天记录等全部数据与图片、文件将全部删除，且无法恢复。接口配置与密钥保留。")
             }
+            Section {
+                NavigationLink("请求记录") { TraceView() }
+            } header: {
+                Text("排查")
+            }
         }
         .navigationTitle("存储与备份")
         .onAppear(perform: reload)

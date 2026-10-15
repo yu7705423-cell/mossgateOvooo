@@ -53,6 +53,8 @@ actor AIService {
                 try Task.checkCancellation()
                 await Usage.shared.note(task: task)
                 let started = Date()
+                // 请求记录（默认关）：开着时把这一轮发了什么、回来什么记在内存里
+                let traceId = await Trace.shared.begin(task: task, preset: preset, system: system, messages: messages)
                 func log(_ status: Int?, _ error: String?) {
                     var f: [String: Any] = ["task": task, "provider": preset.provider.rawValue, "model": preset.model,
                                             "ms": Int(Date().timeIntervalSince(started) * 1000), "attempt": attempt]
@@ -70,9 +72,11 @@ actor AIService {
                         idleSeconds: settings.streamIdleSec,
                         onDelta: onDelta)
                     log(200, nil)
+                    await Trace.shared.finish(traceId, reply: text, started: started)
                     return Result(text: text, presetId: preset.id, presetName: preset.name)
                 } catch let e as AIError {
                     log(e.status, e.cancelled ? "已取消" : e.message + (e.partial.isEmpty ? "" : "（已收到部分回复）"))
+                    await Trace.shared.finish(traceId, error: e.cancelled ? "已取消" : e.message, started: started)
                     lastError = e
                     if e.cancelled { throw e }
                     if !e.partial.isEmpty {
