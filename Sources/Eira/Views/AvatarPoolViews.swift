@@ -58,7 +58,7 @@ struct AvatarPoolView: View {
     }
 
     private func rename(_ it: AvatarPool.Item, _ name: String) {
-        guard let i = items.firstIndex(of: it) else { return }
+        guard let i = items.firstIndex(where: { $0.imageId == it.imageId }) else { return }
         items[i] = AvatarPool.Item(imageId: it.imageId, name: String(name.prefix(20)))
         do { try AvatarPool.save(charId, items) } catch { problem = "保存失败：\(error.localizedDescription)" }
     }

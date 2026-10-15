@@ -137,6 +137,10 @@ enum Asr {
     // MARK: - 本机识别
 
     /// 没配识别接口时用系统自带的识别读那段录音。不经网络接口，不计费。
+    /// 录音的格式：16k 单声道 16 位 wav
+    static let wavSettings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1,
+                                             AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+
     /// 系统语音识别有没有授权（没问过的当场问一次）
     static func speechAuthorized() async -> Bool {
         let status = await withCheckedContinuation { (c: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
@@ -295,7 +299,7 @@ final class VoiceRecorder: ObservableObject {
             }
         }
         if tap == nil {
-            let r = try AVAudioRecorder(url: u, settings: Self.wavSettings)
+            let r = try AVAudioRecorder(url: u, settings: Asr.wavSettings)
             guard r.record() else { throw StoreError(message: "录音未能开始") }
             recorder = r
         }
@@ -307,9 +311,6 @@ final class VoiceRecorder: ObservableObject {
             Task { @MainActor in self?.seconds += 1 }
         }
     }
-
-    static let wavSettings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1,
-                                             AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
 
     /// 停下，交回录好的那一段与秒数。实时识别的文字留在 `live` 里。
     func stop() -> (Data, Int)? {
@@ -346,7 +347,7 @@ final class LiveTap: @unchecked Sendable {
         let input = engine.inputNode
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else { throw StoreError(message: "没有可用的麦克风输入") }
-        let f = try AVAudioFile(forWriting: url, settings: VoiceRecorder.wavSettings, commonFormat: .pcmFormatInt16, interleaved: true)
+        let f = try AVAudioFile(forWriting: url, settings: Asr.wavSettings, commonFormat: .pcmFormatInt16, interleaved: true)
         let outFormat = f.processingFormat
         guard let conv = AVAudioConverter(from: inFormat, to: outFormat) else { throw StoreError(message: "无法转换录音格式") }
         let req = SFSpeechAudioBufferRecognitionRequest()
@@ -367,7 +368,7 @@ final class LiveTap: @unchecked Sendable {
             guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: cap) else { return }
             var fed = false
             var err: NSError?
-            conv.convert(to: out, error: &err) { _, status in
+            _ = conv.convert(to: out, error: &err) { _, status in
                 if fed { status.pointee = .noDataNow; return nil }
                 fed = true
                 status.pointee = .haveData
