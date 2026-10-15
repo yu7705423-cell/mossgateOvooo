@@ -33,6 +33,8 @@ enum ReplyParser {
         case award
         // 群管理：禁言（text 名字，amount 分钟，0 为一直）、解除禁言（text 名字）、全员禁言（flag 开关）、改群昵称（text 名字，空为自己；extra 新昵称）
         case mute, unmute, muteAll, nick
+        // 换头像：text 是头像库里那一张的名字
+        case wear
     }
 
     struct Part: Equatable, Sendable {
@@ -290,6 +292,8 @@ enum ReplyParser {
                 }
             case "备注", "改备注":
                 push(Part(type: .remark, text: body))
+            case "换头像":
+                push(Part(type: .wear, text: body.trimmingCharacters(in: .whitespaces)))
             case "点歌":
                 push(Part(type: .pick, text: body.trimmingCharacters(in: .whitespaces)))
             case "分享歌曲", "分享音乐":
@@ -368,7 +372,7 @@ enum ReplyParser {
             guard let i = parts.indices.last else { pendingTrans = t; return }
             let p = parts[i]
             let bare = p.text.range(of: #"^[\[【][^\]】]*[\]】]$"#, options: .regularExpression) != nil
-            if (p.type == .text && !bare || p.type == .voice) && p.translation == nil {
+            if (p.type == .text && !bare || p.type == .voice || p.type == .narration) && p.translation == nil {
                 parts[i].translation = t
             }
         }

@@ -1720,9 +1720,16 @@ struct MessageRow: View, Equatable {
                     case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card":
                         bubbleRow
                     case "narration":
-                        Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
-                            .font(.footnote.italic()).foregroundStyle(Color(hex: narrColor) ?? Theme.secondaryText)
-                            .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
+                        VStack(spacing: 2) {
+                            Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
+                                .font(.footnote.italic()).foregroundStyle(Color(hex: narrColor) ?? Theme.secondaryText)
+                            // 旁白的译文（随回复写的，或单独的翻译接口给的）
+                            if !message.row.string("translation").isEmpty {
+                                Text(message.row.string("translation")).font(.caption.italic()).foregroundStyle(Theme.tertiaryText)
+                            }
+                        }
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
                     case "silence":
                         centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复")
                     case "notice":

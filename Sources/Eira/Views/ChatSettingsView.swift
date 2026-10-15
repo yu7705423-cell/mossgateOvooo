@@ -128,6 +128,7 @@ struct ChatSettingsView: View {
             add("face", "这个角色", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "角色的头像 我的头像", dest: AnyView(facePage(c)))
             add("proactive", "这个角色", "主动发起对话", Proactive.config(char).on ? "开启" : "关闭", keys: "主动消息 间隔 免打扰",
                 dest: AnyView(MenuPage("主动发起对话") { ProactiveSection(charId: charId) }))
+            add("pat", "这个角色", "拍一拍", keys: "后缀 拍了拍", dest: AnyView(MenuPage("拍一拍") { PatSection(charId: charId) }))
             add("day", "这个角色", "日常与日记", keys: "日程 随机事件 写日记",
                 dest: AnyView(MenuPage("日常与日记") {
                     DayOnSection(charId: charId)
@@ -890,5 +891,52 @@ enum ChatMenuRecent {
         var list = ids().filter { $0 != id }
         list.insert(id, at: 0)
         UserDefaults.standard.set(Array(list.prefix(keep)), forKey: key)
+    }
+}
+
+/// 拍一拍的后缀（网页版 extras.js）：拍角色时写在角色那一份上，角色拍你时用你自己的（全局一份）
+struct PatSection: View {
+    let charId: String
+    @ObservedObject private var model = SettingsModel.shared
+    @State private var charPat = ""
+    @State private var loaded = false
+    @State private var problem: String?
+
+    var body: some View {
+        Section {
+            TextField(Interact.patSuffixes[0], text: $charPat)
+            chips { charPat = $0 }
+        } header: {
+            Text("拍角色时")
+        } footer: {
+            HelpNote("你拍角色时，提示写成「你拍了拍角色」加上这一段，例如「的头」。留空时用「的头」。只对这个角色生效。", title: "拍一拍：拍角色时")
+        }
+        .onAppear {
+            charPat = (((try? Repo.character(charId)) ?? nil)?.row.string("patSuffix")) ?? ""
+            loaded = true
+        }
+        .onChange(of: charPat) { _, v in
+            guard loaded, let c = (try? Repo.character(charId)) ?? nil else { return }
+            do { _ = try People.update(c, ["patSuffix": .string(String(v.prefix(20)))]) } catch { problem = "保存失败：\(error.localizedDescription)" }
+        }
+        Section {
+            TextField(Interact.patSuffixes[0], text: model.textBinding("patSuffix"))
+            chips { v in model.set("patSuffix", .string(v)) }
+        } header: {
+            Text("角色拍你时")
+        } footer: {
+            HelpNote("角色拍你时用的后缀，对所有角色生效。留空时用「的头」。", title: "拍一拍：角色拍你时")
+        }
+        if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
+    }
+
+    private func chips(_ pick: @escaping (String) -> Void) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack {
+                ForEach(Interact.patSuffixes, id: \.self) { x in
+                    Button(x) { pick(x) }.buttonStyle(.bordered).font(.footnote)
+                }
+            }
+        }
     }
 }

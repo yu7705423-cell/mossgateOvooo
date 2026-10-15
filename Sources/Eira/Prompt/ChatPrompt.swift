@@ -401,7 +401,7 @@ enum ChatPrompt {
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -527,6 +527,11 @@ enum ChatPrompt {
         cap("dice", on: char.row["canDice"]?.bool != false, hot: used(#"^dice$|[\[【]骰子"#),
             line: "Roll a die: write a line on its own, [骰子]; the system rolls it, and the result is not knowable this turn") {
             Templates.get("skeleton.dice", settings: s)
+        }
+        let pool = AvatarPool.names(char.row)
+        cap("avatar", on: !pool.isEmpty, hot: used(#"[\[【]换头像"#),
+            line: "Change your avatar: write a line on its own, [换头像：name]. Available: \(pool)") {
+            Templates.render("skeleton.avatar", ["names": pool], settings: s)
         }
         let theirs = chat.row.string("charRemark").trimmingCharacters(in: .whitespaces)
         let mineRemark = char.row.string("remark").trimmingCharacters(in: .whitespaces)

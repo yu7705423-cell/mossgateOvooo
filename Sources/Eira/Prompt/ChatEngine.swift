@@ -465,6 +465,10 @@ enum ChatEngine {
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
             return nil
+        case .wear:
+            // 认不出名字就不换（网页版 reply.js 的 wear）。不落消息，换上的头像本身就看得见
+            try AvatarPool.wear(char.id, name: p.text)
+            return nil
         case .remark:
             guard char.row["canRemark"]?.bool != false, !chat.isGroup else { return nil }
             return try Interact.setTheirRemark(chatId: chat.id, name: p.text, char: char, turnId: turnId)
@@ -573,7 +577,7 @@ enum ChatEngine {
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
         case .mute, .unmute, .muteAll, .nick:
             return nil
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

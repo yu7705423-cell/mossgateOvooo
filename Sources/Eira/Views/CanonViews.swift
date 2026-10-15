@@ -777,6 +777,7 @@ struct CapsView: View {
         Cap(id: "takeout", label: "外卖与请客", group: "互动", info: "角色可以点外卖或请客"),
         Cap(id: "pat", label: "拍一拍", group: "互动", info: "角色可以拍一拍"),
         Cap(id: "lockcode", label: "改锁屏密码", group: "互动", info: "角色可以修改自己的锁屏密码。距上次修改不满角色卡设定的天数（默认 30）时不提供，聊到密码时除外"),
+        Cap(id: "avatar", label: "换头像", group: "互动", info: "角色可以从角色卡的头像库中挑一张换上。头像库为空时不提供"),
         Cap(id: "remark", label: "改备注", group: "互动", info: "角色可以修改给用户的备注"),
         Cap(id: "dice", label: "骰子", group: "互动", info: "角色可以掷骰子"),
         Cap(id: "award", label: "颁发标识", group: "互动", info: "角色可以给用户颁发一枚互动标识，记进这段对话的标识收藏。删掉那一条消息时标识一并收回"),

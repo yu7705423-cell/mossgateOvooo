@@ -28,6 +28,7 @@ struct CharacterEditView: View {
     @State private var voiceLang = ""
     @State private var voiceSpeed = 1.0
     @State private var avatarItem: PhotosPickerItem?
+    @State private var avatarBase = ""
     @State private var confirmDelete = false
     @State private var problem: String?
     @State private var saved = false
@@ -41,6 +42,16 @@ struct CharacterEditView: View {
                     PhotosPicker(selection: $avatarItem, matching: .images) { Text("更换头像") }
                         .padding(.leading, Theme.pad)
                 }
+                if !avatarBase.isEmpty {
+                    Button("换回原本的头像") {
+                        do {
+                            try AvatarPool.restore(charId)
+                            avatar = avatarBase; avatarBase = ""
+                        } catch { problem = "保存失败：\(error.localizedDescription)" }
+                    }
+                    HelpNote("当前这张是角色在对话中自己换上的。换回之后，原本那张重新成为角色的头像。", title: "换回原本的头像")
+                }
+                NavigationLink("头像库") { AvatarPoolView(charId: charId) }
                 TextField("名字", text: $name)
                 TextField("备注（只有你看得到，显示时代替名字）", text: $remark)
                 TextField("一句话签名（列表里显示这一句）", text: $signature)
@@ -130,7 +141,7 @@ struct CharacterEditView: View {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else { throw StoreError(message: "无法读取所选图片") }
                     let id = try Images.save(data, maxPixel: Images.iconMax)
-                    await MainActor.run { avatar = id; saved = false }
+                    await MainActor.run { avatar = id; avatarBase = ""; saved = false }
                 } catch {
                     await MainActor.run { problem = "头像未能保存：\(error.localizedDescription)" }
                 }
@@ -176,6 +187,7 @@ struct CharacterEditView: View {
             region = c.row.string("region")
             persona = c.persona; scenario = c.scenario; firstMessage = c.firstMessage
             exampleDialogue = c.exampleDialogue; core = c.core; avatar = c.avatar
+            avatarBase = AvatarPool.base(c.row)
             appearance = c.row.string("appearance"); imagePrompt = c.row.string("imagePrompt")
             voiceId = VoiceGen.voiceId(c, presetId: AppSettings.load().activeVoice?.id ?? "")
             voicePrompt = c.row.string("voicePrompt"); voiceLang = c.row.string("voiceLang")
@@ -194,6 +206,8 @@ struct CharacterEditView: View {
             "persona": .string(persona), "scenario": .string(scenario), "firstMessage": .string(firstMessage),
             "exampleDialogue": .string(exampleDialogue), "core": .string(core),
             "avatar": avatar.isEmpty ? .null : .string(avatar),
+            // 自己选了一张就是新的原本那张；角色换过的那张记录在 avatarBase
+            "avatarBase": .string(avatarBase),
             "appearance": .string(appearance), "imagePrompt": .string(imagePrompt),
             "voicePrompt": .string(voicePrompt), "voiceLang": .string(voiceLang), "voiceSpeed": .number(voiceSpeed),
         ]

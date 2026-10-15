@@ -218,4 +218,35 @@ final class InteractTests: StoreTestCase {
         Interact.setRate(&s, "JPY", "CNY", 0.05)
         XCTAssertNil(s.raw["rates"]?["CNY>JPY"], "两个方向只存一个")
     }
+
+    // MARK: - 头像库
+
+    /// 头像库：空库不注入；角色按名字换上一张，认不出不换；第一次换时记下原本那张，可以换回
+    func testAvatarPool() async throws {
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        var b = try ChatPrompt.build(chat: chat, char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertFalse(b.system.contains("[换头像"))
+        let orig = try XCTUnwrap(Repo.character("char_a")).avatar
+        try AvatarPool.add("char_a", imageId: "img_cat", name: "白猫")
+        try AvatarPool.add("char_a", imageId: "img_black", name: "")
+        XCTAssertEqual(AvatarPool.names(try XCTUnwrap(Repo.character("char_a")).row), "白猫、第 2 张")
+        b = try ChatPrompt.build(chat: chat, char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue(b.system.contains("[换头像：name]. Available: 白猫、第 2 张"))
+
+        XCTAssertEqual(ReplyParser.split("[换头像：白猫]\n好", autoSplitAt: 0).parts.map(\.type), [.wear, .text])
+        _ = try ChatEngine.send(text: "换个头像", chatId: "chat_a")
+        try await reply("[换头像：小狗]\n没有")
+        XCTAssertEqual(try Repo.character("char_a")?.avatar, orig, "认不出不换")
+        _ = try ChatEngine.send(text: "白猫那张", chatId: "chat_a")
+        try await reply("[换头像：白 猫]\n换好了")
+        XCTAssertEqual(MockNet.count, 1)
+        let c = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(c.avatar, "img_cat")
+        XCTAssertFalse(try all().contains { $0.content.contains("换头像") })
+        if !orig.isEmpty {
+            XCTAssertEqual(AvatarPool.base(c.row), orig)
+            XCTAssertTrue(try AvatarPool.restore("char_a"))
+            XCTAssertEqual(try Repo.character("char_a")?.avatar, orig)
+        }
+    }
 }
