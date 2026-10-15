@@ -84,6 +84,9 @@ struct ConversationView: View {
     @State private var recordingVoice = false
     @State private var calling: CallTarget?
     @State private var showScenes = false
+    @State private var showLore = false
+    @State private var panelMore = false
+    @State private var editingPanel = false
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
 
@@ -151,6 +154,10 @@ struct ConversationView: View {
             Button("好") { notice = nil }
         }
         .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
+        .navigationDestination(isPresented: $editingPanel) { PanelEditView() }
+        .navigationDestination(isPresented: $showLore) {
+            if let char { LoreQuickView(charId: char.id) }
+        }
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
@@ -546,7 +553,47 @@ struct ConversationView: View {
 
     /// 加号面板（.composer-panel .panel-grid）：一行四格，浅灰圆角方块里一个线条图标，下面一行小字
     private var plusPanel: some View {
-        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
+        let st = SettingsModel.shared.s
+        let group = chat?.isGroup == true
+        let shown = Panel.onPanel(st, group: group)
+        let more = Panel.inMore(st, group: group)
+        return VStack(spacing: Theme.sp3) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
+                ForEach(shown, id: \.self) { id in panelTile(id) }
+                if let chat, chat.isGroup {
+                    Menu {
+                        ForEach(GroupChat.members(chat)) { c in
+                            Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
+                        }
+                    } label: { panelItem("users", "提到成员") }
+                }
+                if !more.isEmpty {
+                    Button { withAnimation { panelMore.toggle() } } label: { panelItem("more", panelMore ? "收起" : "更多") }
+                        .buttonStyle(.plain)
+                }
+            }
+            if panelMore && !more.isEmpty {
+                Theme.border.frame(height: 1)
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
+                    ForEach(more, id: \.self) { id in panelTile(id) }
+                }
+            }
+            if panelMore {
+                Button("整理面板") { showPanel = false; editingPanel = true }
+                    .font(.system(size: 13)).foregroundStyle(Theme.text2)
+            }
+        }
+        .padding(.horizontal, Theme.sp4)
+        .padding(.top, Theme.sp3)
+        .padding(.bottom, Theme.sp5)
+        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
+    }
+
+    /// 一格。哪几格出现、按什么顺序由 Panel 定（用户在「整理面板」里排）
+    @ViewBuilder
+    private func panelTile(_ id: String) -> some View {
+        switch id {
+        case "photo":
             Menu {
                 PhotosPicker(selection: $picked, maxSelectionCount: nil, matching: .images) {
                     Label("从相册选择", systemImage: "photo.on.rectangle")
@@ -556,34 +603,28 @@ struct ConversationView: View {
                 }
             } label: { panelItem("image", "图片") }
             .disabled(isBusy)
-            panelButton("mic", "语音") { recordingVoice = true }
-            panelButton("grid", "骰子") { dicing = true }
-            panelButton("music", "分享音乐") { songPicking = true }
-            panelButton("book", "线下") { showScenes = true }
-            // 群里只放说得通的那几格：转账、礼物、外卖、一起听这些都是对着一个人的（网页版 GROUP_TAPS）
-            if chat?.isGroup == false {
-                panelButton("headphone", "一起听") {
-                    do { try MusicPlayer.shared.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
-                }
-                panelButton("wallet", "转账") { composing = .transfer }
-                panelButton("gift", "礼物") { composing = .gift }
-                panelButton("bag", "外卖") { composing = .takeout }
-                panelButton("map", "位置") { composing = .location }
-                panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
-                panelButton("folder", "文件") { filePicking = true }
+        case "voice": panelButton("mic", "语音") { recordingVoice = true }
+        case "dice": panelButton("grid", "骰子") { dicing = true }
+        case "song": panelButton("music", "分享音乐") { songPicking = true }
+        case "offline": panelButton("book", "线下") { showScenes = true }
+        case "lore": panelButton("book", "世界书") { showLore = true }
+        case "listen":
+            panelButton("headphone", "一起听") {
+                do { try MusicPlayer.shared.startListen(chatId: chatId, autoplay: true) } catch { problem = error.localizedDescription }
             }
-            if let chat, chat.isGroup {
-                Menu {
-                    ForEach(GroupChat.members(chat)) { c in
-                        Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
-                    }
-                } label: { panelItem("users", "提到成员") }
+        case "call":
+            panelButton("phone", "通话") {
+                guard let char, !archivedChat else { notice = "封存的角色不再接听电话。"; return }
+                calling = CallTarget(char: char, incoming: false)
             }
+        case "transfer": panelButton("wallet", "转账") { composing = .transfer }
+        case "gift": panelButton("gift", "礼物") { composing = .gift }
+        case "takeout": panelButton("bag", "外卖") { composing = .takeout }
+        case "location": panelButton("map", "位置") { composing = .location }
+        case "pat": panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
+        case "file": panelButton("folder", "文件") { filePicking = true }
+        default: EmptyView()
         }
-        .padding(.horizontal, Theme.sp4)
-        .padding(.top, Theme.sp3)
-        .padding(.bottom, Theme.sp5)
-        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
     }
 
     private func panelButton(_ icon: String, _ label: String, action: @escaping () -> Void) -> some View {
