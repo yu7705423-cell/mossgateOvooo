@@ -125,4 +125,27 @@ final class BadgesTests: StoreTestCase {
         try BadgeDefs.remove(rule.id)
         XCTAssertNil(try Repo.chat("chat_a")?.row["unlocked"]?[rule.unlockId])
     }
+
+    func testWeeklyTitles() throws {
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["group"] = .bool(true)
+        chat.row["characterIds"] = .array([.string("char_a"), .string("char_b")])
+        let now = Date()
+        var msgs: [Message] = []
+        for i in 0..<6 {
+            var m = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "在\(i)")
+            m.row["createdAt"] = .number(now.millis - Double(i))
+            msgs.append(m)
+        }
+        for _ in 0..<2 {
+            var m = Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "@乙")
+            m.row["mentions"] = .array([.string("char_b")])
+            m.row["createdAt"] = .number(now.millis)
+            msgs.append(m)
+        }
+        guard chat.isGroup else { return }
+        let t = Badges.weeklyTitles(chat, msgs: msgs, now: now)
+        XCTAssertEqual(t["char_a"]?.first, "话痨")
+        XCTAssertEqual(t["char_b"], ["团宠"])
+    }
 }

@@ -17,6 +17,8 @@ struct ConversationView: View {
     @State private var chat: Chat?
     @State private var char: Character?
     @State private var members: [String: Character] = [:]
+    /// 群里这周的话痨、团宠、夜猫子，跟在名字后面
+    @State private var weekly: [String: [String]] = [:]
     @State private var messages: [Message] = []
     @State private var turn: ChatEngine.Turn?
     /// 一次画多少条：设置里的 chatPage（默认 60，0 为全画），往上翻按同样的数继续（网页版第 13 条：默认值不是上限）
@@ -1059,7 +1061,7 @@ struct ConversationView: View {
 
     private func groupName(of m: Message) -> String {
         guard let chat, chat.isGroup, m.role != .user, let c = members[m.authorId] else { return "" }
-        return GroupChat.nameIn(chat, c)
+        return ([GroupChat.nameIn(chat, c)] + (weekly[m.authorId] ?? [])).joined(separator: " · ")
     }
 
     private func reactorName(_ id: String) -> String {
@@ -1414,6 +1416,9 @@ struct ConversationView: View {
             messages = Array(list.suffix(pageSize))
             earlier = hasMore ? max(0, (try Database.shared.count(Collections.messages, where: chatId)) - messages.count) : 0
             turn = try ChatEngine.lastTurn(chatId: chatId)
+            if let chat, chat.isGroup, Badges.shown(chat) {
+                weekly = Badges.weeklyTitles(chat, msgs: try Repo.messages(chatId: chatId, limit: 1000))
+            } else { weekly = [:] }
         } catch {
             problem = error.localizedDescription
         }

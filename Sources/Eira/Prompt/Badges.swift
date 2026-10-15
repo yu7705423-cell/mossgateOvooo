@@ -527,4 +527,37 @@ enum Badges {
               let at = cal.date(bySettingHour: remindHour(chat), minute: 0, second: 0, of: day), at > now else { return nil }
         return (at, s.n)
     }
+
+    // MARK: - 群里的周榜（网页版 weeklyTitles）
+
+    /// 本周（周一零点起）的起点
+    static func weekStart(_ now: Date = Date()) -> Double {
+        var cal = Calendar(identifier: .gregorian)
+        cal.firstWeekday = 2
+        return cal.dateInterval(of: .weekOfYear, for: now)?.start.millis ?? now.millis
+    }
+
+    /// 按自然周现算，不存。话痨：这周说得最多的；团宠：这周被你 @ 得最多的；夜猫子：这周零点到五点说得最多的。都有门槛，不够的空着
+    static func weeklyTitles(_ chat: Chat, msgs: [Message], now: Date = Date()) -> [String: [String]] {
+        guard chat.isGroup else { return [:] }
+        let from = weekStart(now)
+        var talk: [String: Int] = [:], pet: [String: Int] = [:], owl: [String: Int] = [:]
+        for m in msgs where m.createdAt >= from && !m.isError {
+            if m.role == .char {
+                talk[m.authorId, default: 0] += 1
+                if Calendar.current.component(.hour, from: Date(millis: m.createdAt)) < 5 { owl[m.authorId, default: 0] += 1 }
+            } else if m.role == .user {
+                for id in (m.row["mentions"]?.array ?? []).compactMap(\.string) { pet[id, default: 0] += 1 }
+            }
+        }
+        var out: [String: [String]] = [:]
+        func top(_ map: [String: Int], _ min: Int, _ title: String) {
+            guard let best = map.filter({ $0.value >= min }).max(by: { $0.value != $1.value ? $0.value < $1.value : $0.key > $1.key }) else { return }
+            out[best.key, default: []].append(title)
+        }
+        top(talk, 5, "话痨")
+        top(pet, 2, "团宠")
+        top(owl, 3, "夜猫子")
+        return out
+    }
 }
