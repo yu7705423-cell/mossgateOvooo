@@ -496,7 +496,7 @@ struct CallCard: View {
             if !text.isEmpty { Text(text).font(.footnote).foregroundStyle(Theme.secondaryText) }
             if lines.count > 1 {
                 Button(open ? "收起对白" : "查看对白") { open.toggle() }.font(.footnote)
-                if open { Text(lines.dropFirst().joined(separator: "\n")).font(.footnote) }
+                if open { CallLogLines(message: message, fallback: lines.dropFirst().joined(separator: "\n")) }
                 if text.isEmpty {
                     Button(summarizing ? "正在生成" : "生成总结") { run() }
                         .font(.footnote).disabled(summarizing)
@@ -522,6 +522,41 @@ struct CallCard: View {
                 await MainActor.run { problem = "总结未能生成：\(error.localizedDescription)" }
             }
             await MainActor.run { summarizing = false }
+        }
+    }
+}
+
+/// 通话记录展开后的对白：一句一行，通话时合成过声音的那几句可以再听（网页版逐句播放）
+struct CallLogLines: View {
+    let message: Message
+    let fallback: String
+    @ObservedObject private var player = VoicePlayer.shared
+
+    var body: some View {
+        let log = (message.row["callLog"]?.array ?? []).compactMap(\.object)
+        if log.isEmpty {
+            Text(fallback).font(.footnote)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(log.indices, id: \.self) { i in
+                    let l = log[i]
+                    let audio = (l["audio"]?.array ?? []).compactMap(\.string).first ?? ""
+                    let key = "\(message.id)-\(i)"
+                    HStack(alignment: .top, spacing: 6) {
+                        Text(CallEngine.subtitle(l["text"]?.string ?? ""))
+                            .font(.footnote)
+                            .foregroundStyle(l["role"]?.string == "user" ? Theme.secondaryText : Theme.bubbleTheirsText)
+                        Spacer(minLength: 0)
+                        if !audio.isEmpty {
+                            Button { player.toggle(key, audioId: audio) } label: {
+                                Image(systemName: player.playing == key ? "stop.circle" : "play.circle")
+                            }
+                            .buttonStyle(.borderless)
+                            .accessibilityLabel(player.playing == key ? "停止" : "播放这一句")
+                        }
+                    }
+                }
+            }
         }
     }
 }

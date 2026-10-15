@@ -537,6 +537,8 @@ struct ProactiveSection: View {
     @State private var quietTo = 8
     @State private var loaded = false
     @State private var problem: String?
+    @State private var sending = false
+    @State private var next: Double = 0
     @ObservedObject private var bg = BgPush.shared
 
     var body: some View {
@@ -546,7 +548,10 @@ struct ProactiveSection: View {
                 NumberRow(title: "平均间隔", value: $minutes, unit: "分钟", placeholder: "60", range: 1...100000)
                 Stepper("免打扰开始：\(quietFrom) 点", value: $quietFrom, in: 0...23)
                 Stepper("免打扰结束：\(quietTo) 点", value: $quietTo, in: 0...23)
+                HStack { Text("下一次预计"); Spacer(); Text(nextText).foregroundStyle(Theme.text2) }
             }
+            Button(sending ? "正在发起" : "立即发起一次") { sendNow() }.disabled(sending)
+            Text("点一次调用一次接口。").font(.footnote).foregroundStyle(Theme.text2)
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
         } header: {
             Text("主动发起对话")
@@ -572,7 +577,32 @@ struct ProactiveSection: View {
         guard let c = try? Repo.character(charId) else { return }
         let cfg = Proactive.config(c)
         on = cfg.on; minutes = cfg.minutes; quietFrom = cfg.quietFrom; quietTo = cfg.quietTo
+        next = Proactive.upcoming(charId, count: 1).first ?? 0
         loaded = true
+    }
+
+    /// 后台有服务器代发时，本机算的这个时刻只是估计
+    private var nextText: String {
+        guard next > 0 else { return "尚未排定" }
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "zh_CN")
+        f.dateFormat = Calendar.current.isDateInToday(Date(millis: next)) ? "今天 HH:mm" : "M月d日 HH:mm"
+        return f.string(from: Date(millis: next))
+    }
+
+    /// 用户点的，手动一次：不看间隔与免打扰，也不挪下一次的时间
+    private func sendNow() {
+        guard let chat = Proactive.soloChat(charId) else { problem = "与该角色还没有单聊"; return }
+        if ((try? Repo.character(charId)) ?? nil)?.archived == true { problem = "封存的角色不再发起对话"; return }
+        sending = true
+        problem = nil
+        Task {
+            do {
+                let made = try await Proactive.send(chatId: chat.id, charId: charId)
+                if made.isEmpty { problem = "这段会话正在生成回复，稍后再试" }
+            } catch { problem = "未能发起：\(error.localizedDescription)" }
+            sending = false
+        }
     }
 
     private func save() {
@@ -588,6 +618,7 @@ struct ProactiveSection: View {
         do {
             try Database.shared.put(Collections.characters, c.row)
             Proactive.reschedule(charId)
+            next = Proactive.upcoming(charId, count: 1).first ?? 0
             problem = nil
         } catch {
             problem = "保存失败：\(error.localizedDescription)"
