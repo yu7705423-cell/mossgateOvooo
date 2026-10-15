@@ -121,6 +121,17 @@ enum MemorySummary {
         return ""
     }
 
+    /// 自动总结现在按什么门槛（会话里那一行状态）。门槛在「设定集 - 记忆」里设，全局一份
+    static func autoText(_ s: AppSettings = .load()) -> String {
+        guard s.raw["memoryEnabled"]?.bool ?? true else { return "记忆已关闭" }
+        var parts: [String] = []
+        let r = int(s, "autoSummarizeInterval"), m = int(s, "autoSummarizeMessages"), c = int(s, "autoSummarizeChars")
+        if r > 0 { parts.append("每 \(r) 轮") }
+        if m > 0 { parts.append("满 \(m) 条") }
+        if c > 0 { parts.append("满 \(c) 字") }
+        return parts.isEmpty ? "关闭" : parts.joined(separator: "或")
+    }
+
     /// 不调接口，直接把积压标成已总结。迁进来一大堆历史、又不想为它们付钱时用。
     @discardableResult
     static func markCaughtUp(chatId: String) throws -> Int {
