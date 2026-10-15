@@ -178,6 +178,7 @@ extension ChatPrompt {
             "lorebook": loreBlock(before), "loreAfter": loreBlock(after),
             "user": userBlock(me: me, char: lead0),
             "time": timeBlock(char: lead0, msgs: online, settings: s, now: now),
+            "dates": Holidays.block(char: lead0, chat: chat, me: me, settings: s, now: now),
         ].filter { NewFeat.blockOn($0.key, s) }
 
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))

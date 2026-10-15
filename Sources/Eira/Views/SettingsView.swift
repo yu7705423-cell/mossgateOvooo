@@ -18,6 +18,9 @@ struct SettingsView: View {
                     NavigationLink { UsageLimitsView() } label: {
                         row("用量与上限", "filter", ExtraCalls.active(model.s).isEmpty ? "无额外调用" : "额外调用 \(ExtraCalls.active(model.s).count) 项")
                     }
+                    NavigationLink { HolidaySettingsView() } label: {
+                        row("节日", "calendar", HolidaySettingsView.summary(model.s))
+                    }
                 } header: { groupTitle("对话") }
                 Section {
                     NavigationLink { AppearanceView() } label: {

@@ -105,6 +105,8 @@ enum ChatPrompt {
             "user": userBlock(me: me, char: char),
             "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
             "time": timeBlock(char: char, msgs: all, settings: s, now: now),
+            // 节日与纪念日：当天与之后三天才有（网页版 context/dates.js），不调接口
+            "dates": Holidays.block(char: char, chat: chat, me: me, settings: s, now: now),
             "recent": recentBlock(recent, now: now),
             "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
             "day": DayPlan.block(char, at: now),
@@ -398,7 +400,7 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent", "geo", "badges",
-                           "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate"]
@@ -1026,6 +1028,7 @@ extension ChatPrompt {
             "lorebook": loreBlock(before), "loreAfter": loreBlock(after),
             "user": userBlock(me: me, char: lead),
             "time": timeBlock(char: lead, msgs: all, settings: s, now: now),
+            "dates": Holidays.block(char: lead, chat: chat, me: me, settings: s, now: now),
         ]
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         let names = members.map(\.name).joined(separator: "、")
