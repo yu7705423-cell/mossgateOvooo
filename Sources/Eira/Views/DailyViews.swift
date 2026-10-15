@@ -88,6 +88,7 @@ struct DayTodayView: View {
     @State private var problem: String?
     @State private var confirmRedo = false
     @State private var showRecent = false
+    @State private var weatherBusy = false
 
     var body: some View {
         List {
@@ -135,8 +136,39 @@ struct DayTodayView: View {
         .onAppear(perform: reload)
     }
 
+    private func refreshWeather() {
+        weatherBusy = true
+        Task { @MainActor in
+            do { try await DayPlan.refreshWeather(charId); problem = nil } catch { problem = "天气未能查到：\(error.localizedDescription)" }
+            weatherBusy = false
+            reload()
+        }
+    }
+
     @ViewBuilder private func content(_ c: Character, _ d: Row) -> some View {
         let cur = DayPlan.slotNow(c)
+        if let w = Weather.Forecast(d["weather"]) {
+            Section("天气") {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(Weather.label(w))
+                        Text([w.humidity.map { "湿度 \(Weather.fmt($0))%" } ?? "", w.windDir.isEmpty ? "" : "\(w.windDir) \(w.windScale) 级"]
+                            .filter { !$0.isEmpty }.joined(separator: " · "))
+                            .font(.footnote).foregroundStyle(Theme.secondaryText)
+                    }
+                    Spacer()
+                    Button(weatherBusy ? "正在查询" : "刷新") { refreshWeather() }.disabled(weatherBusy)
+                }
+            }
+        } else if Weather.ready() {
+            Section {
+                if DayPlan.region(c).isEmpty {
+                    Text("在角色卡中填写「所在地区」后，安排日程时会查询该地当天的天气。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                } else {
+                    Button(weatherBusy ? "正在查询" : "查询「\(DayPlan.region(c))」今天的天气") { refreshWeather() }.disabled(weatherBusy)
+                }
+            }
+        }
         Section {
             Text("\(d.string("date")) · 现在是\(cur.label) · 运势\(DayPlan.luckLabel(d.number("luck") ?? 0))。还没到的时段，角色只知道自己打算做什么。")
                 .font(.footnote).foregroundStyle(Theme.secondaryText)

@@ -108,7 +108,7 @@ struct ServicesView: View {
     /// 设置根页那张卡上的「已配置几项服务」：这一页里填好了的几项
     static func configuredCount(_ s: AppSettings) -> Int {
         [s.mainPreset != nil, s.memoryPreset != nil, s.imageReady, !Netease.userCookie(s).isEmpty,
-         s.voiceEnabled && s.voiceReady, s.visionMode == "api" && s.visionPreset != nil, s.asrReady].filter { $0 }.count
+         s.voiceEnabled && s.voiceReady, s.visionMode == "api" && s.visionPreset != nil, s.asrReady, Weather.ready(s)].filter { $0 }.count
     }
 
     var body: some View {
@@ -142,6 +142,11 @@ struct ServicesView: View {
                 }
                 NavigationLink { AsrSettingsView() } label: {
                     status("语音识别", model.s.asrReady ? model.s.asrConfig["model"]?.string : nil, model.s.asrReady ? "" : "系统识别")
+                }
+            }
+            Section("其他") {
+                NavigationLink { WeatherSettingsView() } label: {
+                    status("和风天气", nil, Weather.ready(model.s) ? "" : "未配置")
                 }
             }
         }
@@ -452,5 +457,80 @@ struct AppearanceView: View {
                         $0.raw["theme"] = .string(v)
                     }
                 } })
+    }
+}
+
+/// 和风天气（网页版 settings/WeatherPage.js）。配好之后，开了当日日程、又在角色卡上填了「所在地区」的角色，
+/// 排日程时查那座城市当天的预报。查天气不调模型接口
+struct WeatherSettingsView: View {
+    @ObservedObject private var model = SettingsModel.shared
+    @State private var host = ""
+    @State private var key = ""
+    @State private var city = ""
+    @State private var out: String?
+    @State private var busy = false
+    @State private var loaded = false
+
+    var body: some View {
+        Form {
+            Section {
+                TextField("API Host，形如 abc1234xyz.re.qweatherapi.com", text: $host)
+                    .textInputAutocapitalization(.never).autocorrectionDisabled().keyboardType(.URL)
+                    .onSubmit(save)
+                SecureField("API KEY", text: $key).onSubmit(save)
+                Button("保存", action: save)
+            } footer: {
+                HelpNote("API Host 在和风天气控制台的「设置」中查看，每个账号一个；旧的公共域名已逐步停用。API KEY 在控制台的「项目管理」中创建凭据时选择 API KEY。只保存在本机。", title: "和风天气")
+            }
+            Section {
+                TextField("城市名，留空查询北京", text: $city)
+                Button(busy ? "正在查询" : "查询") { test() }.disabled(busy || !Weather.ready(model.s))
+                if let out { Text(out).font(.footnote).foregroundStyle(out.hasPrefix("查询失败") ? Theme.danger : Theme.secondaryText) }
+            } header: { Text("测试查询") }
+            Section {
+                Button("清空配置", role: .destructive) {
+                    model.update { $0.setService("qweather", ["host": .string(""), "key": .string(""), "cities": .object([:])]) }
+                    host = ""; key = ""
+                }
+                .foregroundStyle(Theme.dangerText)
+            } footer: {
+                Text("查询天气不调用模型接口，用量计入和风天气账号自身的额度。")
+                HelpNote("配置后，开启了当日日程、并在角色卡上填写了「所在地区」的角色，每天安排日程时查询该地当天的天气预报，写入日程的生成请求，并在当天的对话中一并告知角色。按城市名查询，查到的城市编号会记住，不重复查询。「日常」里角色的今天页可以单独刷新天气。", title: "和风天气")
+            }
+            ProblemSection(text: model.problem)
+        }
+        .navigationTitle("和风天气")
+        .onAppear {
+            guard !loaded else { return }
+            loaded = true
+            let c = Weather.config(model.s)
+            host = c["host"]?.string ?? ""; key = c["key"]?.string ?? ""
+        }
+    }
+
+    private func save() {
+        let h = host.trimmingCharacters(in: .whitespaces), k = key.trimmingCharacters(in: .whitespaces)
+        let old = Weather.config(model.s)["host"]?.string ?? ""
+        model.update {
+            var patch: [String: JSONValue] = ["host": .string(h), "key": .string(k)]
+            if h != old { patch["cities"] = .object([:]) }   // 换了账号，记下的城市编号作废
+            $0.setService("qweather", patch)
+        }
+        out = model.problem == nil ? "已保存" : nil
+    }
+
+    private func test() {
+        save()
+        busy = true
+        out = nil
+        let name = city.trimmingCharacters(in: .whitespaces).isEmpty ? "北京" : city
+        Task { @MainActor in
+            do {
+                let w = try await Weather.forecast(name)
+                out = "\(Weather.label(w))（\(w.date)）"
+            } catch { out = "查询失败：\(error.localizedDescription)" }
+            model.reload()
+            busy = false
+        }
     }
 }

@@ -14,6 +14,7 @@ struct CharacterEditView: View {
     @State private var gender = ""
     @State private var age = ""
     @State private var birthday = ""
+    @State private var region = ""
     @State private var persona = ""
     @State private var scenario = ""
     @State private var firstMessage = ""
@@ -48,6 +49,7 @@ struct CharacterEditView: View {
                 TextField("性别", text: $gender)
                 TextField("年龄", text: $age)
                 TextField("生日", text: $birthday)
+                TextField("所在地区（城市名，用于天气与吃什么）", text: $region)
             }
             Section {
                 TextField("人设", text: $persona, axis: .vertical).lineLimit(6...40)
@@ -165,6 +167,7 @@ struct CharacterEditView: View {
             archived = c.archived
             name = c.name; remark = c.remark; signature = c.signature
             gender = c.row.string("gender"); age = c.row.string("age"); birthday = c.row.string("birthday")
+            region = c.row.string("region")
             persona = c.persona; scenario = c.scenario; firstMessage = c.firstMessage
             exampleDialogue = c.exampleDialogue; core = c.core; avatar = c.avatar
             appearance = c.row.string("appearance"); imagePrompt = c.row.string("imagePrompt")
@@ -181,6 +184,7 @@ struct CharacterEditView: View {
         let fields: [String: JSONValue] = [
             "name": .string(name.trimmingCharacters(in: .whitespaces)), "remark": .string(remark), "signature": .string(signature),
             "gender": .string(gender), "age": .string(age), "birthday": .string(birthday),
+            "region": .string(String(region.trimmingCharacters(in: .whitespaces).prefix(20))),
             "persona": .string(persona), "scenario": .string(scenario), "firstMessage": .string(firstMessage),
             "exampleDialogue": .string(exampleDialogue), "core": .string(core),
             "avatar": avatar.isEmpty ? .null : .string(avatar),

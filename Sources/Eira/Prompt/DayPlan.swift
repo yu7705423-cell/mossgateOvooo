@@ -266,12 +266,13 @@ enum DayPlan {
     }
 
     /// 排今天的日程（一次请求）。返回事项与睡着时的自动回复。
-    static func generatePlan(_ char: Character, date: String, settings s: AppSettings) async throws -> (items: [JSONValue], sleep: String) {
+    static func generatePlan(_ char: Character, date: String, settings s: AppSettings,
+                             weather: Weather.Forecast? = nil) async throws -> (items: [JSONValue], sleep: String) {
         let system = Templates.render("task.day-plan", [
             "charName": char.name.isEmpty ? "该角色" : char.name,
             "charPersona": char.persona.isEmpty ? "(no character card was written)" : char.persona,
             "date": date, "weekday": weekday(char), "zone": zone(char).identifier,
-            "weather": "", "constraints": "", "situation": try situation(char, settings: s),
+            "weather": weather.map { "## Weather\n" + Weather.promptLine($0) } ?? "", "constraints": "", "situation": try situation(char, settings: s),
             "slots": slots.map { "\($0.id) = \($0.label) (\($0.from):00 to \($0.to):00)" }.joined(separator: "\n"),
         ], settings: s)
         let r = try await AIService.shared.send(task: "day.plan", system: system,
@@ -301,14 +302,26 @@ enum DayPlan {
         var local = try rollLocal(char, date: date, settings: s)
         local["items"] = .array([])
         local["planFailed"] = .string("")
+        // 和风天气：配了、填了所在地区才查；查不到是 nil，不拦着日程。不调模型接口
+        let w = await Weather.forChar(char, date: date)
+        local["weather"] = w?.json ?? .null
         try save(charId, date: date, local)
         do {
-            let p = try await generatePlan(try Repo.character(charId) ?? char, date: date, settings: s)
+            let p = try await generatePlan(try Repo.character(charId) ?? char, date: date, settings: s, weather: w)
             return try save(charId, date: date, ["items": .array(p.items), "sleepAuto": .string(p.sleep), "planFailed": .string("")])
         } catch {
             try? save(charId, date: date, ["planFailed": .string(error.localizedDescription)])
             throw error
         }
+    }
+
+    /// 只重查今天的天气，不重排日程（「日常 - 今天」那一行上的刷新）。不调模型接口
+    @discardableResult
+    static func refreshWeather(_ charId: String) async throws -> Weather.Forecast {
+        guard let char = try Repo.character(charId), let d = try today(char) else { throw StoreError(message: "今天还没有安排") }
+        let w = try await Weather.forecast(region(char), date: d.string("date"))
+        try save(charId, date: d.string("date"), ["weather": w.json])
+        return w
     }
 
     /// 请求回复之前调：开着、今天还没有这一行、今天还没自动试过才排。失败也算试过，当天不再自动排。
@@ -387,6 +400,8 @@ enum DayPlan {
     static func block(_ char: Character, at: Date = Date()) -> String {
         guard let b = brief(char, at: at) else { return "" }
         var lines = ["Today is \(b.date). In your time zone it is currently \(b.slot.label)."]
+        // 当天的天气预报（排日程时一起查的）。是预报，不是此刻的实况
+        if let d = try? day(char.id, date: b.date), let w = Weather.Forecast(d["weather"]) { lines.append(Weather.promptLine(w)) }
         lines += b.summary
         var now: [String] = []
         if !b.nowItems.isEmpty { now.append("Planned for the current slot: \(b.nowItems.joined(separator: "；"))。") }
