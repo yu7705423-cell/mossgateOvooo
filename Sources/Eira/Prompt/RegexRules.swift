@@ -37,6 +37,36 @@ enum RegexRules {
         (s.raw["regexRules"]?.array ?? []).compactMap { $0.object.map(Rule.init(json:)) }
     }
 
+    static let format = "eira-regex"
+
+    /// 导出（网页版 exportOf）：{ format, version, rules }，规则去掉 id。ids 为 nil 时导出全部
+    static func exportFile(_ s: AppSettings, ids: [String]? = nil) throws -> URL {
+        let rows: [JSONValue] = list(s).filter { ids == nil || ids!.contains($0.id) }.map { r in
+            var o = r.json
+            o["id"] = nil
+            return .object(o)
+        }
+        let obj: JSONValue = .object(["format": .string(format), "version": .number(1), "rules": .array(rows)])
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("Eira正则规则.json")
+        try JSONSerialization.data(withJSONObject: obj.any, options: [.prettyPrinted]).write(to: url)
+        return url
+    }
+
+    /// 读文件（网页版 importText）：规则接在现有的后面，各自换新 id。回导入了几条
+    @discardableResult
+    static func importData(_ s: inout AppSettings, _ data: Data) throws -> Int {
+        guard case .object(let obj)? = try? JSONValue.parse(data) else { throw StoreError(message: "文件不是有效的正则规则") }
+        guard obj["format"]?.string == format, let list = obj["rules"]?.array else { throw StoreError(message: "文件不是本应用导出的正则规则") }
+        let rows: [JSONValue] = list.compactMap(\.object).map { r in
+            var o = blank(name: "")
+            o.merge(r) { _, n in n }
+            o["id"] = .string(Ids.make("rx"))
+            return .object(o)
+        }
+        s.raw["regexRules"] = .array((s.raw["regexRules"]?.array ?? []) + rows)
+        return rows.count
+    }
+
     /// 编译。查找为空回 nil；正则写错回错误说明。
     static func compile(_ r: Rule) -> (NSRegularExpression?, String) {
         guard !r.find.isEmpty else { return (nil, "") }

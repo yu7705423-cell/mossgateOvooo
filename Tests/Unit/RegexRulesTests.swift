@@ -48,4 +48,26 @@ final class RegexRulesTests: StoreTestCase {
         XCTAssertTrue(b.messages.contains { $0.content.contains("HELLO_SWAPPED") })
         XCTAssertTrue(try Repo.messages(chatId: "chat_a").contains { $0.content == "你好" })
     }
+
+    /// 导出去掉 id、导入接在后面换新 id；不是本应用的文件不收（与网页版同一格式 eira-regex）
+    func testExportImportRoundTrip() throws {
+        var s = AppSettings.load()
+        var r = RegexRules.blank(name: "换字")
+        r["find"] = .string("猫")
+        r["replace"] = .string("喵")
+        s.raw["regexRules"] = .array([.object(r)])
+        let url = try RegexRules.exportFile(s)
+        let data = try Data(contentsOf: url)
+        let obj = try XCTUnwrap(JSONValue.parse(data).object)
+        XCTAssertEqual(obj["format"]?.string, "eira-regex")
+        XCTAssertNil(obj["rules"]?.array?.first?["id"])
+        let n = try RegexRules.importData(&s, data)
+        XCTAssertEqual(n, 1)
+        let list = RegexRules.list(s)
+        XCTAssertEqual(list.count, 2)
+        XCTAssertNotEqual(list[0].id, list[1].id)
+        XCTAssertEqual(list[1].find, "猫")
+        var other = s
+        XCTAssertThrowsError(try RegexRules.importData(&other, Data(#"{"format":"other","rules":[]}"#.utf8)))
+    }
 }

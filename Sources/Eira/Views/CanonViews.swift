@@ -894,6 +894,9 @@ struct CapsView: View {
 struct RegexListView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var opening: Target?
+    @State private var importing = false
+    @State private var exported: URL?
+    @State private var note: String?
 
     struct Target: Identifiable, Hashable { let id: String }
 
@@ -922,13 +925,33 @@ struct RegexListView: View {
                     model.update { $0.raw["regexRules"] = .array(($0.raw["regexRules"]?.array ?? []) + [.object(row)]) }
                     if model.problem == nil, let id = row["id"]?.string { opening = Target(id: id) }
                 }
+                Button("导入规则") { importing = true }
+                if !RegexRules.list(model.s).isEmpty {
+                    Button("导出全部规则") {
+                        do { exported = try RegexRules.exportFile(model.s) } catch { model.problem = "未能导出：\(error.localizedDescription)" }
+                    }
+                }
+                if let exported {
+                    ShareLink(item: exported) { Label("存储或发送导出的规则", systemImage: "square.and.arrow.up") }
+                }
+                if let note { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText) }
             } footer: {
-                HelpNote("把消息里的字词换成别的写法。每条规则可以只改屏幕上的显示、只改发给角色的聊天记录，或两边都改。存着的原文不变，关闭规则后立即恢复原样。规则按列表顺序依次套用，长按拖动调整先后。不调用接口。", title: "正则替换")
+                HelpNote("把消息里的字词换成别的写法。每条规则可以只改屏幕上的显示、只改发给角色的聊天记录，或两边都改。存着的原文不变，关闭规则后立即恢复原样。规则按列表顺序依次套用，长按拖动调整先后。导入读本应用（网页版或原生版）导出的规则文件，接在现有规则后面。不调用接口。", title: "正则替换")
             }
             ProblemSection(text: model.problem)
         }
         .navigationTitle("正则替换")
         .navigationDestination(item: $opening) { t in RegexEditView(ruleId: t.id) }
+        .documentPicker(isPresented: $importing, types: [.json]) { urls in
+            guard let url = urls.first else { return }
+            do {
+                let data = try Data(contentsOf: url)
+                var failure: Error?
+                var n = 0
+                model.update { do { n = try RegexRules.importData(&$0, data) } catch { failure = error } }
+                if let failure { model.problem = failure.localizedDescription } else if model.problem == nil { note = "已导入 \(n) 条规则" }
+            } catch { model.problem = "无法读取文件：\(error.localizedDescription)" }
+        }
         .onAppear { model.reload() }
     }
 
