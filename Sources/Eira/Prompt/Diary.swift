@@ -7,7 +7,7 @@ import Foundation
 /// 你点「现在写一篇」（手动，一次请求），或者每天到了设定时刻之后自动一次（char.diaryAuto，默认关；
 /// 先占住当天再发，失败也算试过，当天不再自动第二次）。
 ///
-/// 原生版暂未做：你的日记上锁（要应用锁屏密码）、日历与心情（随健康 app 做）、放图片。
+/// 原生版暂未做：你的日记上锁（要应用锁屏密码）、放图片。
 enum Diary {
     static let me = "me"
     static let kinds: [(id: String, label: String)] = [("full", "完整"), ("short", "简短"), ("unfinished", "未写完")]
@@ -156,6 +156,130 @@ enum Diary {
     /// 你的日记里，这个角色读得到的：公开、关联它或不关联任何角色，日期不早于 since。
     static func mineShownTo(_ charId: String, _ pid: String, since: String = "") throws -> [Entry] {
         try mine(pid).filter { $0.visibility == "public" && ($0.charId.isEmpty || $0.charId == charId) && (since.isEmpty || $0.date >= since) }
+    }
+
+    // MARK: - 日历与当天（网页版 diary.js 的 month、moodOn、on、timeline、pastYears）
+
+    /// 心情：先读健康 app 里那一天的；角色没有时读它那一天日记里自己给的
+    static func moodOn(_ who: String, _ date: String, _ pid: String = personaId()) -> String {
+        let h = Health.day(who, date).mood
+        if !h.isEmpty || who == me { return h }
+        return ((try? ofChar(who, pid)) ?? []).first { $0.date == date && !$0.mood.isEmpty }?.mood ?? ""
+    }
+
+    /// 你那一天的心情，直接写进健康 app（不另存一份）
+    static func setMyMood(_ date: String, _ mood: String) throws {
+        try Health.set(me, date, ["mood": .string(moods.contains { $0.id == mood } ? mood : "")])
+    }
+
+    struct Cell: Equatable { var me = "", char = "", mine = 0, theirs = 0 }
+
+    /// 一个月的格子。charId 空时 theirs 数所有角色的
+    static func month(_ year: Int, _ month1: Int, charId: String, _ pid: String = personaId()) -> [String: Cell] {
+        let prefix = String(format: "%04d-%02d-", year, month1)
+        var out: [String: Cell] = [:]
+        for r in (try? Database.shared.all("diaries")) ?? [] {
+            let e = Entry(row: r)
+            guard e.date.hasPrefix(prefix), samePersona(e, pid) else { continue }
+            if e.mine { out[e.date, default: Cell()].mine += 1 }
+            else if charId.isEmpty || e.owner == charId { out[e.date, default: Cell()].theirs += 1 }
+        }
+        var comps = DateComponents(); comps.year = year; comps.month = month1
+        let days = Calendar(identifier: .gregorian).date(from: comps).flatMap { Calendar(identifier: .gregorian).range(of: .day, in: .month, for: $0)?.count } ?? 30
+        for i in 1...days {
+            let date = prefix + String(format: "%02d", i)
+            let m = Health.day(me, date).mood
+            let c = charId.isEmpty ? "" : moodOn(charId, date, pid)
+            if !m.isEmpty || !c.isEmpty { out[date, default: Cell()].me = m; out[date, default: Cell()].char = c }
+        }
+        return out
+    }
+
+    /// 某一天的全部日记。charId 给了就只要你的与这个角色的
+    static func on(_ date: String, charId: String, _ pid: String = personaId()) -> [Entry] {
+        ((try? Database.shared.all("diaries")) ?? []).map(Entry.init(row:))
+            .filter { $0.date == date && samePersona($0, pid) && (charId.isEmpty || $0.mine || $0.owner == charId) }
+            .sorted { $0.created < $1.created }
+    }
+
+    /// 可以在日历上切换的角色：和当前身份有私聊的，外加写过日记的
+    static func charChoices(_ pid: String = personaId()) -> [Character] {
+        var ids = ((try? writers(pid)) ?? []).map(\.char.id)
+        for c in (try? Repo.characters()) ?? [] where (c.parentId ?? "").isEmpty && !c.isNpc && !ids.contains(c.id) {
+            if chatWith(c.id, pid) != nil { ids.append(c.id) }
+        }
+        return ids.compactMap { (try? Repo.character($0)) ?? nil }
+    }
+
+    struct Event: Equatable {
+        var at: Double
+        var time: String
+        var type: String      // chat、letter、letterDue、anniversary、diary
+        var title = ""
+        var count = 0
+        var last = ""
+        var mine = false
+        var years = 0
+        var chatId = ""
+        var diaryId = ""
+    }
+
+    private static func hm(_ ms: Double) -> String {
+        let f = DateFormatter(); f.dateFormat = "HH:mm"
+        return f.string(from: Date(millis: ms))
+    }
+
+    private static func localDate(_ ms: Double) -> String { key(Date(millis: ms), .current) }
+
+    /// 一条消息在时间线上怎么显示：文字取头一截，别的写种类
+    static func lineOf(_ m: Message) -> String {
+        if m.kind == "image" || !m.imageId.isEmpty { return "[图片]" }
+        if m.kind == "voice" { return "[语音]" }
+        if m.kind == "sticker" { return "[表情]" }
+        let t = m.content.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return t.count > 40 ? String(t.prefix(40)) + "…" : t
+    }
+
+    /// 这一天发生过的事，按时间排好。只读已有的记录，不调接口
+    static func timeline(_ date: String, charId: String, _ pid: String = personaId()) -> [Event] {
+        var out: [Event] = []
+        if !charId.isEmpty, let chat = chatWith(charId, pid) {
+            let all = (try? Repo.messages(chatId: chat.id)) ?? []
+            let said = all.filter { !$0.isError && !["side", "notice", "letter"].contains($0.kind) && localDate($0.createdAt) == date }
+            if let first = said.first, let last = said.last {
+                out.append(Event(at: first.createdAt, time: first.createdAt == last.createdAt ? hm(first.createdAt) : "\(hm(first.createdAt)) – \(hm(last.createdAt))",
+                                 type: "chat", count: said.count, last: lineOf(last), chatId: chat.id))
+            }
+            for m in all where m.kind == "letter" && localDate(m.createdAt) == date {
+                out.append(Event(at: m.createdAt, time: hm(m.createdAt), type: "letter", title: m.row.string("title"), mine: m.role == .user, chatId: chat.id))
+            }
+            for d in Space.drafts(chat.id) {
+                let at = d.number("sendAt") ?? 0
+                if at > 0 && localDate(at) == date {
+                    out.append(Event(at: at, time: hm(at), type: "letterDue", title: d.string("title"), chatId: chat.id))
+                }
+            }
+            let md = String(date.suffix(5))
+            for x in Space.days(chat.id) {
+                let d = x.string("date")
+                if d == date || (x.bool("yearly") && String(d.suffix(5)) == md && d < date) {
+                    out.append(Event(at: 0, time: "全天", type: "anniversary", title: x.string("title"),
+                                     years: d < date ? (Int(date.prefix(4)) ?? 0) - (Int(d.prefix(4)) ?? 0) : 0))
+                }
+            }
+        }
+        for e in on(date, charId: charId, pid) {
+            out.append(Event(at: e.created, time: hm(e.created), type: "diary", diaryId: e.id))
+        }
+        return out.sorted { $0.at < $1.at }
+    }
+
+    /// 往年的这一天写过的日记，新的在前
+    static func pastYears(_ date: String, charId: String, _ pid: String = personaId()) -> [Entry] {
+        let md = String(date.suffix(5))
+        return sorted(((try? Database.shared.all("diaries")) ?? []).map(Entry.init(row:)).filter {
+            samePersona($0, pid) && $0.date < date && String($0.date.suffix(5)) == md && (charId.isEmpty || $0.mine || $0.owner == charId)
+        })
     }
 
     // MARK: - 你的日记

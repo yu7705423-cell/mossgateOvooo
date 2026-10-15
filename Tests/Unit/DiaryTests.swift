@@ -107,4 +107,36 @@ final class DiaryTests: StoreTestCase {
         XCTAssertTrue(try Database.shared.all("diaries", where: "char_a").isEmpty)
         XCTAssertEqual(try Diary.mine().first?.charId, "")
     }
+
+    /// 日历：心情读健康 app（我的写进去也写到那里），角色没有时读它那天日记里的；格子数日记；当天时间线与往年的今天
+    func testCalendarMoodTimeline() throws {
+        let f = DateFormatter(); f.dateFormat = "yyyy-MM-dd"
+        let chatDay = f.string(from: Date(millis: 1_760_000_002_000))
+        try Diary.saveMine(date: chatDay, title: "那天", text: "写了一点", visibility: "self", charId: "")
+        try Database.shared.put("diaries", Row.new(prefix: "dy", ["owner": .string("char_a"), "date": .string(chatDay),
+                                                                 "text": .string("角色的"), "mood": .string("low"), "personaId": .string("me_root")]))
+        try Diary.setMyMood(chatDay, "good")
+        XCTAssertEqual(Health.day(Diary.me, chatDay).mood, "good")
+        XCTAssertEqual(Diary.moodOn("char_a", chatDay), "low")
+
+        let p = chatDay.split(separator: "-").compactMap { Int($0) }
+        let cells = Diary.month(p[0], p[1], charId: "char_a")
+        XCTAssertEqual(cells[chatDay]?.me, "good")
+        XCTAssertEqual(cells[chatDay]?.char, "low")
+        XCTAssertEqual(cells[chatDay]?.mine, 1)
+        XCTAssertEqual(cells[chatDay]?.theirs, 1)
+        XCTAssertEqual(Diary.on(chatDay, charId: "char_a").count, 2)
+        XCTAssertTrue(Diary.charChoices().contains { $0.id == "char_a" })
+
+        let tl = Diary.timeline(chatDay, charId: "char_a")
+        XCTAssertEqual(tl.filter { $0.type == "diary" }.count, 2)
+        let chat = try XCTUnwrap(tl.first { $0.type == "chat" })
+        XCTAssertEqual(chat.count, 3)
+        XCTAssertEqual(chat.last, "[图片]")
+
+        // 往年的今天：一年后的同一天读得到这两篇
+        let next = "\(p[0] + 1)" + chatDay.dropFirst(4)
+        XCTAssertEqual(Diary.pastYears(next, charId: "char_a").count, 2)
+        XCTAssertTrue(Diary.pastYears(next, charId: "char_b").allSatisfy(\.mine))
+    }
 }
