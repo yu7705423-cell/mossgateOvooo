@@ -254,3 +254,99 @@ struct OnThisDayView: View {
         return String(format: "%02d:%02d", c.hour ?? 0, c.minute ?? 0)
     }
 }
+
+/// 互动标识（网页版 BadgeBits）：火花、等级、成长、隐藏成就、节日限定。全部本机按聊天记录算，不调接口
+struct BadgesView: View {
+    let chatId: String
+    @State private var chat: Chat?
+    @State private var show = true
+    @State private var aware = false
+    @State private var loaded = false
+    @State private var problem: String?
+
+    var body: some View {
+        List {
+            if let chat { content(chat) }
+            Section {
+                Toggle("显示标识", isOn: $show)
+                Toggle("让角色知道", isOn: $aware)
+                HelpNote("显示标识：在会话顶部的名字后面显示火花与连续互发的天数。让角色知道：连续互发的天数、今天是否已经互发、等级与刚解锁的标识写进提示词，默认关闭。标识全部在本机按聊天记录计算，不调用接口。一天里你与角色都至少发过一条，这一天才算互发。", title: "互动标识")
+                Button("重新统计") {
+                    do { try Badges.sync(chatId, full: true); reload() } catch { problem = "统计失败：\(error.localizedDescription)" }
+                }
+            }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle("互动标识")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            do { try Badges.sync(chatId) } catch { problem = "统计失败：\(error.localizedDescription)" }
+            reload()
+            show = Badges.shown(chat)
+            aware = Badges.aware(chat)
+            loaded = true
+        }
+        .onChange(of: show) { _, v in set("badgeShow", v) }
+        .onChange(of: aware) { _, v in set("badgeAware", v) }
+    }
+
+    @ViewBuilder
+    private func content(_ chat: Chat) -> some View {
+        let s = Badges.streak(chat)
+        let st = chat.row["stats"]?.object ?? [:]
+        let unlocked = chat.row["unlocked"]?.object ?? [:]
+        Section("火花") {
+            row("连续互发", s.n > 0 ? "\(s.n) 天" + (s.form.map { " · \($0.name)" } ?? "") : "尚未开始")
+            Text(["lit": "今天已经互发。", "risk": "今天尚未互发，零点之后火花熄灭。",
+                  "ember": "火花昨天熄灭。今天由对方先开口并互发，可以接上。", "out": "火花已熄灭。"][s.state] ?? "你与角色在同一天都发过消息，火花就会点燃。")
+                .font(.footnote).foregroundStyle(Theme.text2)
+            row("最长", "\(s.best) 天")
+        }
+        let lv = Badges.level(chat)
+        Section("等级") {
+            row(lv.name, "第 \(lv.level) / \(lv.max) 级")
+            ProgressView(value: lv.progress)
+        }
+        Section("成长") {
+            ForEach(Badges.tiers.filter { !$0.onlyLove || (chat.row.number("loveStartAt") ?? 0) > 0 }, id: \.id) { t in
+                let v = Badges.tierValue(t, st, chat: chat, now: Date().millis)
+                let next = t.steps.first { v < $0 }
+                row(t.name, "\(v) \(t.unit)" + (next.map { " · 下一档 \($0)" } ?? " · 已满"))
+            }
+        }
+        Section("隐藏成就") {
+            ForEach(Badges.achievements, id: \.id) { a in
+                if unlocked[a.id] != nil {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(a.name)
+                        Text(a.desc).font(.footnote).foregroundStyle(Theme.text2)
+                    }
+                } else {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("尚未解锁").foregroundStyle(Theme.text3)
+                        Text(a.hint).font(.footnote).foregroundStyle(Theme.text3)
+                    }
+                }
+            }
+        }
+        let lim = (chat.row["limited"]?.object ?? [:]).keys.sorted()
+        if !lim.isEmpty {
+            Section("节日限定") {
+                ForEach(lim, id: \.self) { id in Text(Badges.label(id)) }
+            }
+        }
+    }
+
+    private func row(_ k: String, _ v: String) -> some View {
+        HStack { Text(k); Spacer(); Text(v).foregroundStyle(Theme.text2) }
+    }
+
+    private func reload() { chat = (try? Repo.chat(chatId)) ?? nil }
+
+    private func set(_ key: String, _ v: Bool) {
+        guard loaded, var c = (try? Repo.chat(chatId)) ?? nil else { return }
+        c.row[key] = .bool(v)
+        c.row.touch()
+        do { try Repo.save(c); reload() } catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+}

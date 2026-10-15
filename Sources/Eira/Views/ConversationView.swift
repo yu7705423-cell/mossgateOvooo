@@ -86,6 +86,8 @@ struct ConversationView: View {
     @State private var showScenes = false
     @State private var showLore = false
     @State private var showGeo = false
+    /// 火花（互动标识）
+    @State private var fire: Badges.StreakState?
     @State private var panelMore = false
     @State private var editingPanel = false
     @FocusState private var typing: Bool
@@ -141,6 +143,18 @@ struct ConversationView: View {
             if picking == nil {
                 ToolbarItem(placement: .primaryAction) {
                     Button { showSettings = true } label: { NavIcon("more") }.accessibilityLabel("会话设置")
+                }
+            }
+            // 名字后面的火花与连续互发天数（互动标识，这段对话自己的开关，默认显示）
+            if picking == nil, let fire, fire.n > 0, ["lit", "risk", "ember"].contains(fire.state) {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 4) {
+                        Text(pageTitle).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                        SvgIcon(name: "flame", size: 14, color: fire.state == "lit" ? Theme.text : Theme.text3)
+                        Text("\(fire.n)").font(.system(size: 13).monospacedDigit()).foregroundStyle(fire.state == "lit" ? Theme.text : Theme.text3)
+                    }
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel("\(pageTitle)，连续互发 \(fire.n) 天" + (fire.state == "lit" ? "" : "，今天尚未互发"))
                 }
             }
         }
@@ -1330,7 +1344,10 @@ struct ConversationView: View {
 
     private func reload() {
         do {
+            // 互动标识按聊天记录增量同步，不调接口；同步完再读会话，统计跟着最新的
+            do { try Badges.sync(chatId) } catch { Diagnostics.shared.record("badges-sync-failed", ["error": error.localizedDescription]) }
             chat = try Repo.chat(chatId)
+            fire = Badges.shown(chat) ? Badges.streak(chat) : nil
             look = chat.map(ChatLook.of) ?? ChatLook.Look()
             archivedChat = chat.map(Archive.chatArchived) ?? false
             skin = Skins.look(Skins.of(chat))

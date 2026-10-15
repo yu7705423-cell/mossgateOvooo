@@ -159,6 +159,8 @@ struct ChatSettingsView: View {
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "", keys: "总结 记住",
             dest: AnyView(MenuPage("记忆总结") { summarySection }))
+        add("badges", "记忆", "互动标识", Badges.streak(c).n > 0 ? "连续 \(Badges.streak(c).n) 天" : "", keys: "火花 连续互发 成就 等级 亲密度",
+            dest: AnyView(BadgesView(chatId: chatId)))
         add("otd", "记忆", "那年今天", keys: "往年 去年今天 回忆",
             dest: AnyView(OnThisDayView(chatId: chatId)))
         if !c.isGroup {
