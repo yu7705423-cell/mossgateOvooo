@@ -85,6 +85,7 @@ struct ConversationView: View {
     @State private var calling: CallTarget?
     @State private var showScenes = false
     @State private var showLore = false
+    @State private var showGeo = false
     @State private var panelMore = false
     @State private var editingPanel = false
     @FocusState private var typing: Bool
@@ -155,6 +156,7 @@ struct ConversationView: View {
         }
         .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
         .navigationDestination(isPresented: $editingPanel) { PanelEditView() }
+        .navigationDestination(isPresented: $showGeo) { GeoView(chatId: chatId) }
         .navigationDestination(isPresented: $showLore) {
             if let char { LoreQuickView(charId: char.id) }
         }
@@ -622,6 +624,7 @@ struct ConversationView: View {
         case "takeout": panelButton("bag", "外卖") { composing = .takeout }
         case "location": panelButton("map", "位置") { composing = .location }
         case "pat": panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
+        case "share": panelButton("compass", "共享位置") { showGeo = true }
         case "file": panelButton("folder", "文件") { filePicking = true }
         default: EmptyView()
         }

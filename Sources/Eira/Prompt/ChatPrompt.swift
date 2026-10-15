@@ -99,6 +99,8 @@ enum ChatPrompt {
             "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
             // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
             "space": Space.block(chat, now: now),
+            // 共享位置：会话里开了、两端都填了才有；距离本机算好（网页版 context/geo.js）
+            "geo": Geo.block(chat),
             // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
             "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
             // 你的日程（「日常 - 我的日程」）：没有日程时为空；不给这个角色看的整段不给
@@ -367,7 +369,7 @@ enum ChatPrompt {
     /// 顺序照网页版 CAPS 数组：图片、语音、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
-    static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent",
+    static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent", "geo",
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",

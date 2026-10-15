@@ -101,3 +101,75 @@ struct LoreQuickView: View {
         catch { problem = "保存失败：\(error.localizedDescription)" }
     }
 }
+
+/// 共享位置（网页版 SharePage）：两端各填一个地方，距离本机算好告诉角色
+struct GeoView: View {
+    let chatId: String
+    @State private var on = false
+    @State private var me = Geo.Spot()
+    @State private var char = Geo.Spot()
+    @State private var charName = "角色"
+    @State private var loaded = false
+    @State private var problem: String?
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("共享位置", isOn: $on)
+                HelpNote("开启并填好两端的位置后，双方所在地与直线距离写进提示词。距离由本机计算，角色照着说，不自己估。坐标由你填写，不读取手机定位。不另外调用接口。", title: "共享位置")
+                if on, let km = Geo.distance(me, char) {
+                    HStack { Text("直线距离"); Spacer(); Text(Geo.distanceText(km)).foregroundStyle(Theme.text2) }
+                }
+            }
+            spotSection("我在", spot: $me, side: "me")
+            spotSection("\(charName)在", spot: $char, side: "char")
+            ProblemSection(text: problem)
+        }
+        .navigationTitle("共享位置")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let chat = (try? Repo.chat(chatId)) ?? nil
+            let st = Geo.state(chat)
+            on = st.on
+            me = st.me ?? Geo.Spot()
+            char = st.char ?? Geo.Spot()
+            if let id = chat?.characterIds.first, let c = (try? Repo.character(id)) ?? nil { charName = c.name }
+            loaded = true
+        }
+        .onChange(of: on) { _, v in
+            guard loaded else { return }
+            do { try Geo.setOn(chatId, v) } catch { problem = "保存失败：\(error.localizedDescription)" }
+        }
+    }
+
+    private func spotSection(_ title: String, spot: Binding<Geo.Spot>, side: String) -> some View {
+        Section {
+            Menu {
+                ForEach(Geo.cities, id: \.name) { c in
+                    Button(c.name) { spot.wrappedValue = Geo.Spot(place: c.name, lat: c.lat, lng: c.lng); save(side, spot.wrappedValue) }
+                }
+            } label: { Label("选一个常用城市", systemImage: "mappin.and.ellipse") }
+            TextField("地点名称", text: Binding(get: { spot.wrappedValue.place }, set: { spot.wrappedValue.place = $0 }))
+                .onSubmit { save(side, spot.wrappedValue) }
+            HStack {
+                TextField("纬度", text: coord(spot, \.lat)).keyboardType(.numbersAndPunctuation).onSubmit { save(side, spot.wrappedValue) }
+                TextField("经度", text: coord(spot, \.lng)).keyboardType(.numbersAndPunctuation).onSubmit { save(side, spot.wrappedValue) }
+            }
+            HStack {
+                Button("保存") { save(side, spot.wrappedValue) }
+                Spacer()
+                Button("清空", role: .destructive) { spot.wrappedValue = Geo.Spot(); save(side, nil) }
+            }
+            .buttonStyle(.borderless)
+        } header: { Text(title) }
+    }
+
+    private func coord(_ spot: Binding<Geo.Spot>, _ key: WritableKeyPath<Geo.Spot, Double?>) -> Binding<String> {
+        Binding(get: { spot.wrappedValue[keyPath: key].map { String($0) } ?? "" },
+                set: { spot.wrappedValue[keyPath: key] = Double($0.trimmingCharacters(in: .whitespaces)) })
+    }
+
+    private func save(_ side: String, _ spot: Geo.Spot?) {
+        do { try Geo.setSpot(chatId, side: side, spot) } catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+}

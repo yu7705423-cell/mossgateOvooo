@@ -6,7 +6,7 @@ final class PanelTests: XCTestCase {
     func testDefaults() {
         let s = AppSettings(raw: [:])
         XCTAssertEqual(Panel.order(s).first, "lore")
-        XCTAssertEqual(Panel.more(s), ["lore", "dice", "file"])
+        XCTAssertEqual(Panel.more(s), ["lore", "dice", "file", "share"])
         XCTAssertFalse(Panel.onPanel(s, group: false).contains("lore"))
         XCTAssertEqual(Set(Panel.onPanel(s, group: true)), ["photo", "voice", "song", "offline"])
     }
