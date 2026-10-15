@@ -86,6 +86,8 @@ struct VoiceComposeView: View {
     @State private var typed = ""
     @State private var typing = false
     @State private var problem: String?
+    /// 停下了、还没发的那一段
+    @State private var pending: (Data, Int)?
 
     var body: some View {
         NavigationStack {
@@ -100,17 +102,38 @@ struct VoiceComposeView: View {
                     Button("发送", action: sendTyped)
                         .buttonStyle(.bordered)
                         .disabled(typed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                } else if let got = pending {
+                    // 停下之后先看一眼，再决定发不发
+                    Text("\(got.1)\u{2033}").font(.title3.monospacedDigit())
+                    Text(recorder.live.isEmpty ? (recorder.listening ? "未识别出文字。" : "录音已停止。") : recorder.live)
+                        .font(.body).foregroundStyle(recorder.live.isEmpty ? Theme.secondaryText : Theme.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Theme.pad)
+                        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                    HStack(spacing: Theme.pad * 2) {
+                        Button("重新录") { pending = nil; start() }.buttonStyle(.borderless)
+                        Button("发送", action: send).buttonStyle(.bordered)
+                    }
+                    Text(AppSettings.load().asrReady
+                         ? "发送后交给语音识别接口转成文字，每条调用一次。上面的文字由系统识别，仅供预览。"
+                         : "以上文字由系统识别，随语音一并发出，不调用接口。")
+                        .font(.footnote).foregroundStyle(Theme.secondaryText).multilineTextAlignment(.center)
                 } else {
                     Text(recorder.recording ? "\(recorder.seconds)\u{2033}" : "点按开始录音")
                         .font(.title3.monospacedDigit())
+                    if recorder.recording && recorder.listening {
+                        Text(recorder.live.isEmpty ? "正在识别" : recorder.live)
+                            .font(.body).foregroundStyle(recorder.live.isEmpty ? Theme.secondaryText : Theme.text)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(Theme.pad)
+                            .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                    }
                     Button(action: toggle) {
                         Image(systemName: recorder.recording ? "stop.circle" : "mic.circle")
                             .font(.system(size: 64))
                     }
-                    .accessibilityLabel(recorder.recording ? "停止并发送" : "开始录音")
-                    Text(AppSettings.load().asrReady
-                         ? "录音结束后交给语音识别接口转成文字，每条调用一次。"
-                         : "未配置语音识别接口，录音结束后由系统识别转成文字，不调用接口。")
+                    .accessibilityLabel(recorder.recording ? "停止录音" : "开始录音")
+                    Text("录音时由系统同时识别出文字，停止后确认再发送。")
                         .font(.footnote).foregroundStyle(Theme.secondaryText).multilineTextAlignment(.center)
                 }
                 if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
@@ -125,7 +148,10 @@ struct VoiceComposeView: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button(typing ? "改为录音" : "改为输入") {
+                        // 停下的那一段识别出了文字，带进输入框
+                        if !typing && !recorder.live.isEmpty && typed.isEmpty { typed = recorder.live }
                         recorder.cancel()
+                        pending = nil
                         typing.toggle()
                     }
                 }
@@ -137,21 +163,32 @@ struct VoiceComposeView: View {
     private func toggle() {
         problem = nil
         if recorder.recording {
-            guard let got = recorder.stop() else { problem = "录音为空，未发送。"; return }
-            do {
-                let m = try Asr.sendRecording(got.0, seconds: got.1, chatId: chatId, quote: quote) { updated in
-                    Task { @MainActor in onSent(updated) }
-                }
-                onSent(m)
-                dismiss()
-            } catch {
-                problem = "语音未能保存：\(error.localizedDescription)"
-            }
+            guard let got = recorder.stop() else { problem = "录音为空。"; return }
+            pending = got
         } else {
-            Task {
-                do { try await recorder.start() }
-                catch { await MainActor.run { problem = error.localizedDescription } }
+            start()
+        }
+    }
+
+    private func start() {
+        problem = nil
+        Task {
+            do { try await recorder.start(live: true) }
+            catch { await MainActor.run { problem = error.localizedDescription } }
+        }
+    }
+
+    private func send() {
+        guard let got = pending else { return }
+        do {
+            let m = try Asr.sendRecording(got.0, seconds: got.1, chatId: chatId, quote: quote, heard: recorder.live) { updated in
+                Task { @MainActor in onSent(updated) }
             }
+            pending = nil
+            onSent(m)
+            dismiss()
+        } catch {
+            problem = "语音未能保存：\(error.localizedDescription)"
         }
     }
 

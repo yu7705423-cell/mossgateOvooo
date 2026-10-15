@@ -137,6 +137,14 @@ enum Asr {
     // MARK: - 本机识别
 
     /// 没配识别接口时用系统自带的识别读那段录音。不经网络接口，不计费。
+    /// 系统语音识别有没有授权（没问过的当场问一次）
+    static func speechAuthorized() async -> Bool {
+        let status = await withCheckedContinuation { (c: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
+            SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
+        }
+        return status == .authorized
+    }
+
     static func local(_ url: URL) async -> String {
         let status = await withCheckedContinuation { (c: CheckedContinuation<SFSpeechRecognizerAuthorizationStatus, Never>) in
             SFSpeechRecognizer.requestAuthorization { c.resume(returning: $0) }
@@ -163,19 +171,27 @@ enum Asr {
 
     /// 录好的一段：存成文件，落一条语音消息。配了识别接口就交给接口读，没配用本机识别。
     /// 返回落下的那一条；识别完成后经 onUpdate 交回更新过的那一条。
-    static func sendRecording(_ wav: Data, seconds: Int, chatId: String, quote: Message?,
+    /// heard 是录的时候系统边录边识别出的文字：没配识别接口时直接用它，不再把文件重新识别一遍。
+    static func sendRecording(_ wav: Data, seconds: Int, chatId: String, quote: Message?, heard: String = "",
                               onUpdate: @escaping @Sendable (Message) -> Void) throws -> Message {
         let audioId = try Files.save(wav, ext: "wav", type: "audio/wav")
         let useApi = AppSettings.load().asrReady
+        let heard = heard.trimmingCharacters(in: .whitespacesAndNewlines)
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[语音]", kind: "voice")
         m.row["audioId"] = .string(audioId)
         m.row["seconds"] = .number(Double(max(1, seconds)))
         m.row["status"] = .string("done")
         m.row["media"] = .string("done")
         m.row["asr"] = .string("pending")
+        if !useApi && !heard.isEmpty {
+            m.row["voiceText"] = .string(heard)
+            m.row["asr"] = .string("done")
+            m.row["content"] = .string("[语音：\(heard)]")
+        }
         if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
         m = try Repo.append(m)
         try touchChat(chatId)
+        if !useApi && !heard.isEmpty { return m }
         let id = m.id
         Task.detached {
             var change: (inout Row) -> Void
@@ -240,27 +256,51 @@ enum Asr {
 }
 
 /// 录音：16k 单声道 wav，识别接口与本机识别都直接收。
+/// live 为真时边录边用系统识别出文字（`live`），录音与识别共用同一路麦克风输入（LiveTap），不抢麦克风；
+/// 系统识别用不了（没授权、不支持）时退回普通录音，只是没有实时文字。
 @MainActor
 final class VoiceRecorder: ObservableObject {
     @Published private(set) var recording = false
     @Published private(set) var seconds = 0
+    /// 边录边识别出来的文字（含尚未定稿的部分）
+    @Published private(set) var live = ""
+    /// 这一次录音有没有在实时识别
+    @Published private(set) var listening = false
     private var recorder: AVAudioRecorder?
+    private var tap: LiveTap?
+    private var started: Date?
     private var timer: Timer?
     private var url: URL?
 
-    func start() async throws {
+    func start(live wantLive: Bool = false) async throws {
         let granted = await AVAudioApplication.requestRecordPermission()
         guard granted else { throw StoreError(message: "没有麦克风权限。可在系统「设置 - 隐私与安全性 - 麦克风」中开启。") }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playAndRecord, mode: .default, options: [.defaultToSpeaker])
         try session.setActive(true)
         let u = FileManager.default.temporaryDirectory.appendingPathComponent("rec-\(UUID().uuidString).wav")
-        let settings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1,
-                                       AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
-        let r = try AVAudioRecorder(url: u, settings: settings)
-        guard r.record() else { throw StoreError(message: "录音未能开始") }
-        recorder = r
+        live = ""
+        listening = false
+        if wantLive, await Asr.speechAuthorized(), let rec = SFSpeechRecognizer(), rec.isAvailable {
+            let t = LiveTap()
+            do {
+                try t.start(url: u, recognizer: rec) { [weak self] text in
+                    Task { @MainActor in self?.live = text }
+                }
+                tap = t
+                listening = true
+            } catch {
+                t.stop()
+                try? FileManager.default.removeItem(at: u)
+            }
+        }
+        if tap == nil {
+            let r = try AVAudioRecorder(url: u, settings: Self.wavSettings)
+            guard r.record() else { throw StoreError(message: "录音未能开始") }
+            recorder = r
+        }
         url = u
+        started = Date()
         seconds = 0
         recording = true
         timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
@@ -268,20 +308,89 @@ final class VoiceRecorder: ObservableObject {
         }
     }
 
-    /// 停下，交回录好的那一段与秒数。
+    static let wavSettings: [String: Any] = [AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 16000, AVNumberOfChannelsKey: 1,
+                                             AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false, AVLinearPCMIsBigEndianKey: false]
+
+    /// 停下，交回录好的那一段与秒数。实时识别的文字留在 `live` 里。
     func stop() -> (Data, Int)? {
         timer?.invalidate()
         timer = nil
-        let duration = recorder?.currentTime ?? 0
+        var duration = recorder?.currentTime ?? 0
+        if tap != nil, let started { duration = Date().timeIntervalSince(started) }
         recorder?.stop()
         recorder = nil
+        if let tap { let t = tap.stop(); if !t.isEmpty { live = t } }
+        tap = nil
+        started = nil
         recording = false
         defer { if let url { try? FileManager.default.removeItem(at: url) }; url = nil }
         guard let url, let data = try? Data(contentsOf: url), data.count > 44 else { return nil }
         return (data, max(1, Int(duration.rounded())))
     }
 
-    func cancel() { _ = stop() }
+    func cancel() { _ = stop(); live = "" }
+}
+
+/// 一路麦克风输入，同时写成 16k 单声道 wav、喂给系统识别。tap 在音频线程上跑，所以不挂在主线程那个类上。
+final class LiveTap: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private var file: AVAudioFile?
+    private var request: SFSpeechAudioBufferRecognitionRequest?
+    private var task: SFSpeechRecognitionTask?
+    private let lock = NSLock()
+    private var latest = ""
+
+    var text: String { lock.lock(); defer { lock.unlock() }; return latest }
+
+    func start(url: URL, recognizer: SFSpeechRecognizer, onText: @escaping @Sendable (String) -> Void) throws {
+        let input = engine.inputNode
+        let inFormat = input.outputFormat(forBus: 0)
+        guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else { throw StoreError(message: "没有可用的麦克风输入") }
+        let f = try AVAudioFile(forWriting: url, settings: VoiceRecorder.wavSettings, commonFormat: .pcmFormatInt16, interleaved: true)
+        let outFormat = f.processingFormat
+        guard let conv = AVAudioConverter(from: inFormat, to: outFormat) else { throw StoreError(message: "无法转换录音格式") }
+        let req = SFSpeechAudioBufferRecognitionRequest()
+        req.shouldReportPartialResults = true
+        if recognizer.supportsOnDeviceRecognition { req.requiresOnDeviceRecognition = true }
+        file = f
+        request = req
+        task = recognizer.recognitionTask(with: req) { [weak self] result, _ in
+            guard let self, let result else { return }
+            let t = result.bestTranscription.formattedString
+            self.lock.lock(); self.latest = t; self.lock.unlock()
+            onText(t)
+        }
+        input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { [weak self] buf, _ in
+            guard let self else { return }
+            self.request?.append(buf)
+            let cap = AVAudioFrameCount(Double(buf.frameLength) * outFormat.sampleRate / inFormat.sampleRate) + 64
+            guard let out = AVAudioPCMBuffer(pcmFormat: outFormat, frameCapacity: cap) else { return }
+            var fed = false
+            var err: NSError?
+            conv.convert(to: out, error: &err) { _, status in
+                if fed { status.pointee = .noDataNow; return nil }
+                fed = true
+                status.pointee = .haveData
+                return buf
+            }
+            if err == nil, out.frameLength > 0 { try? self.file?.write(from: out) }
+        }
+        engine.prepare()
+        try engine.start()
+    }
+
+    /// 停下，交回最后识别出的文字。文件在这里关上（AVAudioFile 释放时写好文件头）
+    @discardableResult
+    func stop() -> String {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        request?.endAudio()
+        task?.finish()
+        task = nil
+        request = nil
+        file = nil
+        return text
+    }
 }
 
 /// 播放语音。同一时间只放一条。

@@ -177,6 +177,16 @@ final class VoiceTests: StoreTestCase {
         XCTAssertEqual(MockNet.count, 1)
     }
 
+    /// 没配识别接口：录的时候系统边录边识别出的文字直接用上，落库即完成，不再识别、不调接口
+    func testLiveHeardUsedWithoutApi() async throws {
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let m = try Asr.sendRecording(Data(repeating: 1, count: 100), seconds: 2, chatId: "chat_a", quote: nil, heard: " 在吗 ") { _ in }
+        XCTAssertEqual(m.row.string("asr"), "done")
+        XCTAssertEqual(m.content, "[语音：在吗]")
+        XCTAssertEqual(try Repo.messages(chatId: "chat_a").first { $0.id == m.id }?.row.string("voiceText"), "在吗")
+        XCTAssertEqual(MockNet.count, 0)
+    }
+
     func testScriptPlanAndText() {
         let raw = "<情绪 平静>你回来了。<停顿 0.8><声音 叹气><情绪 生气>今天怎么这么晚？"
         XCTAssertEqual(VoiceScript.plain(raw), "你回来了。今天怎么这么晚？")
