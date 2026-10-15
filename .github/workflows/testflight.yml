@@ -163,6 +163,7 @@ jobs:
           ls -l "$RUNNER_TEMP/export"
 
       - name: 上传到 App Store Connect
+        id: upload
         run: |
           mkdir -p ~/.appstoreconnect/private_keys
           printf '%s\n' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
@@ -182,6 +183,12 @@ jobs:
       - name: 收回证书与描述文件
         if: always()
         run: |
-          [ -x "$RUNNER_TEMP/venv/bin/python" ] && "$RUNNER_TEMP/venv/bin/python" scripts/asc.py cleanup "$SIGN_DIR" || true
+          # 传成功的这一次证书留着：苹果处理构建时证书已撤就退回（ITMS-90035，网页版仓库 ios/asc.py 踩过）。
+          # 下一次申请之前由 asc.py 收掉更早的旧证书
+          if [ "${{ steps.upload.outcome }}" = "success" ]; then
+            echo "已上传，这次的证书留到处理完；下一次运行前收回更早的旧证书"
+          else
+            [ -x "$RUNNER_TEMP/venv/bin/python" ] && "$RUNNER_TEMP/venv/bin/python" scripts/asc.py cleanup "$SIGN_DIR" || true
+          fi
           security delete-keychain "$RUNNER_TEMP/eira.keychain-db" 2>/dev/null || true
           rm -rf "$SIGN_DIR" ~/.appstoreconnect

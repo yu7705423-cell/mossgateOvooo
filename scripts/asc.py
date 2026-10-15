@@ -8,10 +8,12 @@
 
 照抄网页版仓库的 ios/asc.py（ARCHITECTURE 4.548），只去掉了补 HealthKit 那一段：原生版用不到。
 
-为什么每次现申请、用完就撤：
-  把证书导出成 p12 放进仓库机密，要用户自己在 Mac 的钥匙串里做，而用户没有 Mac。发布证书一个账号只能有两三张，
-  每次申请一张不撤的话第三次就申请不下来。撤销发布证书不影响已经传上去的构建
-  （Apple 的说明：已在 App Store 与 TestFlight 里的不受影响），所以传完就撤。
+为什么每次现申请：
+  把证书导出成 p12 放进仓库机密，要用户自己在 Mac 的钥匙串里做，而用户没有 Mac。
+传完不撤：网页版仓库踩过（ios/asc.py 的说明），苹果处理构建时证书已撤就是 ITMS-90035（签名无效），构建被退回。
+  所以传成功就留着；发布证书一个账号只能有两三张（网页版的工作流也在用同一个账号），下一次申请之前先收掉
+  这个工作流以前申请的、除最近一张以外的旧证书；满了申请不下来，再把最近那张也收掉重试。
+  哪几张是这个工作流申请的，靠它建的描述文件认（名字以 PREFIX 开头），网页版那边（Eira CI）与用户自己的证书不碰。
 """
 import base64
 import json
@@ -25,6 +27,7 @@ import urllib.request
 import jwt  # PyJWT，工作流里装
 
 API = 'https://api.appstoreconnect.apple.com/v1'
+PREFIX = 'Eiraowo CI '   # 这个工作流建的描述文件都叫这个开头，后面是建的时间
 
 
 def token():
@@ -61,8 +64,16 @@ def prepare(bundle, out):
     csr = os.path.join(out, 'csr.pem')
     subprocess.run(['/usr/bin/openssl', 'req', '-new', '-newkey', 'rsa:2048', '-nodes', '-keyout', key,
                     '-subj', '/CN=Eiraowo GitHub Actions', '-out', csr], check=True, capture_output=True)
-    cert = call('POST', '/certificates', {'data': {'type': 'certificates', 'attributes': {
-        'certificateType': 'DISTRIBUTION', 'csrContent': open(csr).read()}}})['data']
+    # 以前留下的旧证书：最近那张留着（它签的构建可能还在处理），更早的收掉。满了申请不下来就连最近那张也收掉再试一次
+    prune(keep=1)
+    body = {'data': {'type': 'certificates', 'attributes': {
+        'certificateType': 'DISTRIBUTION', 'csrContent': open(csr).read()}}}
+    try:
+        cert = call('POST', '/certificates', body)['data']
+    except SystemExit as e:
+        print(f'证书      申请不下来，收掉最近那张旧证书再试：{e}')
+        prune(keep=0)
+        cert = call('POST', '/certificates', body)['data']
     with open(os.path.join(out, 'cert.cer'), 'wb') as f:
         f.write(base64.b64decode(cert['attributes']['certificateContent']))
     ids = {'certificate': cert['id'], 'team': team, 'bundleId': bid}
@@ -70,7 +81,7 @@ def prepare(bundle, out):
 
     # 3. App Store 描述文件：这个包标识 + 刚才那张证书
     prof = call('POST', '/profiles', {'data': {'type': 'profiles',
-        'attributes': {'name': f'Eiraowo CI {int(time.time())}', 'profileType': 'IOS_APP_STORE'},
+        'attributes': {'name': f'{PREFIX}{int(time.time())}', 'profileType': 'IOS_APP_STORE'},
         'relationships': {'bundleId': {'data': {'type': 'bundleIds', 'id': bid}},
                           'certificates': {'data': [{'type': 'certificates', 'id': cert['id']}]}}}})['data']
     with open(os.path.join(out, 'profile.mobileprovision'), 'wb') as f:
@@ -79,6 +90,21 @@ def prepare(bundle, out):
     json.dump(ids, open(os.path.join(out, 'ids.json'), 'w'))
     print(f'证书      已申请（{cert["id"]}），团队 {team}')
     print(f'描述文件  已生成（{prof["id"]}）')
+
+
+def prune(keep):
+    """这个工作流以前建的描述文件与它们的证书，按建的时间留最近 keep 份，其余删掉、撤销"""
+    rows = call('GET', '/profiles?filter[profileType]=IOS_APP_STORE&limit=200').get('data', [])
+    mine = [p for p in rows if str(p['attributes'].get('name', '')).startswith(PREFIX)]
+    mine.sort(key=lambda p: p['attributes']['name'], reverse=True)
+    for p in mine[keep:]:
+        certs = call('GET', f"/profiles/{p['id']}/certificates").get('data', [])
+        for kind, rid in [('profiles', p['id'])] + [('certificates', c['id']) for c in certs]:
+            try:
+                call('DELETE', f'/{kind}/{rid}')
+                print(f'已收回旧的 {kind} {rid}')
+            except SystemExit as e:
+                print(f'没收回旧的 {kind} {rid}：{e}')
 
 
 def cleanup(out):
