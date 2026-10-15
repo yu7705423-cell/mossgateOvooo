@@ -40,8 +40,17 @@ try {
   const r = await musicu({ comm: { ...comm, cv: '4747474', format: 'json', inCharset: 'utf-8', outCharset: 'utf-8' },
     req_1: { module: 'music.search.SearchCgiService', method: 'DoSearchForQQMusicMobile',
       param: { query: '晴天', search_type: 0, num_per_page: 2, page_num: 1, highlight: 0, nqc_flag: 0, multi_zhida: 0, cat: 2, grp: 1, sin: 0, sem: 0 } } });
-  show('search mobile', { status: r.status, code: r.json?.req_1?.code, n: r.json?.req_1?.data?.body?.item_song?.length ?? r.json?.req_1?.data?.body?.song?.list?.length });
+  const b = r.json?.req_1?.data?.body;
+  const it = b?.item_song?.[0] || b?.song?.list?.[0];
+  show('search mobile', { status: r.status, code: r.json?.req_1?.code, bodyKeys: Object.keys(b || {}), n: b?.item_song?.length ?? b?.song?.list?.length });
+  if (it) show('search mobile first', { keys: Object.keys(it), mid: it.mid, id: it.id, name: it.name, title: it.title, singer: it.singer?.map(x => x.name), album: it.album, interval: it.interval, pay: it.pay });
 } catch (e) { show('search mobile error', String(e)); }
+
+// 某人建的歌单（不登录，看返回什么）
+try {
+  const r = await musicu({ comm, req: { module: 'music.musicasset.PlaylistBaseRead', method: 'GetPlaylistByUin', param: { uin: '10001' } } });
+  show('user playlists', { code: r.json?.req?.code, keys: Object.keys(r.json?.req?.data || {}), first: (r.json?.req?.data?.v_playlist || [])[0] });
+} catch (e) { show('user playlists error', String(e)); }
 
 // 歌单：不登录读一张公开歌单
 try {
