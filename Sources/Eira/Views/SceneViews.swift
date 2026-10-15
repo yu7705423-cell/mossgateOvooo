@@ -123,6 +123,10 @@ struct SceneSetupView: View {
                 }
             }
             castSection
+            Section {
+                Toggle("正文附带译文", isOn: $draft.withTrans)
+                HelpNote("开启后，角色说的话后面附上译文，目标语言与这段会话的翻译设置相同；会话未开启翻译时不生效。译文显示在原话后面的括号里，不进入之后的上下文。不另外调用接口，回复会长一些。", title: "线下：正文附带译文")
+            }
             toneSection
             booksSection
             ProblemSection(text: problem)
@@ -278,6 +282,7 @@ struct SceneSetupView: View {
             draft.tones = Tone.ids(r); draft.toneText = r.string("toneText")
             draft.offBookIds = r.strings("offBookIds"); draft.bookIds = r.strings("bookIds")
             draft.autoEnter = r["autoEnter"]?.bool != false
+            draft.withTrans = r.bool("withTrans")
             draft.enterIds = r["enterIds"]?.array?.compactMap(\.string)
             left = Scenes.leftMap(r)
             // 这一场拉进来的会话外的角色也要列出来
@@ -306,7 +311,7 @@ struct SceneSetupView: View {
                     "left": .object(left.filter { draft.castIds.contains($0.key) && $0.value != .null }),
                     "tones": .array(draft.tones.map { .string($0) }), "toneText": .string(draft.toneText),
                     "offBookIds": .array(draft.offBookIds.map { .string($0) }), "bookIds": .array(draft.bookIds.map { .string($0) }),
-                    "autoEnter": .bool(draft.autoEnter),
+                    "autoEnter": .bool(draft.autoEnter), "withTrans": .bool(draft.withTrans),
                 ]
                 patch["enterIds"] = draft.enterIds.map { .array($0.map { .string($0) }) } ?? .null
                 try Scenes.update(sceneId, patch)
@@ -385,6 +390,7 @@ struct SceneReadView: View {
     @State private var showSetup = false
     @State private var showLook = false
     @State private var confirmEnd = false
+    @State private var pendingN = 0
     @State private var dropping: Row?
     @State private var opened = false
     @FocusState private var typing: Bool
@@ -435,7 +441,7 @@ struct SceneReadView: View {
                     if ended {
                         Button("重新开场") { reopen() }
                     } else {
-                        Button("收场") { confirmEnd = true }
+                        Button("收场") { pendingN = pendingCount; confirmEnd = true }
                     }
                 } label: { SvgIcon(name: "more", size: 20, color: look.ink) }
                 .accessibilityLabel("更多")
@@ -450,20 +456,13 @@ struct SceneReadView: View {
             openIfDue()
         }
         .onDisappear { job?.cancel() }
-        .confirmationDialog("收场后输入框关闭，正文保留，可以随时重新开场。", isPresented: $confirmEnd, titleVisibility: .visible) {
-            Button("收场") {
-                do { try Scenes.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)"; return }
-                // 收场摘要是另一个开关（设置 - 用量与上限），开着才写
-                guard SceneRun.summaryOn() else { return }
-                let id = sceneId
-                Task { @MainActor in
-                    do {
-                        let text = try await SceneRun.wrap(id)
-                        notice = text.isEmpty ? "没有可供摘要的内容。" : "已生成这一场的摘要。"
-                        reload()
-                    } catch { problem = "生成摘要失败：\(error.localizedDescription)" }
-                }
+        .confirmationDialog(endPrompt, isPresented: $confirmEnd, titleVisibility: .visible) {
+            // 见面的经过在聊天历史里，超出「历史范围」之后角色就不记得了。整理进记忆要调一次接口，
+            // 花不花这一次由用户在收场的这一刻定（网页版 4.378）
+            if pendingN >= 2 && chat?.isGroup == false {
+                Button("收场，并整理进记忆") { end(memory: true) }
             }
+            Button(pendingN >= 2 && chat?.isGroup == false ? "只收场" : "收场") { end(memory: false) }
         }
         .confirmationDialog("删除这一段及其之后的全部正文。无法恢复。", isPresented: Binding(get: { dropping != nil }, set: { if !$0 { dropping = nil } }),
                             titleVisibility: .visible, presenting: dropping) { b in
@@ -549,7 +548,8 @@ struct SceneReadView: View {
                         if b.bool("pinned") { Text("已钉住").font(.system(size: 11)).foregroundStyle(look.mark) }
                     }
                 }
-                Text(RegexRules.forDisplay(b.string("text"), .init(who: sign.mine ? "user" : "char", whereIs: "offline", charIds: chat?.characterIds ?? [])))
+                Text(Scenes.withTrans(RegexRules.forDisplay(b.string("text"), .init(who: sign.mine ? "user" : "char", whereIs: "offline", charIds: chat?.characterIds ?? [])),
+                                      b["trans"]?.array ?? []))
                     .font(look.font()).foregroundStyle(look.ink)
                     .lineSpacing(look.lineSpacing)
                     .textSelection(.enabled)
@@ -657,6 +657,35 @@ struct SceneReadView: View {
         guard !opened else { return }
         opened = true
         if let scene, beats.isEmpty, scene.string("opening") != Scenes.ME, !ended { write() }
+    }
+
+    private var pendingCount: Int { chat.map { (try? MemorySummary.pending(chatId: $0.id).count) ?? 0 } ?? 0 }
+
+    private var endPrompt: String {
+        let n = pendingN
+        guard n >= 2, chat?.isGroup == false else { return "收场后输入框关闭，正文保留，可以随时重新开场。" }
+        return "收场后这一场仍然保留。见面的经过此刻在聊天历史里，超出「历史范围」之后角色不再记得；整理进记忆后可以长期记得。这段对话尚未整理的有 \(n) 条，整理调用 1 次接口。"
+    }
+
+    private func end(memory: Bool) {
+        do { try Scenes.end(sceneId); reload() } catch { problem = "收场失败：\(error.localizedDescription)"; return }
+        let id = sceneId
+        let chatId = chat?.id ?? ""
+        Task { @MainActor in
+            if memory {
+                do {
+                    let r = try await MemorySummary.extract(chatId: chatId)
+                    notice = r.total > 0 ? "已整理进记忆：新增 \(r.added) 条，更新 \(r.updated) 条。" : "没有需要记录的新信息。"
+                } catch { problem = "整理进记忆失败：\(error.localizedDescription)" }
+            }
+            // 收场摘要是另一个开关（设置 - 用量与上限），开着才写
+            guard SceneRun.summaryOn() else { return }
+            do {
+                let text = try await SceneRun.wrap(id)
+                if !memory { notice = text.isEmpty ? "没有可供摘要的内容。" : "已生成这一场的摘要。" }
+                reload()
+            } catch { problem = "生成摘要失败：\(error.localizedDescription)" }
+        }
     }
 
     private func reopen() {

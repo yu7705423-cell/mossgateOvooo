@@ -199,8 +199,8 @@ enum Scenes {
 
     @discardableResult
     static func addBeat(sceneId: String, role: String, authorId: String = "", text: String, raw: String = "", think: String = "",
-                        at: String = "", hold: Bool = false, now: Date = Date()) throws -> Row {
-        let one: [String: JSONValue] = ["text": .string(text), "raw": .string(raw), "think": .string(think), "at": .string(at), "trans": .array([])]
+                        at: String = "", trans: [JSONValue] = [], hold: Bool = false, now: Date = Date()) throws -> Row {
+        let one: [String: JSONValue] = ["text": .string(text), "raw": .string(raw), "think": .string(think), "at": .string(at), "trans": .array(trans)]
         // 同一毫秒写进去的两段按随机 id 排就乱了：比这一场最后一段至少晚一毫秒
         let last = beatsOf(sceneId).last?.created ?? 0
         var f = one
@@ -226,9 +226,9 @@ enum Scenes {
 
     /// 添一版，并切到它
     @discardableResult
-    static func addSwipe(_ id: String, text: String, raw: String, think: String, at: String) throws -> Row? {
+    static func addSwipe(_ id: String, text: String, raw: String, think: String, at: String, trans: [JSONValue] = []) throws -> Row? {
         guard let row = try Database.shared.get(beats, id: id) else { return nil }
-        let one: [String: JSONValue] = ["text": .string(text), "raw": .string(raw), "think": .string(think), "at": .string(at), "trans": .array([])]
+        let one: [String: JSONValue] = ["text": .string(text), "raw": .string(raw), "think": .string(think), "at": .string(at), "trans": .array(trans)]
         let list = versions(row) + [one]
         var patch = face(one)
         patch["swipes"] = .array(list.map { .object($0) })
@@ -264,7 +264,7 @@ enum Scenes {
 
     /// 接着这一段往下写。续的是当前这一版
     @discardableResult
-    static func appendBeat(_ id: String, text: String, raw: String, at: String) throws -> Row? {
+    static func appendBeat(_ id: String, text: String, raw: String, at: String, trans: [JSONValue] = []) throws -> Row? {
         guard let row = try Database.shared.get(beats, id: id) else { return nil }
         let add = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !add.isEmpty else { return row }
@@ -273,7 +273,7 @@ enum Scenes {
             "raw": .string("\(row.string("raw"))\n\(raw)".trimmingCharacters(in: .whitespacesAndNewlines)),
             "think": .string(row.string("think")),
             "at": .string(row.string("at").isEmpty ? at : row.string("at")),
-            "trans": row["trans"] ?? .array([]),
+            "trans": .array((row["trans"]?.array ?? []) + trans),
         ]
         var list = versions(row)
         if list.isEmpty { list = [merged] } else {
@@ -324,6 +324,22 @@ enum Scenes {
     static func timeOf(_ sceneId: String) -> String {
         for b in beatsOf(sceneId).reversed() where !b.string("at").isEmpty { return b.string("at") }
         return get(sceneId)?.string("at") ?? ""
+    }
+
+    // MARK: - 译文（网页版 4.366、4.394）
+
+    /// 显示用：说的话后面接上译文「原话（译文）」；整段那种（旧数据 { p, t }）接在那一段下面
+    static func withTrans(_ text: String, _ trans: [JSONValue]) -> String {
+        var out = text
+        for t in trans {
+            guard let tr = t["t"]?.string, !tr.isEmpty else { continue }
+            if let q = t["q"]?.string, !q.isEmpty, let r = out.range(of: q) {
+                out.replaceSubrange(r, with: "\(q)（\(tr)）")
+            } else if let p = t["p"]?.string, !p.isEmpty, let r = out.range(of: p) {
+                out.replaceSubrange(r, with: "\(p)\n（\(tr)）")
+            }
+        }
+        return out
     }
 
     // MARK: - 署名

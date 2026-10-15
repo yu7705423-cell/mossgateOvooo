@@ -211,6 +211,10 @@ extension ChatPrompt {
     /// 一次调用写整轮时各人的段落都是它写的，按它要写出来的样子给：【名字】一行，正文跟在下面
     static func sceneHistory(_ scene: Row, chat: Chat, char: Character?, me: Persona?, list: [Row], settings s: AppSettings,
                              volatile: String, recall: String, more: Bool, ensemble: Bool) -> [AIMessage] {
+        // 正文附带译文（4.366）：这一场开了，并且这段会话开着翻译，才出现
+        let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+        let prose = scene.bool("withTrans") && !lang.isEmpty
+            ? Templates.render("skeleton.prose-trans", ["lang": lang, "extra": ""], settings: s) : ""
         let isGroup = scene.strings("castIds").count > 1
         let body = list.filter { $0.string("role") != Scenes.DIRECTOR }
         let n = max(0, Int(s.num("sceneWindow", 0)))
@@ -255,6 +259,7 @@ extension ChatPrompt {
             more ? Templates.get("skeleton.scene-more", settings: s) : "",
             // 贴着输出再说一遍。设定区那一段离这里隔着整场戏
             Templates.render("skeleton.scene-tail", ["userName": userName], settings: s),
+            prose,
         ].filter { !$0.isEmpty }.joined(separator: "\n\n")
         out.append(AIMessage(role: .user, content: tail))
 

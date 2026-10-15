@@ -242,4 +242,31 @@ final class SceneTests: StoreTestCase {
         XCTAssertEqual(text, "前情")
         XCTAssertEqual(MockNet.count, 2)
     }
+    /// 见面发生的事也进记忆：线下正文排进待整理的对话，标明是线下；场外指示不进
+    func testMemorySeesBeats() async throws {
+        let sc = try make()
+        try Scenes.addBeat(sceneId: sc.id, role: Scenes.ME, authorId: "me", text: "MEET_MINE", now: Date().addingTimeInterval(3600))
+        try Scenes.addBeat(sceneId: sc.id, role: Scenes.DIRECTOR, text: "DIRECTOR_NOTE", now: Date().addingTimeInterval(3601))
+        try Scenes.addBeat(sceneId: sc.id, role: Scenes.CHAR, authorId: "char_a", text: "MEET_CHAR", now: Date().addingTimeInterval(3602))
+        let pending = try MemorySummary.pending(chatId: "chat_a")
+        XCTAssertEqual(pending.suffix(2).map(\.content), ["MEET_MINE", "MEET_CHAR"])
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"events":[],"facts":[],"ended":[],"open":[],"closed":[],"state":{}}"#)) }
+        _ = try await MemorySummary.extract(chatId: "chat_a")
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(data: MockNet.requests.first?.httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("MEET_CHAR"))
+        XCTAssertTrue(body.contains("（线下）"))
+        XCTAssertFalse(body.contains("DIRECTOR_NOTE"))
+        // 水位线挪到线下最后一段，积压清零
+        XCTAssertTrue(try MemorySummary.pending(chatId: "chat_a").isEmpty)
+    }
+    func testProseTrans() throws {
+        let r = SceneRun.splitProse("他说：「你好。」[译：Hello.]\n窗外下雨。\n[译文：It rains.]")
+        XCTAssertEqual(r.text, "他说：「你好。」\n窗外下雨。")
+        XCTAssertEqual(r.trans.count, 2)
+        XCTAssertEqual(r.trans[0]["q"]?.string, "「你好。」")
+        XCTAssertEqual(r.trans[1]["p"]?.string, "窗外下雨。")
+        XCTAssertEqual(Scenes.withTrans(r.text, r.trans), "他说：「你好。」（Hello.）\n窗外下雨。\n（It rains.）")
+        XCTAssertEqual(SceneRun.proseLive("「好。」[译：Fi"), "「好。」")
+    }
 }

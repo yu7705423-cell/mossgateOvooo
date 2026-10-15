@@ -22,8 +22,14 @@ enum MemorySummary {
         return at > 0 ? list.filter { $0.createdAt > at } : list
     }
 
+    /// 线上的消息，加上线下各场的正文（按时间排在一起，网页版 4.375）：见面发生的事也要进记忆
     private static func usable(_ chatId: String) throws -> [Message] {
-        try Repo.messages(chatId: chatId).filter { !$0.isError && !$0.content.isEmpty }
+        let online = try Repo.messages(chatId: chatId).filter { !$0.isError && !$0.content.isEmpty }
+        let beats = Scenes.beatsAsMessages(chatId: chatId)
+        guard !beats.isEmpty else { return online }
+        return (online + beats).enumerated().sorted { a, b in
+            a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
+        }.map(\.element)
     }
 
     /// 还没总结过的。
@@ -288,7 +294,12 @@ enum MemorySummary {
         let isPronoun = pronoun.firstMatch(in: pname, range: NSRange(pname.startIndex..., in: pname)) != nil
         let userLabel = !pname.isEmpty && pname.count <= 24 && !isPronoun ? pname : "User"
         let who = Templates.render("task.memory-who", ["user": userLabel, "chars": "\"\(char.name)\""], settings: s)
-        let dialogue = timeline(batch) { $0.role == .user ? userLabel : char.name }
+        // 线下正文前面标一下是见面时的事；群戏里别的角色写的那段署它自己的名字
+        let dialogue = timeline(batch) { m in
+            let name = m.role == .user ? userLabel
+                : (m.authorId == char.id || m.authorId.isEmpty ? char.name : (((try? Repo.character(m.authorId)) ?? nil)?.name ?? char.name))
+            return m.kind == "beat" ? "\(name)（线下）" : name
+        }
 
         let opens = existing.filter { $0.kind == .open && $0.status == "open" }
         let openText = opens.isEmpty ? "(none)" : opens.map { m in

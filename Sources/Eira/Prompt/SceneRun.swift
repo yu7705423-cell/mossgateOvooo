@@ -86,6 +86,58 @@ enum SceneRun {
             .trimmingCharacters(in: .whitespaces)
     }
 
+    // MARK: - 译文（网页版 translate.splitProse）
+
+    private static let quoteTrans = ReplyParser.regex(#"(「[^」\n]*」|『[^』\n]*』|“[^”\n]*”|"[^"\n]*")[ \t]*[\[【]\s*(?:译|译文|翻译)\s*[:：]\s*([^\]】\n]*?)\s*[\]】]"#, [])
+    private static let proseLine = ReplyParser.regex(#"^\s*[\[【]\s*(?:译文|翻译)\s*[:：]\s*([\s\S]*?)\s*[\]】]\s*$"#, [])
+    private static let proseTail = ReplyParser.regex(#"\s*[\[【]\s*(?:译文|翻译)\s*[:：]\s*([^\]】]*?)\s*[\]】]\s*$"#, [])
+    private static let liveTrans = ReplyParser.regex(#"\n?[ \t]*[\[【]\s*(?:译|译文|翻译)\s*[:：][^\]】]*(?:[\]】]|$)"#, [])
+
+    /// 流式那一段先不显示译文（写到一半的也摘掉）
+    static func proseLive(_ buf: String) -> String {
+        liveTrans.stringByReplacingMatches(in: buf, range: NSRange(location: 0, length: (buf as NSString).length), withTemplate: "")
+    }
+
+    /// 把正文与译文拆开：说的话后面的 [译：…] 存成 { q, t }，整段后面的 [译文：…] 存成 { p, t }
+    static func splitProse(_ raw: String) -> (text: String, trans: [JSONValue]) {
+        var trans: [JSONValue] = []
+        let ns = raw as NSString
+        var said = ""
+        var last = 0
+        for m in quoteTrans.matches(in: raw, range: NSRange(location: 0, length: ns.length)) {
+            said += ns.substring(with: NSRange(location: last, length: m.range.location - last))
+            let q = ns.substring(with: m.range(at: 1))
+            let t = ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+            if !t.isEmpty && t != String(q.dropFirst().dropLast()) { trans.append(.object(["q": .string(q), "t": .string(t)])) }
+            said += q
+            last = m.range.location + m.range.length
+        }
+        said += ns.substring(from: last)
+        var text: [String] = []
+        var lastBody = -1
+        for line in said.components(separatedBy: "\n") {
+            if let m = ReplyParser.match(proseLine, line) {
+                let t = m[1].trimmingCharacters(in: .whitespaces)
+                if lastBody >= 0, !t.isEmpty { trans.append(.object(["p": .string(text[lastBody].trimmingCharacters(in: .whitespaces)), "t": .string(t)])) }
+                continue
+            }
+            var body = line
+            var tail = ""
+            let lns = line as NSString
+            if let m = proseTail.firstMatch(in: line, range: NSRange(location: 0, length: lns.length)) {
+                body = lns.substring(to: m.range.location)
+                tail = lns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            }
+            text.append(body)
+            if !body.trimmingCharacters(in: .whitespaces).isEmpty {
+                lastBody = text.count - 1
+                if !tail.isEmpty { trans.append(.object(["p": .string(body.trimmingCharacters(in: .whitespaces)), "t": .string(tail)])) }
+            }
+        }
+        let joined = text.joined(separator: "\n").replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+        return (joined.trimmingCharacters(in: .whitespacesAndNewlines), trans)
+    }
+
     private static func alias(_ row: Row) -> [String: String] {
         var out: [String: String] = [:]
         for id in row.strings("castIds") { if let a = Scenes.castAs(row, id), !a.name.isEmpty { out[id] = a.name } }
@@ -99,7 +151,7 @@ enum SceneRun {
         let (thought, think) = ReplyParser.stripThink(raw)
         let (stamped, stamp) = ReplyParser.stripStamps(thought)
         let at = stampInner(stamp)
-        let body0 = StatusBar.lift(stamped).text
+        let (body0, trans) = splitProse(StatusBar.lift(stamped).text)
         guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
         let ex = takeExits(body0, allowed: Scenes.enterable(fresh), alias: alias(fresh))
         if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty { throw StoreError(message: "模型返回了空内容") }
@@ -108,11 +160,11 @@ enum SceneRun {
         if !ex.text.isEmpty {
             let last = Scenes.told(sceneId).last
             if !rewrite.isEmpty {
-                done = try Scenes.addSwipe(rewrite, text: ex.text, raw: raw, think: think, at: at)
+                done = try Scenes.addSwipe(rewrite, text: ex.text, raw: raw, think: think, at: at, trans: trans)
             } else if more, let last {
-                done = try Scenes.appendBeat(last.id, text: ex.text, raw: raw, at: at)
+                done = try Scenes.appendBeat(last.id, text: ex.text, raw: raw, at: at, trans: trans)
             } else {
-                done = try Scenes.addBeat(sceneId: sceneId, role: Scenes.CHAR, authorId: char.id, text: ex.text, raw: raw, think: think, at: at)
+                done = try Scenes.addBeat(sceneId: sceneId, role: Scenes.CHAR, authorId: char.id, text: ex.text, raw: raw, think: think, at: at, trans: trans)
             }
         }
         if let d = done, ex.leave || !ex.enter.isEmpty {
@@ -159,7 +211,7 @@ enum SceneRun {
             let base = buffer.base
             let result = try await AIService.shared.send(task: "scene.write", system: built.system, messages: built.messages,
                                                          maxTokens: ChatPrompt.sceneMax(s), retries: 1) { d in
-                onDraft(base + label + buffer.add(d))
+                onDraft(base + label + proseLive(buffer.add(d)))
             }
             buffer.reset()
             try? ChatEngine.markRecalled(built.recalled)
@@ -195,7 +247,7 @@ enum SceneRun {
         let s = AppSettings.load()
         let built = try ChatPrompt.buildSceneEnsemble(scene: row, chat: chat, cast: present, list: all, settings: s)
         let result = try await AIService.shared.send(task: "scene.write", system: built.system, messages: built.messages,
-                                                     maxTokens: ChatPrompt.sceneMax(s), retries: 1) { d in onDraft(buffer.add(d)) }
+                                                     maxTokens: ChatPrompt.sceneMax(s), retries: 1) { d in onDraft(proseLive(buffer.add(d))) }
         try? ChatEngine.markRecalled(built.recalled)
         let text = ReplyParser.stripThink(result.text).0
         guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
