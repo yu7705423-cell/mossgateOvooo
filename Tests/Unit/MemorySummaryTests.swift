@@ -152,4 +152,20 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertEqual(MemHistory.list("char_a").first?.string("why"), "恢复之前")
         XCTAssertTrue(try XCTUnwrap(MemHistory.diff(snap.id)).same)
     }
+
+    /// 体检：像的成对列出来；保留一条之后另一条让位（不删），可以撤回
+    func testMemCheck() throws {
+        XCTAssertGreaterThan(MemCheck.sim(MemCheck.grams("用户喜欢猫"), MemCheck.grams("用户很喜欢猫")), 0.8)
+        XCTAssertLessThan(MemCheck.sim(MemCheck.grams("用户喜欢猫"), MemCheck.grams("明天下雨")), 0.2)
+        var m = Knowledge.newMemory(charId: "char_a", personaId: "me_root")
+        m = try Knowledge.save(m, ["content": .string("用户很喜欢猫")])
+        let pairs = MemCheck.pairs(charId: "char_a", personaId: "me_root")
+        let p = try XCTUnwrap(pairs.first { [$0.a.id, $0.b.id].contains(m.id) })
+        let other = p.a.id == m.id ? p.b : p.a
+        try MemCheck.supersede(other.id, by: m.id)
+        XCTAssertTrue(MemCheck.pairs(charId: "char_a", personaId: "me_root").isEmpty)
+        XCTAssertEqual(MemCheck.superseded(charId: "char_a", personaId: "me_root").map(\.id), [other.id])
+        try MemCheck.restore(other.id)
+        XCTAssertTrue(MemCheck.superseded(charId: "char_a", personaId: "me_root").isEmpty)
+    }
 }

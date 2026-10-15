@@ -39,6 +39,7 @@ struct MemoryListView: View {
                 Menu {
                     Button("现状") { sub = SubPage(id: "state") }
                     Button("历史版本") { sub = SubPage(id: "history") }
+                    Button("体检") { sub = SubPage(id: "check") }
                 } label: { NavIcon("more") }
             }
             ToolbarItem(placement: .primaryAction) {
@@ -49,7 +50,9 @@ struct MemoryListView: View {
             MemoryEditView(memoryId: t.id.isEmpty ? nil : t.id, charId: charId)
         }
         .navigationDestination(item: $sub) { p in
-            if p.id == "state" { MemoryStateView(charId: charId) } else { MemoryHistoryView(charId: charId) }
+            if p.id == "state" { MemoryStateView(charId: charId) }
+            else if p.id == "check" { MemoryCheckView(charId: charId) }
+            else { MemoryHistoryView(charId: charId) }
         }
         .onAppear(perform: reload)
     }
@@ -461,5 +464,63 @@ struct MemorySnapView: View {
         } else {
             EmptyState(title: "这一份已不存在")
         }
+    }
+}
+
+/// 记忆体检（网页版 CheckPage.js）：疑似同一件事的成对条目，点一条保留它，另一条让位；已让位的可以撤回
+struct MemoryCheckView: View {
+    let charId: String
+    @State private var tick = 0
+    @State private var problem: String?
+    @State private var choice: (keep: Memory, drop: Memory)?
+
+    var body: some View {
+        let _ = tick
+        let me = (try? People.ensureActivePersona())?.id ?? ""
+        let pairs = MemCheck.pairs(charId: charId, personaId: me)
+        let gone = MemCheck.superseded(charId: charId, personaId: me)
+        List {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            if pairs.isEmpty {
+                Section { Text("没有发现重复。").foregroundStyle(Theme.secondaryText) } footer: {
+                    HelpNote("列出内容高度重合、可能在说同一件事的条目。同一件事留两条时，召回可能把两个版本一起送进去，角色无从判断以哪一条为准。保留其一之后，另一条不再参与召回，但仍保存在库中，可以撤回。", title: "记忆：体检")
+                }
+            }
+            ForEach(pairs) { p in
+                Section("相似度 \(Int((p.score * 100).rounded()))%") {
+                    ForEach(0..<2, id: \.self) { k in
+                        let keep = k == 0 ? p.a : p.b, drop = k == 0 ? p.b : p.a
+                        Button { choice = (keep, drop) } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(keep.content).foregroundStyle(Theme.text)
+                                Text([keep.at > 0 ? TimeText.day(Date(millis: keep.at)) : "", "点击保留这一条"].filter { !$0.isEmpty }.joined(separator: " · "))
+                                    .font(.caption).foregroundStyle(Theme.secondaryText)
+                            }
+                        }
+                    }
+                }
+            }
+            if !gone.isEmpty {
+                Section("已让位 \(gone.count) 条") {
+                    ForEach(gone) { m in
+                        HStack {
+                            Text(m.content).foregroundStyle(Theme.secondaryText)
+                            Spacer()
+                            Button("撤回") { act { try MemCheck.restore(m.id) } }.buttonStyle(.borderless)
+                        }
+                    }
+                }
+            }
+        }
+        .navigationTitle("记忆体检")
+        .confirmationDialog(choice.map { "保留「\(String($0.keep.content.prefix(60)))」；另一条让位，不再参与召回，仍可撤回。" } ?? "",
+                            isPresented: Binding(get: { choice != nil }, set: { if !$0 { choice = nil } }), titleVisibility: .visible) {
+            Button("保留") { if let c = choice { act { try MemCheck.supersede(c.drop.id, by: c.keep.id) } } }
+        }
+    }
+
+    private func act(_ f: () throws -> Void) {
+        do { try f(); problem = nil } catch { problem = "未能保存：\(error.localizedDescription)" }
+        tick += 1
     }
 }
