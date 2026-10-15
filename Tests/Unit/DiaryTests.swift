@@ -139,4 +139,14 @@ final class DiaryTests: StoreTestCase {
         XCTAssertEqual(Diary.pastYears(next, charId: "char_a").count, 2)
         XCTAssertTrue(Diary.pastYears(next, charId: "char_b").allSatisfy(\.mine))
     }
+
+    /// 日记插图：存下图片 id；编辑时不传就不动，传了就换
+    func testDiaryImages() throws {
+        let e = try Diary.saveMine(date: "2026-10-15", title: "", text: "带图", visibility: "self", charId: "", imageIds: ["img_a", ""])
+        XCTAssertEqual(e.imageIds, ["img_a"])
+        let e2 = try Diary.saveMine(id: e.id, date: "2026-10-15", title: "", text: "改字", visibility: "self", charId: "")
+        XCTAssertEqual(e2.imageIds, ["img_a"])
+        let e3 = try Diary.saveMine(id: e.id, date: "2026-10-15", title: "", text: "改字", visibility: "self", charId: "", imageIds: [])
+        XCTAssertEqual(e3.imageIds, [])
+    }
 }

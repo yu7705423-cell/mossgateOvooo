@@ -7,7 +7,7 @@ import Foundation
 /// 你点「现在写一篇」（手动，一次请求），或者每天到了设定时刻之后自动一次（char.diaryAuto，默认关；
 /// 先占住当天再发，失败也算试过，当天不再自动第二次）。
 ///
-/// 原生版暂未做：你的日记上锁（要应用锁屏密码）、放图片。
+/// 原生版暂未做：你的日记上锁（要应用锁屏密码）、生成配图。
 enum Diary {
     static let me = "me"
     static let kinds: [(id: String, label: String)] = [("full", "完整"), ("short", "简短"), ("unfinished", "未写完")]
@@ -28,6 +28,7 @@ enum Diary {
         var kind: String { row.string("kind") }
         var mood: String { row.string("mood") }
         var charId: String { row.string("charId") }
+        var imageIds: [String] { row.strings("imageIds") }
         var visibility: String { row.string("visibility").isEmpty ? "self" : row.string("visibility") }
         var created: Double { row.number("createdAt") ?? 0 }
         /// 角色的锁：{ code, digits, tries, lastTryAt, openedAt, hintAt }
@@ -285,16 +286,18 @@ enum Diary {
     // MARK: - 你的日记
 
     @discardableResult
-    static func saveMine(id: String? = nil, date: String, title: String, text: String, visibility: String, charId: String) throws -> Entry {
+    static func saveMine(id: String? = nil, date: String, title: String, text: String, visibility: String, charId: String,
+                         imageIds: [String]? = nil) throws -> Entry {
         let t = text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !t.isEmpty else { throw StoreError(message: "请填写日记内容") }
         let vis = Diary.visibility.contains { $0.id == visibility } ? visibility : "self"
-        let fields: [String: JSONValue] = [
+        var fields: [String: JSONValue] = [
             "title": .string(String(title.trimmingCharacters(in: .whitespacesAndNewlines).prefix(titleMax))),
             "text": .string(t), "visibility": .string(vis),
             "charId": .string(charId.isEmpty || (try? Repo.character(charId)) == nil ? "" : charId),
             "date": .string(date.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil ? date : todayMine()),
         ]
+        if let imageIds { fields["imageIds"] = .array(imageIds.filter { !$0.isEmpty }.map { .string($0) }) }
         var row: Row
         if let id, let old = try Database.shared.get("diaries", id: id) {
             row = old

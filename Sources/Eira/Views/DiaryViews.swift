@@ -1,3 +1,4 @@
+import PhotosUI
 import SwiftUI
 
 /// 日记首页（网页版 diary/App.js 的 Calendar，4.333）：一个月的日历，每天两个心情记号（左我，右选中的角色），
@@ -444,6 +445,7 @@ struct DiaryReadView: View {
     @State private var replaying = false
     @State private var struckOut = ""
     @State private var speed = DiaryReadView.speedNow()
+    @State private var viewing: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -463,6 +465,12 @@ struct DiaryReadView: View {
                         if !e.title.isEmpty { Text(e.title).font(.title3) }
                         (Text(replay ?? e.text) + Text(struckOut).strikethrough().foregroundColor(Theme.tertiaryText))
                             .textSelection(.enabled)
+                        ForEach(e.imageIds, id: \.self) { img in
+                            LocalImage(id: img, maxPixel: 1000, fit: true)
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: Theme.rMd, style: .continuous))
+                                .onTapGesture { viewing = img }
+                        }
                         let trans = [e.row.string("titleTrans"), e.row.string("textTrans")].filter { !$0.isEmpty }.joined(separator: "\n\n")
                         if !trans.isEmpty && replay == nil {
                             Text(trans).font(.subheadline).foregroundStyle(Theme.secondaryText).textSelection(.enabled)
@@ -502,6 +510,9 @@ struct DiaryReadView: View {
             Button("删除", role: .destructive) {
                 do { try Diary.remove(id); dismiss() } catch { note = "删除失败：\(error.localizedDescription)" }
             }
+        }
+        .fullScreenCover(isPresented: Binding(get: { viewing != nil }, set: { if !$0 { viewing = nil } })) {
+            if let viewing { ImageViewer(imageId: viewing) }
         }
         .onAppear(perform: load)
         .onDisappear(perform: stop)
@@ -622,6 +633,9 @@ struct DiaryEditView: View {
     @State private var visibility = "self"
     @State private var charId = ""
     @State private var mood = ""
+    @State private var imageIds: [String] = []
+    @State private var picked: [PhotosPickerItem] = []
+    @State private var pickingAlbum = false
     @State private var chars: [Character] = []
     @State private var problem: String?
 
@@ -635,6 +649,29 @@ struct DiaryEditView: View {
                 }
                 TextField("标题（可不填）", text: $title)
                 TextField("正文", text: $text, axis: .vertical).lineLimit(8...40)
+            }
+            Section("图片") {
+                if !imageIds.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: Theme.sp2) {
+                            ForEach(imageIds, id: \.self) { id in
+                                LocalImage(id: id, maxPixel: 240)
+                                    .frame(width: 80, height: 80)
+                                    .clipShape(RoundedRectangle(cornerRadius: Theme.rMd, style: .continuous))
+                                    .overlay(alignment: .topTrailing) {
+                                        Button { imageIds.removeAll { $0 == id } } label: {
+                                            Image(systemName: "xmark.circle.fill").foregroundStyle(Color.white, Color.black.opacity(0.5))
+                                        }
+                                        .buttonStyle(.plain)
+                                        .accessibilityLabel("移除这张")
+                                        .padding(3)
+                                    }
+                            }
+                        }
+                    }
+                }
+                PhotosPicker(selection: $picked, matching: .images) { Text("从手机相册添加") }
+                Button("从相册 app 添加") { pickingAlbum = true }
             }
             Section {
                 Picker("可见范围", selection: $visibility) {
@@ -653,6 +690,21 @@ struct DiaryEditView: View {
                      : "仅自己：只在日记里显示，不写入任何对话。")
             }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
+        }
+        .onChange(of: picked) { _, items in
+            guard !items.isEmpty else { return }
+            picked = []
+            Task { @MainActor in
+                for item in items {
+                    do {
+                        guard let data = try await item.loadTransferable(type: Data.self) else { continue }
+                        imageIds.append(try Images.save(data))
+                    } catch { problem = "有图片未能存下：\(error.localizedDescription)" }
+                }
+            }
+        }
+        .sheet(isPresented: $pickingAlbum) {
+            NavigationStack { AlbumPickView { ids in imageIds += ids.filter { !imageIds.contains($0) } } }
         }
         .navigationTitle(id == nil ? "写日记" : "编辑日记")
         .navigationBarTitleDisplayMode(.inline)
@@ -676,6 +728,7 @@ struct DiaryEditView: View {
         f.dateFormat = "yyyy-MM-dd"
         date = f.date(from: e.date) ?? Date()
         mood = Diary.moodOn(Diary.me, e.date)
+        imageIds = e.imageIds
     }
 
     private func save() {
@@ -684,7 +737,7 @@ struct DiaryEditView: View {
         f.dateFormat = "yyyy-MM-dd"
         do {
             try Diary.saveMine(id: id, date: f.string(from: date), title: title, text: text,
-                               visibility: visibility, charId: visibility == "public" ? charId : "")
+                               visibility: visibility, charId: visibility == "public" ? charId : "", imageIds: imageIds)
             if Diary.moodOn(Diary.me, f.string(from: date)) != mood { try Diary.setMyMood(f.string(from: date), mood) }
             dismiss()
         } catch {
@@ -722,5 +775,42 @@ struct DiaryAutoSection: View {
         guard loaded else { return }
         do { try Diary.patchChar(charId, ["diaryAuto": .bool(on), "diaryHour": .number(Double(hour))]); problem = nil }
         catch { problem = "保存失败：\(error.localizedDescription)" }
+    }
+}
+
+/// 从相册 app 里挑几张（日记插图用）。只读，不改相册
+struct AlbumPickView: View {
+    var done: ([String]) -> Void
+    @Environment(\.dismiss) private var dismiss
+    @State private var chosen: [String] = []
+
+    var body: some View {
+        let photos = Album.listAlbums().flatMap { Album.listPhotos($0.id) } + Album.listPhotos("")
+        let withImage = photos.filter { !$0.imageId.isEmpty }
+        ScrollView {
+            if withImage.isEmpty { EmptyState(title: "相册里还没有图片") }
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 3), spacing: 3) {
+                ForEach(withImage) { p in
+                    Button {
+                        if let i = chosen.firstIndex(of: p.imageId) { chosen.remove(at: i) } else { chosen.append(p.imageId) }
+                    } label: {
+                        LocalImage(id: p.imageId, maxPixel: 300)
+                            .frame(minWidth: 0, maxWidth: .infinity).aspectRatio(1, contentMode: .fill).clipped()
+                            .overlay(alignment: .topTrailing) {
+                                if chosen.contains(p.imageId) {
+                                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.white, Theme.accent).padding(4)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+        .navigationTitle("从相册选择")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) { Button("添加 \(chosen.count) 张") { done(chosen); dismiss() }.disabled(chosen.isEmpty) }
+        }
     }
 }
