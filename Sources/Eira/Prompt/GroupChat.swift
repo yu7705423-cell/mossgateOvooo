@@ -134,6 +134,87 @@ enum GroupChat {
         try change(chatId, { c in "\(meName(c))\(on ? "开启" : "关闭")了全员禁言" }) { $0["muteAll"] = .bool(on) }
     }
 
+    // MARK: - 角色来管（回复里的 [禁言：…]、[解除禁言：…]、[全员禁言]、[改群昵称：…]，网页版 4.301）
+
+    private static let rank = ["owner": 2, "admin": 1, "member": 0]
+
+    /// 管得了对方吗：比对方高一级才行，不能管自己
+    static func canManage(_ chat: Chat, _ actor: String, _ target: String) -> Bool {
+        actor != target && (rank[role(chat, actor)] ?? 0) > (rank[role(chat, target)] ?? 0)
+    }
+
+    /// 按名字认人：原名、群昵称都认；你的名字认成 me
+    static func whoByName(_ chat: Chat, _ name: String) -> String? {
+        var n = name.trimmingCharacters(in: .whitespaces)
+        if n.hasPrefix("@") { n.removeFirst() }
+        guard !n.isEmpty else { return nil }
+        if let hit = members(chat).first(where: { $0.name == n || nick(chat, $0.id) == n }) { return hit.id }
+        if n == meName(chat) || n == nick(chat, me) { return me }
+        return nil
+    }
+
+    /// 角色做的一件事：身份够才生效，改之前的那一份存在提示上，重新生成那一轮时放回去。管不了的不生效、也不落提示
+    static func charAct(_ chat: Chat, actor: String, part p: ReplyParser.Part, turnId: String) throws -> Message? {
+        guard chat.isGroup else { return nil }
+        let target: String
+        if p.type == .muteAll { target = "" }
+        else if p.text.isEmpty && p.type == .nick { target = actor }
+        else { guard let t = whoByName(chat, p.text) else { return nil }; target = t }
+        let who = nameOf(chat, actor), whom = target.isEmpty ? "" : nameOf(chat, target)
+        var row = chat.row
+        let text: String
+        let key: String
+        switch p.type {
+        case .mute:
+            guard canManage(chat, actor, target) else { return nil }
+            key = "mutes"
+            let m = max(0, Int((p.amount ?? 0).rounded()))
+            var mutes = row["mutes"]?.object ?? [:]
+            mutes[target] = .number(m > 0 ? Date().millis + Double(m) * 60_000 : 0)
+            row["mutes"] = .object(mutes)
+            text = "\(who)将\(whom)禁言" + (m > 0 ? " " + durationText(m) : "")
+        case .unmute:
+            guard canManage(chat, actor, target), chat.row["mutes"]?[target] != nil else { return nil }
+            key = "mutes"
+            var mutes = row["mutes"]?.object ?? [:]
+            mutes.removeValue(forKey: target)
+            row["mutes"] = .object(mutes)
+            text = "\(who)解除了\(whom)的禁言"
+        case .muteAll:
+            guard (rank[role(chat, actor)] ?? 0) >= 1, chat.row.bool("muteAll") != p.flag else { return nil }
+            key = "muteAll"
+            row["muteAll"] = .bool(p.flag)
+            text = "\(who)\(p.flag ? "开启" : "关闭")了全员禁言"
+        case .nick:
+            guard actor == target || canManage(chat, actor, target) else { return nil }
+            let v = String((p.extra ?? "").split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(20))
+            guard v != nick(chat, target) else { return nil }
+            key = "nicks"
+            var nicks = row["nicks"]?.object ?? [:]
+            if v.isEmpty { nicks.removeValue(forKey: target) } else { nicks[target] = .string(v) }
+            row["nicks"] = .object(nicks)
+            text = actor == target ? (v.isEmpty ? "\(who)清除了自己的群昵称" : "\(who)将群昵称改为「\(v)」")
+                : (v.isEmpty ? "\(who)清除了\(whom)的群昵称" : "\(who)将\(whom)的群昵称改为「\(v)」")
+        default:
+            return nil
+        }
+        var c = chat
+        c.row = row
+        c.row.touch()
+        try Repo.save(c)
+        var m = Message.new(chatId: chat.id, role: .char, authorId: actor, content: "[\(text)]", kind: "notice", turnId: turnId)
+        m.row["groupUndo"] = .object(["key": .string(key), "prev": chat.row[key] ?? .null])
+        return m
+    }
+
+    /// 删掉角色那一行提示（重新生成那一轮）：放回改之前那一份
+    static func undo(_ notice: Message) throws {
+        guard let u = notice.row["groupUndo"]?.object, let key = u["key"]?.string, var c = try Repo.chat(notice.chatId) else { return }
+        c.row[key] = u["prev"] == .null ? nil : u["prev"]
+        c.row.touch()
+        try Repo.save(c)
+    }
+
     /// 还要禁多久的说明：没禁言为空
     static func muteText(_ chat: Chat, _ id: String, now: Double = Date().millis) -> String {
         guard let until = chat.row["mutes"]?[id]?.number else {

@@ -679,11 +679,13 @@ struct ConversationView: View {
         case "call":
             panelButton("phone", "通话") {
                 guard let char, !archivedChat else { notice = "封存的角色不再接听电话。"; return }
+                guard char.row["canCall"]?.bool != false else { notice = "该角色的通话已在角色卡上关闭。"; return }
                 calling = CallTarget(char: char, incoming: false)
             }
         case "video":
             panelButton("film", "视频通话") {
                 guard let char, !archivedChat else { notice = "封存的角色不再接听电话。"; return }
+                guard char.row["canCall"]?.bool != false else { notice = "该角色的通话已在角色卡上关闭。"; return }
                 calling = CallTarget(char: char, incoming: false, video: true)
             }
         case "transfer": panelButton("wallet", "转账") { composing = .transfer }
@@ -1061,7 +1063,9 @@ struct ConversationView: View {
 
     private func groupName(of m: Message) -> String {
         guard let chat, chat.isGroup, m.role != .user, let c = members[m.authorId] else { return "" }
-        return ([GroupChat.nameIn(chat, c)] + (weekly[m.authorId] ?? [])).joined(separator: " · ")
+        // 群昵称优先，管理员标一下，再跟这周的称号（网页版 whoOf）
+        let role = GroupChat.roleLabel[GroupChat.role(chat, c.id)] ?? ""
+        return ([GroupChat.nameIn(chat, c), role] + (weekly[m.authorId] ?? [])).filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func reactorName(_ id: String) -> String {

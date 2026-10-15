@@ -782,6 +782,8 @@ struct CapsView: View {
         Cap(id: "award", label: "颁发标识", group: "互动", info: "角色可以给用户颁发一枚互动标识，记进这段对话的标识收藏。删掉那一条消息时标识一并收回"),
         Cap(id: "card", label: "HTML 卡片", group: "消息", info: "角色可以按世界书里的卡片条目发一张卡片。只有常驻的、或最近几条消息里出现了关键词的卡片才提供"),
         Cap(id: "ring", label: "打电话过来", group: "互动", info: "角色可以给用户打语音电话。正在看这段会话时响铃，否则记为未接来电。接听后每说一轮调用一次接口，与自己打出去相同"),
+        Cap(id: "groupnick", label: "改群昵称", group: "社交", info: "群里的角色可以修改自己的群昵称，群里出现一行提示"),
+        Cap(id: "groupadmin", label: "群管理", group: "社交", info: "群里有管理员时，管理员可以禁言、解除禁言、开关全员禁言、修改普通成员的群昵称。管不了群主与其他管理员"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
         Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),

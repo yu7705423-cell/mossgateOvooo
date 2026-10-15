@@ -401,11 +401,11 @@ enum ChatPrompt {
                            "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "narration", "time", "translate"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
-    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "narration", "inner", "ties"]
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "narration", "inner", "ties"]
 
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
@@ -441,6 +441,15 @@ enum ChatPrompt {
         }
         // 一起听、点歌、分享歌曲与歌单（网页版 capabilities.js 的 listen）。原生版直连网易云，曲库空着也能搜
         let listening = MusicListen.active(chat.id)
+        // 群昵称与群管理（网页版 capabilities.js 的 groupnick、groupadmin）：群里才有；群管理要群里有管理员
+        cap("groupnick", on: chat.isGroup, hot: used("群昵称"),
+            line: "Change your own group nickname: under your name, a line on its own, [改群昵称：new nickname]") {
+            Templates.get("skeleton.group-nick", settings: s)
+        }
+        cap("groupadmin", on: chat.isGroup && !(chat.row["admins"]?.array ?? []).isEmpty, hot: used("禁言"),
+            line: "Admins manage members who are not admins: [禁言：name 10分钟], [解除禁言：name], [全员禁言], [解除全员禁言], [改群昵称：name|new nickname], each on its own line under the admin's name") {
+            Templates.get("skeleton.group-admin", settings: s)
+        }
         // 好友与拉黑（网页版 capabilities.js 的 ties）：改自己这一方，群聊也可用
         cap("ties", on: true, hot: used(#"[\[【](拉黑|解除拉黑|删除好友|添加好友|通过好友申请)"#),
             line: "Block someone or remove them from your contacts: write a line on its own, [拉黑：name] or [删除好友：name]; undo with [解除拉黑：name] or [添加好友：name]") {

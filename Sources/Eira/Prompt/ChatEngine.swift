@@ -341,6 +341,10 @@ enum ChatEngine {
     /// 改完状态，需要落一行提示的返回那一行；什么都不落的返回 nil。不是这几样的也返回 nil，交给 row(for:)。
     private static func effect(_ p: ReplyParser.Part, chat: Chat, char: Character, turnId: String) throws -> Message? {
         switch p.type {
+        case .mute, .unmute, .muteAll, .nick:
+            // 群管理：和你在群资料里点是同一套规矩，管不了的（身份不够）不生效、也不落提示。每次现读，前一条刚改过的也算
+            guard let now = try Repo.chat(chat.id) else { return nil }
+            return try GroupChat.charAct(now, actor: char.id, part: p, turnId: turnId)
         case .settle:
             // 处理的是对方那一笔。没有待处理的就当没写过这一行
             guard let target = try Interact.pendingTransfer(chat.id, from: .user) else { return nil }
@@ -538,6 +542,8 @@ enum ChatEngine {
             m.row["awardName"] = .string(name)
             m.row["awardReason"] = .string(reason)
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
+        case .mute, .unmute, .muteAll, .nick:
+            return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
         }

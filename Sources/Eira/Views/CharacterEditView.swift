@@ -96,6 +96,11 @@ struct CharacterEditView: View {
                 HelpNote(voiceFooter)
             }
             Section {
+                NavigationLink("角色能做的事") { CharCapsView(charId: charId) }
+            } footer: {
+                HelpNote("这个角色能不能发语音、图片、表情，能不能打电话、转账、送礼物、撤回、回应、不回复等，逐项开关。", title: "角色能做的事")
+            }
+            Section {
                 Toggle("封存", isOn: Binding(get: { archived }, set: { setArchived($0) }))
             } footer: {
                 HelpNote("封存后，角色不出现在联系人与发起群聊的名单里，与该角色的单聊可以翻看、不能继续对话，角色也不再主动发起对话。数据全部保留，关闭封存即恢复。", title: "封存")

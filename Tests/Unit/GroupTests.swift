@@ -133,4 +133,26 @@ extension GroupTests {
         XCTAssertTrue(GroupChat.mentionCandidates("问一下 @\(key)", chat: chat, members: members).contains { $0.id == first.id })
         XCTAssertEqual(GroupChat.completeMention("问一下 @\(key)", chat: chat, first), "问一下 @\(GroupChat.nameIn(chat, first)) ")
     }
+
+    /// 角色来管：管理员禁言普通成员、改别人的群昵称；普通成员只能改自己的；身份不够的不生效；重新生成那一轮时放回去
+    func testCharManages() async throws {
+        try GroupChat.setAdmin(group.id, "char_a", true)
+        XCTAssertEqual(ReplyParser.split("[禁言：小周 10分钟]").parts.first?.amount, 10)
+        XCTAssertEqual(ReplyParser.split("[全员禁言]").parts.first?.type, .muteAll)
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("林：[改群昵称：小周｜周周]\n林：[禁言：小周 1小时]\n林：安静点")) }
+        try await ChatEngine.reply(chatId: group.id) { _ in }
+        var g = try XCTUnwrap(Repo.chat(group.id))
+        XCTAssertEqual(GroupChat.nick(g, zhou.id), "周周")
+        XCTAssertTrue(GroupChat.isMuted(g, zhou.id))
+        XCTAssertEqual(MockNet.count, 1)
+        // 普通成员管不了管理员；自己的群昵称随时能改
+        let parts = ReplyParser.split("[禁言：林]\n[改群昵称：小周周]").parts
+        XCTAssertNil(try GroupChat.charAct(g, actor: zhou.id, part: parts[0], turnId: "t"))
+        let note = try XCTUnwrap(GroupChat.charAct(g, actor: zhou.id, part: parts[1], turnId: "t"))
+        g = try XCTUnwrap(Repo.chat(group.id))
+        XCTAssertEqual(GroupChat.nick(g, zhou.id), "小周周")
+        // 撤掉那一行提示，群昵称放回去
+        try Interact.unsettle(note)
+        XCTAssertEqual(GroupChat.nick(try XCTUnwrap(Repo.chat(group.id)), zhou.id), "周周")
+    }
 }

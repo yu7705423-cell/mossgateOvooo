@@ -298,6 +298,7 @@ enum Interact {
     static func unsettle(_ notice: Message) throws {
         // 颁标识的那一条删了，标识也收回。重新生成那一轮时，旧的那一枚不该留在收藏里
         if notice.kind == "award" { try Badges.dropAward(notice.chatId, msgId: notice.id); return }
+        if notice.kind == "notice", notice.row["groupUndo"] != nil { try GroupChat.undo(notice); return }
         // 角色改锁屏密码的那一行：放回换之前那一份
         if notice.kind == "notice", let u = notice.row["lockUndo"]?.object, let charId = u["charId"]?.string {
             try Theirs.restoreLock(charId, u["prev"])

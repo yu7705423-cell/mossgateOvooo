@@ -31,6 +31,8 @@ enum ReplyParser {
         case card
         // 颁发互动标识：text 是标识名，extra 是理由
         case award
+        // 群管理：禁言（text 名字，amount 分钟，0 为一直）、解除禁言（text 名字）、全员禁言（flag 开关）、改群昵称（text 名字，空为自己；extra 新昵称）
+        case mute, unmute, muteAll, nick
     }
 
     struct Part: Equatable, Sendable {
@@ -88,11 +90,11 @@ enum ReplyParser {
         lineMark("开设情侣账户|开情侣账户|开通情侣账户|开通共同账户|开共同账户"),
         lineMark("批准|同意|通过"),
         lineMark("驳回|拒绝|不同意"),
-        lineMark("全员禁言|开启全员禁言"),
-        lineMark("解除全员禁言|关闭全员禁言"),
         lineMark("不覆盖"),
         lineMark("覆盖"),
     ]
+    static let muteAllLine = lineMark("全员禁言|开启全员禁言")
+    static let unmuteAllLine = lineMark("解除全员禁言|关闭全员禁言")
     private static let keepLine = regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive])
     private static let silenceLine = lineMark("不回复|已读不回|不回")
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
@@ -105,6 +107,7 @@ enum ReplyParser {
     private static let takeLine = regex(#"^[\[【(（]\s*(?:要了|吃了|签收)\s*[\]】)）]$"#, [])
     private static let nopeLine = regex(#"^[\[【(（]\s*(?:不要|不用了|不吃)\s*[\]】)）]$"#, [])
     private static let refuseLine = regex(#"^[\[【(（]\s*(拒收|不收|退掉)\s*[\]】)）]$"#, [])
+    static let muteSpan = regex(#"^([\s\S]*?)\s*(\d+)\s*(分钟|分|小时|个小时|时|天|日)\s*$"#, [])
     private static let reactLine = regex(#"^[\[【]\s*(?:回应|反应|react(?:ion)?)\s*[:：]\s*([^\]】]+?)\s*[\]】]\s*[。．.!！~～]?$"#, [.caseInsensitive])
     /// 转账：金额在前，后面是留言
     private static let amountRe = regex(#"^\s*(?:[¥￥$]\s*)?(\d+(?:\.\d{1,2})?)\s*(?:元|块)?\s*(.*)$"#, [])
@@ -245,6 +248,25 @@ enum ReplyParser {
                 attachInner(t, tr)
             case "私信":
                 push(Part(type: .dm, text: body))
+            case "禁言":
+                // 「名字 10分钟」：最后一截是时长（分钟、小时、天），没写或写「永久」就是一直禁到解除
+                var name = body, minutes = 0.0
+                if let m = ReplyParser.match(ReplyParser.muteSpan, body), let n = Double(m[2]) {
+                    minutes = n * (m[3].contains("天") || m[3].contains("日") ? 1440 : m[3].contains("时") ? 60 : 1)
+                    name = m[1]
+                } else {
+                    name = body.replacingOccurrences(of: #"\s*永久\s*$"#, with: "", options: .regularExpression)
+                }
+                name = name.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { var p = Part(type: .mute, text: name); p.amount = minutes; push(p) }
+            case "解除禁言":
+                push(Part(type: .unmute, text: body))
+            case "改群昵称":
+                // 「新昵称」是改自己的；「名字｜新昵称」是改别人的
+                let bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                var p = Part(type: .nick, text: bar.map { String(body[..<$0]).trimmingCharacters(in: .whitespaces) } ?? "")
+                p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? body).trimmingCharacters(in: .whitespaces)
+                push(p)
             case "转账", "transfer":
                 // 金额读不出来就整条丢掉。凭空造一笔金额不明的转账比少发一条更糟
                 if let m = ReplyParser.match(ReplyParser.amountRe, body), let a = Double(m[1]) {
@@ -407,6 +429,8 @@ enum ReplyParser {
                 push(p)
                 return
             }
+            if ReplyParser.matches(ReplyParser.unmuteAllLine, t) { var p = Part(type: .muteAll, text: ""); p.flag = false; push(p); return }
+            if ReplyParser.matches(ReplyParser.muteAllLine, t) { var p = Part(type: .muteAll, text: ""); p.flag = true; push(p); return }
             if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))
