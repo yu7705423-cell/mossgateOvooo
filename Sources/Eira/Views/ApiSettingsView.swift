@@ -79,6 +79,7 @@ struct PresetEditor: View {
     @State private var testing = false
     @State private var testResult: String?
     @State private var testOk = false
+    @State private var recentModels: [String] = []
 
     var body: some View {
         Form {
@@ -96,6 +97,11 @@ struct PresetEditor: View {
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                 TextField("模型", text: $model)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
+                NavigationLink("从接口选择模型") {
+                    ModelPickerView(provider: provider, baseUrl: baseUrl, apiKey: apiKey, current: model,
+                                    recent: recentModels) { model = $0 }
+                }
+                .disabled(apiKey.trimmingCharacters(in: .whitespaces).isEmpty)
             } header: {
                 Text("地址、密钥与模型")
             } footer: {
@@ -171,6 +177,7 @@ struct PresetEditor: View {
         isFallback = s.fallbackPreset?.id == presetId
         guard let p = s.chatPresets.first(where: { $0.id == presetId }) else { return }
         name = p.name; provider = p.provider.rawValue; baseUrl = p.baseUrl; apiKey = p.apiKey; model = p.model
+        recentModels = (chatJSON["presets"]?.array ?? []).first(where: { $0["id"]?.string == presetId })?["recentModels"]?.array?.compactMap(\.string) ?? []
         siteUrl = p.siteUrl; topupUrl = p.topupUrl
     }
 
@@ -220,5 +227,63 @@ struct PresetEditor: View {
         s.raw["services"] = .object(services)
         do { try s.save(); dismiss() }
         catch { problem = "删除失败：\(error.localizedDescription)" }
+    }
+}
+
+
+/// 从接口拉模型列表来选（网页版 ModelPicker）。拉不到时照旧手填。只读一份列表，不调用模型
+struct ModelPickerView: View {
+    let provider: String
+    let baseUrl: String
+    let apiKey: String
+    let current: String
+    var recent: [String] = []
+    var pick: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var list: [String] = []
+    @State private var busy = false
+    @State private var failure: String?
+    @State private var query = ""
+
+    var body: some View {
+        List {
+            if !recent.isEmpty && query.isEmpty {
+                Section("最近用过") { ForEach(recent, id: \.self) { row($0) } }
+            }
+            if busy {
+                HStack { ProgressView(); Text("正在拉取列表").foregroundStyle(Theme.text2) }
+            } else if let failure {
+                Text("拉取失败：\(failure)。可以返回直接填写模型名。").foregroundStyle(Theme.danger)
+            } else if list.isEmpty {
+                Text("接口没有返回模型列表。可以返回直接填写模型名。").foregroundStyle(Theme.text2)
+            }
+            let shown = ModelList.filter(list, query)
+            if !shown.isEmpty {
+                Section("\(shown.count) 个模型") { ForEach(shown, id: \.self) { row($0) } }
+            }
+        }
+        .searchable(text: $query, prompt: "搜索模型")
+        .navigationTitle("选择模型")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await load() }
+    }
+
+    private func row(_ m: String) -> some View {
+        Button { pick(m); dismiss() } label: {
+            HStack {
+                Text(m).foregroundStyle(Theme.text).lineLimit(1)
+                Spacer()
+                if m == current { Image(systemName: "checkmark").foregroundStyle(Theme.text) }
+            }
+        }
+    }
+
+    private func load() async {
+        busy = true
+        failure = nil
+        do { list = try await ModelList.fetch(provider: provider, baseUrl: baseUrl, apiKey: apiKey) }
+        catch { failure = error.localizedDescription }
+        busy = false
     }
 }

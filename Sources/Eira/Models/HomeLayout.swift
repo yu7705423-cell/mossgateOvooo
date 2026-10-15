@@ -331,6 +331,37 @@ struct HomeLayout {
     /// 移除过、现在不在主界面上的
     var removedApps: [String] { removed.filter { Shell.app($0) != nil } }
 
+    // MARK: - 底栏开关（网页版 4.302）
+
+    var dockHidden: Bool { lay["dockHidden"]?.bool == true }
+
+    /// 关：底栏那几个 app 由自愈放进网格的空位，dock 原样留着当记录。
+    /// 开：记录里的 app 还是网格上单独一格的，把那一格收回底栏；已经进了文件夹或被移除的，底栏那一格空着
+    mutating func setDockHidden(_ on: Bool) {
+        guard dockHidden != on else { return }
+        if on {
+            lay["dockHidden"] = .bool(true)
+        } else {
+            lay.removeValue(forKey: "dockHidden")
+            let gone = Set(removed)
+            var ps = pages
+            dock = dock.map { id in
+                guard let id, !gone.contains(id) else { return nil }
+                for i in ps.indices {
+                    var cs = cells(ps[i])
+                    if let j = cs.firstIndex(where: { Self.kind($0) == "app" && Self.ref($0) == id }) {
+                        cs.remove(at: j)
+                        ps[i]["cells"] = .array(cs.map { .object($0) })
+                        return id
+                    }
+                }
+                return nil
+            }
+            pages = ps
+        }
+        heal()
+    }
+
     // MARK: - 页
 
     mutating func addPage() -> Int {

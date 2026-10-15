@@ -8,7 +8,17 @@ import SwiftUI
 final class SettingsModel: ObservableObject {
     static let shared = SettingsModel()
 
-    @Published private(set) var s = AppSettings.load()
+    @Published private(set) var s = AppSettings.load() {
+        didSet { Self.applyLook(s) }
+    }
+
+    init() { Self.applyLook(s) }
+
+    /// 配色与字号在取色、排字时直接读（Palette），设置一变就跟着换
+    private static func applyLook(_ s: AppSettings) {
+        Palette.apply(s.raw["palette"])
+        Palette.applyFont(s.raw["fontScale"])
+    }
     @Published var problem: String?
 
     func reload() { s = AppSettings.load() }

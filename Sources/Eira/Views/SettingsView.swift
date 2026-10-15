@@ -223,6 +223,14 @@ struct ServiceConnSection: View {
             }
             TextField("模型", text: model.service(name, "model"))
                 .textInputAutocapitalization(.never).autocorrectionDisabled()
+            if let p = preset(), !p.apiKey.isEmpty {
+                NavigationLink("从接口选择模型") {
+                    ModelPickerView(provider: p.provider.rawValue, baseUrl: p.baseUrl, apiKey: p.apiKey,
+                                    current: model.service(name, "model").wrappedValue) { m in
+                        model.update { $0.setService(name, ["model": .string(m)]) }
+                    }
+                }
+            }
         } header: {
             Text("接口")
         } footer: {
@@ -475,10 +483,12 @@ struct AppearanceView: View {
             } footer: {
                 HelpNote("跟随系统时，随手机的深色模式切换。")
             }
+            PaletteSection()
+            FontScaleSection()
             WallpaperSection()
-            Section {
-                Text("在主界面长按一个图标，可以更换它的图片、线条图标与名称。").font(.footnote).foregroundStyle(Theme.text2)
-            } header: { Text("图标") }
+            IconLookSection()
+            DockLookSection()
+            LookPresetsSection()
             RemovedAppsSection()
             ProblemSection(text: model.problem)
         }

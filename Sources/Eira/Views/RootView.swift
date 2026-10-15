@@ -30,6 +30,8 @@ struct RootView: View {
                        openChat: { id in notifier.openChat = id },
                        changed: { layout = Shell.layout() })
         }
+        // 换了配色或字号：主屏整个重画一遍，取色时读到新的那一套。打开的 app 下次打开时换上
+        .id("\(Palette.key)|\(Palette.fontScale)")
         .safeAreaInset(edge: .top, spacing: 0) { ProblemBanner() }
         // 点了通知或主屏的会话：打开聊天，由会话列表打开那一段
         .onChange(of: notifier.openChat) { _, id in

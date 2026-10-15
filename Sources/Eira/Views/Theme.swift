@@ -14,22 +14,30 @@ enum Theme {
         UIColor(red: CGFloat((v >> 16) & 255) / 255, green: CGFloat((v >> 8) & 255) / 255, blue: CGFloat(v & 255) / 255, alpha: a)
     }
 
+    /// 一个令牌：选了配色就用那一套算出来的，否则用这里写的浅色、深色值（网页版 --ph-* 盖在令牌上）
+    static func token(_ name: String, _ light: UIColor, _ dark: UIColor) -> Color {
+        Color(uiColor: UIColor { t in
+            let d = t.userInterfaceStyle == .dark
+            return Palette.color(name, dark: d) ?? (d ? dark : light)
+        })
+    }
+
     // MARK: 颜色（--bg、--surface…）
-    static let bg = pair(hex(0xFFFFFF), hex(0x000000))
-    static let surface = pair(hex(0xFFFFFF), hex(0x0B0B0B))
-    static let surface2 = pair(hex(0xF4F4F4), hex(0x141414))
-    static let surface3 = pair(hex(0xECECEC), hex(0x1E1E1E))
-    static let border = pair(hex(0xEDEDED), hex(0x1A1A1A))
-    static let border2 = pair(hex(0xDCDCDC), hex(0x2A2A2A))
-    static let text = pair(hex(0x000000), hex(0xFFFFFF))
-    static let text2 = pair(hex(0x000000, 0.56), hex(0xFFFFFF, 0.58))
-    static let text3 = pair(hex(0x000000, 0.34), hex(0xFFFFFF, 0.36))
-    static let accent = text
-    static let onAccent = bg
+    static let bg = token("bg", hex(0xFFFFFF), hex(0x000000))
+    static let surface = token("surface", hex(0xFFFFFF), hex(0x0B0B0B))
+    static let surface2 = token("surface-2", hex(0xF4F4F4), hex(0x141414))
+    static let surface3 = token("surface-3", hex(0xECECEC), hex(0x1E1E1E))
+    static let border = token("border", hex(0xEDEDED), hex(0x1A1A1A))
+    static let border2 = token("border-2", hex(0xDCDCDC), hex(0x2A2A2A))
+    static let text = token("text", hex(0x000000), hex(0xFFFFFF))
+    static let text2 = token("text-2", hex(0x000000, 0.56), hex(0xFFFFFF, 0.58))
+    static let text3 = token("text-3", hex(0x000000, 0.34), hex(0xFFFFFF, 0.36))
+    static let accent = token("accent", hex(0x000000), hex(0xFFFFFF))
+    static let onAccent = token("on-accent", hex(0xFFFFFF), hex(0x000000))
     /// 删除一类：暗红文字。黑白里唯一的颜色，只给不能撤销的操作（新版 --danger-text）
     static let dangerText = pair(hex(0xA8322A), hex(0xE8968F))
     /// 分组胶囊：极浅的灰底，不描边
-    static let groupFill = pair(hex(0xF5F5F5), hex(0x121212))
+    static let groupFill = token("group-fill", hex(0xF5F5F5), hex(0x121212))
     static let groupLine = pair(hex(0x000000, 0.07), hex(0xFFFFFF, 0.08))
     /// 默认头像与无图格子的底（--cat-bg）
     static let catBg = pair(hex(0xEDEDEC), hex(0x222224))
@@ -124,7 +132,8 @@ extension View {
     /// 新版界面的全局默认：正文 16 号、按钮与开关用文字色（黑白）、列表不垫系统的灰底，露出页面底色。
     func eiraLook() -> some View {
         self
-            .font(.system(size: Theme.bodySize))
+            .font(.system(size: Theme.bodySize * Palette.fontScale))
+            .dynamicTypeSize(Palette.typeSize)
             .tint(Theme.text)
             .scrollContentBackground(.hidden)
             .background(Theme.bg)
