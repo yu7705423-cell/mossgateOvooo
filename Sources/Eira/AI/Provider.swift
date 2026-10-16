@@ -21,6 +21,8 @@ struct AIError: LocalizedError {
     /// 已经收到了一部分正文。这种失败不重试、不换接口：再来一次是另付一次钱，而用户已经看到了一半。
     var partial: String = ""
     var cancelled = false
+    /// 没连上时系统给的错误码（URLError.Code），测试连接据此说明断在哪一步
+    var netCode: Int?
     /// 这一次试过、都失败了的那几套，各自是不是余额不足（网页版 err.failedPresets）。会话里那条失败据此给「去充值」
     var failedPresets: [FailedPreset] = []
     var errorDescription: String? { message }
@@ -170,6 +172,10 @@ enum Provider {
             throw AIError(status: nil, message: "已取消", partial: text, cancelled: true)
         } catch let e as URLError where e.code == .cancelled {
             throw AIError(status: nil, message: "已取消", partial: text, cancelled: true)
+        } catch let e as URLError {
+            var out = AIError(status: nil, message: "连接失败：\(e.localizedDescription)", partial: text)
+            out.netCode = e.code.rawValue
+            throw out
         } catch {
             throw AIError(status: nil, message: "连接失败：\(error.localizedDescription)", partial: text)
         }

@@ -58,6 +58,28 @@ enum Knowledge {
         return Memory(row: row)
     }
 
+    /// 批量处理几件进行中的事（网页版 4.534）：了结（done）或改为事件（event）。群聊里同一件事的几份（twin）一起改
+    @discardableResult
+    static func settle(_ ids: [String], as action: String) throws -> Int {
+        let rows = try Database.shared.all(Collections.memories)
+        let picked = rows.filter { ids.contains($0.id) }
+        let twins = Set(picked.map { $0.string("twin") }.filter { !$0.isEmpty })
+        let targets = rows.filter { ($0.string("kind") == "open")
+            && (ids.contains($0.id) || (!$0.string("twin").isEmpty && twins.contains($0.string("twin")))) }
+        let now = Date().millis
+        for r in targets {
+            var row = r
+            if action == "event" {
+                row["kind"] = .string("event"); row["category"] = .string("event"); row["status"] = .string(""); row["dueAt"] = .string("")
+            } else {
+                row["status"] = .string("done"); row["doneAt"] = .number(now)
+            }
+            row.touch()
+            try Database.shared.put(Collections.memories, row)
+        }
+        return targets.count
+    }
+
     static func deleteMemory(_ id: String) throws {
         try Database.shared.delete(Collections.memories, id: id)
     }

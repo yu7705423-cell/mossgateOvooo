@@ -12,6 +12,10 @@ struct MemoryListView: View {
     struct EditTarget: Identifiable, Hashable { let id: String }
     struct SubPage: Identifiable, Hashable { let id: String }
     @State private var sub: SubPage?
+    /// 多选进行中的事，一并了结或改为事件（网页版 4.534）
+    @State private var picking = false
+    @State private var picked: Set<String> = []
+    @State private var confirm: String?
 
     private static let filters: [(String, String)] = [("all", "全部"), ("event", "事件"), ("fact", "事实"), ("open", "进行中"), ("pinned", "常驻")]
 
@@ -25,8 +29,21 @@ struct MemoryListView: View {
             }
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             ForEach(shown) { m in
-                Button { editing = EditTarget(id: m.id) } label: { row(m) }
-                    .foregroundStyle(Theme.bubbleTheirsText)
+                Button {
+                    if picking {
+                        if picked.contains(m.id) { picked.remove(m.id) } else { picked.insert(m.id) }
+                    } else {
+                        editing = EditTarget(id: m.id)
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        if picking {
+                            Image(systemName: picked.contains(m.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(Theme.text)
+                        }
+                        row(m)
+                    }
+                }
+                .foregroundStyle(Theme.bubbleTheirsText)
             }
             if shown.isEmpty {
                 Text(all.isEmpty ? "暂无记忆。" : "没有符合条件的记忆。").foregroundStyle(Theme.secondaryText)
@@ -37,6 +54,7 @@ struct MemoryListView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 Menu {
+                    Button("多选进行中的事") { filter = "open"; picked = []; picking = true }
                     Button("现状") { sub = SubPage(id: "state") }
                     Button("历史版本") { sub = SubPage(id: "history") }
                     Button("体检") { sub = SubPage(id: "check") }
@@ -45,6 +63,30 @@ struct MemoryListView: View {
             ToolbarItem(placement: .primaryAction) {
                 Button { editing = EditTarget(id: "") } label: { NavIcon("plus") }.accessibilityLabel("新建记忆")
             }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if picking {
+                HStack {
+                    Button("取消") { picking = false; picked = [] }
+                    Spacer()
+                    Button("改为事件") { confirm = "event" }.disabled(picked.isEmpty)
+                    Button("了结") { confirm = "done" }.disabled(picked.isEmpty).padding(.leading, 16)
+                }
+                .padding(.horizontal, Theme.sp4).padding(.vertical, Theme.sp3)
+                .background(Theme.bg)
+            }
+        }
+        .confirmationDialog(confirm == "event" ? "改为事件" : "了结 \(picked.count) 件进行中的事",
+                            isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }), titleVisibility: .visible) {
+            Button(confirm == "event" ? "改为事件" : "了结") {
+                guard let action = confirm else { return }
+                do { try Knowledge.settle(Array(picked), as: action); picking = false; picked = []; reload() }
+                catch { problem = "未能保存：\(error.localizedDescription)" }
+            }
+        } message: {
+            Text(confirm == "event"
+                 ? "按原来的日期作为发生过的事保存，不再有进行中的状态，也不再作为进行中的事注入；聊到相关内容时由召回带上。可在每条的编辑页改回。"
+                 : "标为已了结，从此不再作为进行中的事注入；两周内聊到相关内容时随召回带上，写明已了结。可在每条的编辑页改回。")
         }
         .navigationDestination(item: $editing) { t in
             MemoryEditView(memoryId: t.id.isEmpty ? nil : t.id, charId: charId)

@@ -45,6 +45,9 @@ targets:
         NSCameraUsageDescription: 视频通话时显示你这边的画面；识图交给聊天模型时，画面随你说的话一起发给角色。
         NSSpeechRecognitionUsageDescription: 录音时用系统识别把语音消息转成文字。
         NSFaceIDUsageDescription: 忘记锁屏密码时，用面容 ID 验证后清除锁屏密码。
+        NSLocalNetworkUsageDescription: 连接你在局域网里的电脑上运行的模型服务（例如 Ollama、LM Studio）。
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
     settings:
       base:
         # 正式的包标识，在开发者网站登记过、App Store Connect 里建 App 时选的就是它。一经使用永不改：

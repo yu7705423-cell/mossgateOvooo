@@ -273,8 +273,45 @@ enum ConnTest {
                                                     messages: [AIMessage(role: .user, content: "ping")], maxTokens: 16)
             let text = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
             return ("连接成功：" + (text.isEmpty ? "（接口返回了空内容）" : String(text.prefix(200))), true)
+        } catch let e as AIError {
+            return (e.message + explain(e, base: p.baseUrl), false)
         } catch {
             return (error.localizedDescription, false)
+        }
+    }
+
+    /// 本机或局域网的地址（网页版 4.551 的 localKind）
+    static func localKind(_ base: String) -> String {
+        guard let host = URL(string: base)?.host?.lowercased() else { return "" }
+        if host == "localhost" || host.hasPrefix("127.") || host == "::1" { return "loopback" }
+        if host.hasPrefix("10.") || host.hasPrefix("192.168.") || host.hasPrefix("169.254.") || host.hasSuffix(".local")
+            || host.hasPrefix("fc") || host.hasPrefix("fd") { return "lan" }
+        if host.hasPrefix("172."), let n = Int(host.split(separator: ".").dropFirst().first ?? ""), (16...31).contains(n) { return "lan" }
+        return ""
+    }
+
+    /// 断在哪一步（网页版 4.551）：连上了被拒，还是根本没连上
+    static func explain(_ e: AIError, base: String) -> String {
+        let kind = localKind(base)
+        if e.status != nil {
+            return kind.isEmpty
+                ? "\n已经连上了，是对方拒绝了这次请求。多半是密钥、模型名或地址路径不对。"
+                : "\n本地服务已连上。多半是模型名不对：Ollama 填 ollama list 里的名字，LM Studio 填已加载的模型。"
+        }
+        guard let code = e.netCode else { return "" }
+        if code == URLError.appTransportSecurityRequiresSecureConnection.rawValue {
+            return "\n没连上：手机不允许用 http 连接公网地址，请改用 https 地址。"
+        }
+        let unreachable: Set<Int> = [URLError.cannotConnectToHost.rawValue, URLError.timedOut.rawValue, URLError.cannotFindHost.rawValue,
+                                     URLError.networkConnectionLost.rawValue, URLError.notConnectedToInternet.rawValue]
+        guard unreachable.contains(code) else { return "" }
+        switch kind {
+        case "loopback":
+            return "\n没连上：手机上的 localhost 指的是手机自己，不是电脑。请填电脑的局域网 IP，例如 http://192.168.1.5:11434/v1。"
+        case "lan":
+            return "\n没连上：手机与电脑需要在同一个局域网；Ollama 还需设置 OLLAMA_HOST=0.0.0.0，地址填电脑的局域网 IP（例如 http://192.168.1.5:11434/v1），并确认电脑防火墙放行该端口。"
+        default:
+            return "\n没连上：地址不可达或网络不通，请检查地址与网络。"
         }
     }
 }
