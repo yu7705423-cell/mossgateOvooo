@@ -11,7 +11,15 @@ import SwiftUI
 /// framed 为 false 的（网页版 frameless: true）不垫主屏的卡片，自己画形状；其中月相、今年、这一周、节气、一句
 /// 自己画一张 dw-card。数据在各自的小视图里 .task 读一次，会话或朋友圈变了再读，不在 body 里每次重读。
 enum MoreWidgets {
-    struct Field { let key: String; let kind: String /* "image" | "text" | "char" | "lang" */; let label: String; let placeholder: String }
+    /// kind：image、text、char、lang，以及 HomeWidgetsMore2.swift 那一批用的 choice、switch、date、who、multi、chars。
+    /// when 写成「键=值」时，只在那一项是这个值时才在编辑页里显示（网页版 fields 的 when）
+    struct Field {
+        let key: String
+        let kind: String
+        let label: String
+        let placeholder: String
+        var when: String = ""
+    }
     struct Def { let id: String; let label: String; let desc: String; let sizes: [(Int, Int)]; let fields: [Field]; let framed: Bool /* false = web frameless: true (no card background) */ }
 
     // MARK: - 登记（网页版 registerWidget / deco 的 id、label、desc、sizes、fields、frameless）
@@ -66,7 +74,7 @@ enum MoreWidgets {
             sizes: [(4, 1), (2, 1)], fields: [lang("en")], framed: false),
         Def(id: "dw-term", label: "节气", desc: "今天落在哪个节气，离下一个还有几天，按日期算，不用填任何东西",
             sizes: [(2, 2), (4, 2), (2, 1), (4, 1)], fields: [lang("zh")], framed: false),
-    ]
+    ] + more2
 
     static func has(_ id: String) -> Bool { all.contains { $0.id == id } }
 
@@ -89,7 +97,7 @@ enum MoreWidgets {
         case "dw-year": return AnyView(YearW(cell: cell, home: home))
         case "dw-week": return AnyView(WeekW(cell: cell, home: home))
         case "dw-term": return AnyView(TermW(cell: cell, home: home))
-        default: return AnyView(EmptyView())
+        default: return view2(cell, home: home, open: open, openChat: openChat) ?? AnyView(EmptyView())
         }
     }
 

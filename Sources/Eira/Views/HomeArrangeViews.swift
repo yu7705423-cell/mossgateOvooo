@@ -466,9 +466,53 @@ struct WidgetFieldsView: View {
 
     var body: some View {
         Form {
-            ForEach(def.fields, id: \.key) { f in
+            ForEach(def.fields.filter { MoreWidgets.shows($0, values, defaults: def.fields) }, id: \.key) { f in
                 Section {
                     switch f.kind {
+                    case "choice":
+                        Picker(f.label, selection: Binding(get: { values[f.key] ?? MoreWidgets.choices(f.placeholder).first?.value ?? "" },
+                                                           set: { values[f.key] = $0 })) {
+                            ForEach(MoreWidgets.choices(f.placeholder), id: \.value) { o in Text(o.label).tag(o.value) }
+                        }
+                        .pickerStyle(.segmented)
+                    case "switch":
+                        Toggle(f.label, isOn: Binding(get: { values[f.key] != "0" }, set: { values[f.key] = $0 ? "1" : "0" }))
+                    case "date":
+                        let day = MoreWidgets.Calc.localDay(values[f.key] ?? "")
+                        if let day {
+                            DatePicker(f.label, selection: Binding(get: { day }, set: { values[f.key] = Self.dayKey($0) }), displayedComponents: .date)
+                            Button("清空", role: .destructive) { values[f.key] = "" }
+                        } else {
+                            Text(f.placeholder).foregroundStyle(Theme.text2)
+                            Button("选择日期") { values[f.key] = Self.dayKey(Date()) }
+                        }
+                    case "who":
+                        Picker(f.label, selection: Binding(get: { values[f.key] ?? "" }, set: { values[f.key] = $0 })) {
+                            Text("最近聊过的角色").tag("")
+                            Text("我自己").tag("me")
+                            ForEach(chars.filter { !$0.isNpc }, id: \.id) { c in Text(c.displayName).tag(c.id) }
+                        }
+                    case "multi", "chars":
+                        let opts: [MoreWidgets.Opt] = f.kind == "chars"
+                            ? chars.filter { !$0.isNpc && ($0.parentId ?? "").isEmpty }.map { MoreWidgets.Opt(value: $0.id, label: $0.displayName, on: false) }
+                            : MoreWidgets.choices(f.placeholder)
+                        let picked = (values[f.key] ?? "").split(separator: ",").map(String.init)
+                        if f.kind == "chars" {
+                            Text(picked.isEmpty ? "全部角色" : "已选 \(picked.count) 个角色").foregroundStyle(Theme.text2)
+                        }
+                        ForEach(opts, id: \.value) { o in
+                            Button {
+                                var next = picked
+                                if let i = next.firstIndex(of: o.value) { next.remove(at: i) } else { next.append(o.value) }
+                                values[f.key] = next.joined(separator: ",")
+                            } label: {
+                                HStack {
+                                    Text(o.label).foregroundStyle(Theme.text)
+                                    Spacer()
+                                    if picked.contains(o.value) { Image(systemName: "checkmark").foregroundStyle(Theme.text) }
+                                }
+                            }
+                        }
                     case "image":
                         let id = values[f.key] ?? ""
                         if !id.isEmpty {
@@ -507,7 +551,12 @@ struct WidgetFieldsView: View {
                     var cfg: [String: JSONValue] = [:]
                     for f in def.fields {
                         let v = values[f.key] ?? ""
-                        cfg[f.key] = f.kind == "image" && v.isEmpty ? .null : .string(v)
+                        switch f.kind {
+                        case "switch": cfg[f.key] = .bool(v != "0")
+                        case "multi", "chars": cfg[f.key] = .array(v.split(separator: ",").map { .string(String($0)) })
+                        case "image": cfg[f.key] = v.isEmpty ? .null : .string(v)
+                        default: cfg[f.key] = .string(v)
+                        }
                     }
                     if apply({ $0.setConfig(cell.id, cfg) }) { done() }
                 }
@@ -516,7 +565,19 @@ struct WidgetFieldsView: View {
         .onAppear {
             guard !loaded else { return }
             loaded = true
-            for f in def.fields { values[f.key] = cell.config[f.key]?.string ?? "" }
+            for f in def.fields {
+                switch f.kind {
+                case "switch": values[f.key] = cell.config[f.key]?.bool == false ? "0" : "1"
+                case "multi", "chars":
+                    // 没写过时按登记里带 * 的那几项（健康默认不含体重）
+                    let list = cell.config[f.key]?.array?.compactMap(\.string)
+                        ?? MoreWidgets.choices(f.placeholder).filter { $0.on }.map { $0.value }
+                    values[f.key] = list.joined(separator: ",")
+                case "choice":
+                    values[f.key] = cell.config[f.key]?.string ?? MoreWidgets.choices(f.placeholder).first?.value ?? ""
+                default: values[f.key] = cell.config[f.key]?.string ?? ""
+                }
+            }
             chars = ((try? Repo.characters()) ?? []).filter { !$0.archived }
         }
         .onChange(of: item) { _, it in
@@ -533,5 +594,11 @@ struct WidgetFieldsView: View {
                 }
             }
         }
+    }
+
+    /// 2024-05-01（本地时间）
+    static func dayKey(_ d: Date) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: d)
+        return String(format: "%04ld-%02ld-%02ld", c.year ?? 2000, c.month ?? 1, c.day ?? 1)
     }
 }
