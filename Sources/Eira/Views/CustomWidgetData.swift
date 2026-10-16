@@ -31,7 +31,7 @@ extension CustomWidget {
         if m < 60 { return "\(m) 分钟前" }
         if m < 1440 { return "\(m / 60) 小时前" }
         if m < 7 * 1440 { return "\(m / 1440) 天前" }
-        let p = Day.parts(Date(millis: t))
+        let p = MoreWidgets.Day.parts(Date(millis: t))
         return "\(p.m + 1)月\(p.d)日"
     }
 
