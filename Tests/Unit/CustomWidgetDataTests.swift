@@ -77,7 +77,7 @@ final class CustomWidgetDataTests: StoreTestCase {
         let doc = CustomWidget.document(html, cell: cell("c1"), fit: "fit", vars: "", scheme: "light", filled: f)
         XCTAssertEqual(doc.components(separatedBy: "</script>").count, 2, "只有桥自己的那一个 </script>")
         XCTAssertTrue(doc.contains("data:{"), "widget.data 交进去")
-        XCTAssertTrue(doc.contains("\\u003c/script>"))
+        XCTAssertTrue(doc.contains("\\u003c/script>") || doc.contains("\\u003c\\/script>"), "JSON 里的斜杠可能另被转义")
 
         let v = CustomWidget.dataValue(CustomWidget.tokens(html), f)
         XCTAssertEqual(v["最近一句"]?.string, "</script><script>alert(1)</script>")
