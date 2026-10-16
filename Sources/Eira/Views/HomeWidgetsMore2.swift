@@ -111,7 +111,7 @@ extension MoreWidgets {
         Def(id: "ins-weather", label: "天气", desc: "角色所在城市今天的天气",
             sizes: [(2, 2), (2, 1)], fields: [f2Char], framed: true),
         // zoneWidget.js
-        Def(id: "zone-dial", label: "时差旋钮", desc: "拨动表盘查看同一时刻各时区的时间，以及各时区里的角色；只选一个角色时显示该时段的日程",
+        Def(id: "zone-dial", label: "时区", desc: "拨动表盘查看同一时刻各时区的时间，以及各时区里的角色；只选一个角色时显示该时段的日程",
             sizes: [(4, 2), (4, 4), (2, 2)],
             fields: [Field(key: "chars", kind: "chars", label: "显示哪些角色", placeholder: "")], framed: true),
         // widgets.js

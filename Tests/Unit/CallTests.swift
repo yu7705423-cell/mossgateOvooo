@@ -243,4 +243,38 @@ final class CallTests: StoreTestCase {
         // 回复那一条落下；来电在主线程上随后记下（不在这段对话里，记为未接）
         XCTAssertEqual(after.dropFirst(before).first?.content, "等一下")
     }
+    /// 接不接你的来电（网页版 4.170）：默认总是接；「按作息」时免打扰时段内 15% 接、其余 90%；
+    /// 拨出去先响 2.5 到 6 秒，响铃期间不发任何请求
+    @MainActor
+    func testCallAnswerAndDialWait() throws {
+        var char = try XCTUnwrap(Repo.character("char_a"))
+        XCTAssertEqual(CallEngine.answerOf(char), "always")
+        XCTAssertTrue(CallEngine.willAnswer(char, roll: 0.999))
+
+        char.row["callAnswer"] = .string("schedule")
+        char.row["proactiveQuietFrom"] = .number(0)
+        char.row["proactiveQuietTo"] = .number(8)
+        XCTAssertEqual(CallEngine.answerOf(char), "schedule")
+        let night = try XCTUnwrap(Calendar.current.date(bySettingHour: 3, minute: 0, second: 0, of: Date()))
+        let noon = try XCTUnwrap(Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: Date()))
+        XCTAssertTrue(CallEngine.willAnswer(char, at: night, roll: 0.1))
+        XCTAssertFalse(CallEngine.willAnswer(char, at: night, roll: 0.2))
+        XCTAssertTrue(CallEngine.willAnswer(char, at: noon, roll: 0.85))
+        XCTAssertFalse(CallEngine.willAnswer(char, at: noon, roll: 0.95))
+        XCTAssertTrue(CallEngine.answerInfo(char).contains("0:00 到 8:00"))
+        char.row["callAnswer"] = .string("bogus")
+        XCTAssertEqual(CallEngine.answerOf(char), "always")
+
+        XCTAssertEqual(CallEngine.dialWait(roll: 0), 2.5, accuracy: 0.001)
+        XCTAssertEqual(CallEngine.dialWait(roll: 1), 6, accuracy: 0.001)
+        for _ in 0..<50 { XCTAssertTrue((2.5...6).contains(CallEngine.dialWait())) }
+
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let session = CallSession(chatId: "chat_a", char: try XCTUnwrap(Repo.character("char_a")))
+        session.dial()
+        XCTAssertEqual(session.phase, .connecting, "拨出去先响铃，不立刻接通")
+        XCTAssertEqual(MockNet.count, 0)
+        session.hangUp()
+        XCTAssertEqual(session.outcome, "cancelled")
+    }
 }

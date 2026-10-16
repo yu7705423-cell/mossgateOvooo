@@ -27,15 +27,30 @@ enum HomeWidgets {
         let label: String
         let sizes: [(Int, Int)]
         let editable: Bool
+        var desc = ""
+        var group: String { HomeWidgets.group(of: id) }
     }
     static let all: [Def] = [
         Def(id: "player", label: "播放器横条", sizes: [(4, 2)], editable: true),
         Def(id: "note", label: "文字块", sizes: [(2, 1), (2, 2), (4, 1), (4, 2)], editable: true),
         Def(id: "photo", label: "图片块", sizes: [(2, 2), (4, 2), (2, 1)], editable: true),
         Def(id: "recent-chats", label: "最近会话", sizes: [(2, 2), (4, 2)], editable: false),
-    ] + MoreWidgets.all.map { Def(id: $0.id, label: $0.label, sizes: $0.sizes, editable: !$0.fields.isEmpty || $0.id == CustomWidget.id) }
+    ] + MoreWidgets.all.map { Def(id: $0.id, label: $0.label, sizes: $0.sizes, editable: !$0.fields.isEmpty || $0.id == CustomWidget.id, desc: $0.desc) }
     static func def(_ id: String) -> Def? { all.first { $0.id == id } }
     static func label(_ id: String) -> String { def(id)?.label ?? "小组件" }
+
+    struct Tab: Hashable { let id: String; let label: String }
+    /// 选小组件那一页顶上的分组（网页版 Picker.js 的 GROUPS，4.592），顺序照网页版
+    static let groups: [Tab] = [Tab(id: "decor", label: "装饰"), Tab(id: "mimic", label: "仿界面"),
+                              Tab(id: "base", label: "基础"), Tab(id: "ins", label: "ins 风")]
+
+    /// 归哪一组：照网页版各组件登记时所在的文件（decorWidgets 的 deco、mimicWidgets、insWidgets 的 GROUP；其余为基础）
+    static func group(of id: String) -> String {
+        if id.hasPrefix("dw-") || ["ins-profile", "ins-days", "ins-quote"].contains(id) { return "decor" }
+        if id.hasPrefix("mm-") { return "mimic" }
+        if ["ins-polaroid", "ins-film", "ins-stories", "ins-grid", "ins-weather"].contains(id) { return "ins" }
+        return "base"
+    }
 }
 
 /// 点一个位置弹出的那一列（格子、空位、底栏）
@@ -186,41 +201,89 @@ struct ArrangeMenu: View {
     }
 }
 
-/// 选一个小组件：每种尺寸一张卡片，画的就是它本身
+/// 选一个小组件（网页版 Picker.js 的 WidgetPicker，4.592）：顶上分组标签（装饰、仿界面、基础、ins 风），下面两列卡片，
+/// 每种尺寸一张，画的就是它本身（按 4 列主屏的格子排好再按卡片宽度整块缩小）；宽的排前面，名字下面写尺寸与说明
 struct WidgetPickerView: View {
     let settings: [String: JSONValue]
     var pick: (String, Int, Int) -> Void
     @Environment(\.colorScheme) private var scheme
+    @State private var tab = ""
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                ForEach(cards, id: \.key) { card in
-                    Button { pick(card.def.id, card.w, card.h) } label: {
-                        VStack(alignment: .leading, spacing: 6) {
-                            preview(card)
-                            Text(card.def.label).font(.subheadline).foregroundStyle(Theme.text)
-                            Text("\(card.w) x \(card.h)").font(.caption).foregroundStyle(Theme.text2)
+        let tabs = Self.tabs
+        let cur = tabs.contains(where: { $0.id == tab }) ? tab : (tabs.first?.id ?? "")
+        GeometryReader { g in
+            let gap: CGFloat = 12
+            let colW = max(60, (g.size.width - Theme.pad * 4 - gap) / 2)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(tabs, id: \.id) { t in
+                                Button { tab = t.id } label: {
+                                    Text(t.label).font(.system(size: 14, weight: t.id == cur ? .semibold : .regular))
+                                        .foregroundStyle(t.id == cur ? Theme.text : Theme.text2)
+                                        .padding(.horizontal, 14).padding(.vertical, 6)
+                                        .background(Capsule().fill(t.id == cur ? Theme.surface2 : Color.clear))
+                                        .overlay(Capsule().stroke(Theme.border, lineWidth: t.id == cur ? 0 : 1))
+                                }
+                                .buttonStyle(.plain)
+                                .accessibilityAddTraits(t.id == cur ? .isSelected : [])
+                            }
                         }
                     }
-                    .buttonStyle(.plain)
+                    LazyVGrid(columns: [GridItem(.fixed(colW), spacing: gap, alignment: .top), GridItem(.fixed(colW), alignment: .top)],
+                              alignment: .leading, spacing: 18) {
+                        ForEach(Self.cards(in: cur), id: \.key) { card in
+                            Button { pick(card.def.id, card.w, card.h) } label: {
+                                VStack(alignment: .leading, spacing: 6) {
+                                    preview(card, width: colW)
+                                    Text(card.def.label).font(.subheadline).foregroundStyle(Theme.text).lineLimit(1)
+                                    Text(card.def.desc.isEmpty ? "\(card.w) x \(card.h)" : "\(card.w) x \(card.h) · \(card.def.desc)")
+                                        .font(.caption).foregroundStyle(Theme.text2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                .frame(width: colW, alignment: .leading)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
+                .padding(Theme.pad * 2)
             }
-            .padding(Theme.pad * 2)
         }
         .navigationTitle("选一个小组件")
         .navigationBarTitleDisplayMode(.inline)
     }
 
     struct Card { let def: HomeWidgets.Def; let w: Int; let h: Int; var key: String { "\(def.id)-\(w)x\(h)" } }
-    private var cards: [Card] { HomeWidgets.all.flatMap { d in d.sizes.map { Card(def: d, w: $0.0, h: $0.1) } } }
 
-    private func preview(_ c: Card) -> some View {
+    /// 有组件的分组，按网页版的顺序
+    static var tabs: [HomeWidgets.Tab] {
+        HomeWidgets.groups.filter { g in HomeWidgets.all.contains { $0.group == g.id } }
+    }
+
+    /// 一组里的卡片：一个组件有几种尺寸就几张；宽的排在前面，同样宽高比的保持登记顺序，两列才对得齐
+    static func cards(in group: String) -> [Card] {
+        let list = HomeWidgets.all.filter { $0.group == group }.flatMap { d in d.sizes.map { Card(def: d, w: $0.0, h: $0.1) } }
+        return list.enumerated().sorted { a, b in
+            let ra = Double(a.element.w) / Double(a.element.h), rb = Double(b.element.w) / Double(b.element.h)
+            return ra != rb ? ra > rb : a.offset < b.offset
+        }.map { $0.element }
+    }
+
+    private func preview(_ c: Card, width: CGFloat) -> some View {
         let unit: CGFloat = 64, gap: CGFloat = 12
+        let natW = CGFloat(c.w) * unit + CGFloat(c.w - 1) * gap
+        let natH = CGFloat(c.h) * unit + CGFloat(c.h - 1) * gap
+        let k = width / natW
         let cell = Shell.Cell(id: "pick-\(c.key)", kind: "widget", ref: c.def.id, x: 0, y: 0, w: c.w, h: c.h, name: "", apps: [],
                               label: "", coverIcon: "", coverImageId: "", config: [:])
         return HomeWidget(cell: cell, home: HomeLook(wallpaper: false, dark: scheme == .dark, s: settings), open: { _ in }, openChat: { _ in })
-            .frame(width: CGFloat(c.w) * unit + CGFloat(c.w - 1) * gap, height: CGFloat(c.h) * unit + CGFloat(c.h - 1) * gap)
+            .frame(width: natW, height: natH)
+            .scaleEffect(k, anchor: .topLeading)
+            .frame(width: width, height: natH * k, alignment: .topLeading)
             .allowsHitTesting(false)
     }
 }

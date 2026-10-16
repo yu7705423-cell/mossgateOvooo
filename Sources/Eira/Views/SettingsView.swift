@@ -10,6 +10,10 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 HeroHeader(eyebrow: "SETTINGS", title: "设置", shown: $hero)
+                // 找功能（4.646）：进说明书的搜索，上面先列「位置」，点了过去
+                Section {
+                    NavigationLink { HelpView(focus: true) } label: { row("搜索设置与功能", "search", "") }
+                }
                 Section {
                     NavigationLink { ServicesView() } label: { apiCard }
                         .listRowBackground(Theme.surface2)
@@ -39,6 +43,7 @@ struct SettingsView: View {
                 Section {
                     NavigationLink { HelpView() } label: { row("说明书", "notes", "") }
                     NavigationLink { FeedbackView() } label: { row("问题反馈", "alert", "") }
+                    NavigationLink { TermsView() } label: { row("使用须知", "checklist", "") }
                 } header: {
                     groupTitle("关于")
                 } footer: {
@@ -540,6 +545,7 @@ struct AppearanceView: View {
             IconLookSection()
             DockLookSection()
             LookPresetsSection()
+            ReactStyleSection()
             RemovedAppsSection()
             ProblemSection(text: model.problem)
         }

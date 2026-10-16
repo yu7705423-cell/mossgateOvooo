@@ -945,7 +945,9 @@ enum ChatPrompt {
             return (m, score, hit)
         }
         // 关键词对上的排在前面，同一档里再按总分：字面命中是对方当场提到了它
-        return scored.sorted { $0.2 != $1.2 ? $0.2 : $0.1 > $1.1 }.prefix(max(0, topK)).map(\.0)
+        // topK 为 0 表示过了门槛的全都要（网页版 context/memory.js recall，第 13 条：不设上限）
+        let sorted = scored.sorted { $0.2 != $1.2 ? $0.2 : $0.1 > $1.1 }.map(\.0)
+        return topK > 0 ? Array(sorted.prefix(topK)) : sorted
     }
 
     private static func bigrams(_ s: String) -> Set<String> {

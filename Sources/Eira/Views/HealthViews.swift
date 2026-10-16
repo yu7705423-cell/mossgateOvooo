@@ -3,6 +3,7 @@ import SwiftUI
 /// 健康首页（网页版 health/App.js）：今天的记录（你自己的），下面是历史、经期、用药、角色的身体状态、设置
 struct HealthHomeView: View {
     @State private var tick = 0
+    @State private var problem: String?
 
     var body: some View {
         let _ = tick
@@ -14,7 +15,9 @@ struct HealthHomeView: View {
                 Section {
                     ForEach(meds) { m in
                         Button {
-                            try? Health.takeMed(m.id)
+                            do { try Health.takeMed(m.id); problem = nil } catch { problem = "未能保存：\(error.localizedDescription)" }
+                            // 记下吃过：今天剩下的那几次提醒撤掉（网页版 4.482）
+                            MedRemind.planSoon()
                             tick += 1
                         } label: {
                             HStack {
@@ -28,7 +31,9 @@ struct HealthHomeView: View {
                             }
                         }
                     }
-                } header: { Text("今天要吃的药") }
+                } header: { Text("今天要吃的药") } footer: {
+                    if let problem { Text(problem).foregroundStyle(Theme.danger) }
+                }
             }
             Section {
                 NavigationLink { HealthLogView() } label: { Text("历史") }
@@ -44,6 +49,11 @@ struct HealthHomeView: View {
         }
         .navigationTitle("健康")
         .onAppear { tick += 1 }
+        // 用药提醒往后续排；同步成功过的，顺带从「健康」读一次（十分钟内不重读）
+        .task {
+            await MedRemind.plan()
+            if await HealthSync.autoSync() != nil { tick += 1 }
+        }
     }
 }
 
@@ -259,9 +269,12 @@ struct HealthCycleView: View {
 
 /// 用药（网页版 MedsPage）：只记吃什么、什么时候吃，不给任何用药建议
 struct HealthMedsView: View {
+    @ObservedObject private var model = SettingsModel.shared
     @State private var tick = 0
     @State private var editing: MedDraft?
     @State private var problem: String?
+    @State private var planState: MedRemind.PlanState?
+    @State private var asking = false
 
     struct MedDraft: Identifiable {
         var id = UUID().uuidString
@@ -276,6 +289,26 @@ struct HealthMedsView: View {
     var body: some View {
         let _ = tick
         List {
+            Section {
+                Toggle("到点提醒", isOn: Binding(get: { MedRemind.on(model.s) }, set: { v in
+                    model.set("medRemind", .bool(v))
+                    replan()
+                }))
+                let sys = sysLine
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(sys.title)
+                    if !sys.text.isEmpty { Text(sys.text).font(.footnote).foregroundStyle(Theme.secondaryText) }
+                }
+                if planState?.permission == true {
+                    Button(asking ? "正在询问" : "允许通知") {
+                        asking = true
+                        Task { await MedRemind.askPermission(); planState = MedRemind.state; asking = false }
+                    }
+                    .disabled(asking)
+                }
+            } footer: {
+                HelpNote("到设定的时间且当天还没有记下时，由系统发一条本机通知，应用关闭也照常提醒。系统对定时通知有数量上限，所以按每天的次数排几天、最多 14 天，打开应用或回到前台时往后续排。当天已经记下吃过的，当天剩下的不再提醒。不调用任何接口，也不上传。", title: "用药：到点提醒")
+            }
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             let list = Health.listMeds()
             if list.isEmpty { Text("尚无").foregroundStyle(Theme.text3) }
@@ -295,6 +328,9 @@ struct HealthMedsView: View {
         }
         .navigationTitle("用药")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            if let st = MedRemind.state { planState = st } else { planState = await MedRemind.plan() }
+        }
         .toolbar {
             ToolbarItem(placement: .primaryAction) { Button { editing = MedDraft() } label: { Image(systemName: "plus") }.accessibilityLabel("添加") }
         }
@@ -312,6 +348,25 @@ struct HealthMedsView: View {
     private func act(_ f: () throws -> Void) {
         do { try f(); problem = nil } catch { problem = error.localizedDescription }
         tick += 1
+        replan()
+    }
+
+    /// 加改删药、开关变了：重排交给系统的那一组
+    private func replan() {
+        Task { planState = await MedRemind.plan() }
+    }
+
+    /// 现在是哪一种（网页版 MedsPage 的 sysLine）：写清楚排到了哪天、为什么没交给系统
+    private var sysLine: (title: String, text: String) {
+        if !MedRemind.on(model.s) { return ("系统提醒已关闭", "到点提醒关闭后，已交给系统的提醒一并撤回。") }
+        guard let ps = planState else { return ("正在交给系统", "") }
+        if ps.ok {
+            guard ps.n > 0, let until = ps.until else { return ("已交给系统", "目前没有需要提醒的时间。") }
+            let c = Calendar.current.dateComponents([.month, .day], from: until)
+            return ("已交给系统", "应用关闭后照常提醒，已排到 \(c.month ?? 0) 月 \(c.day ?? 0) 日。每次打开应用会自动往后续排，最多排 \(MedRemind.days) 天。")
+        }
+        if ps.permission { return ("未允许通知", "允许通知后，到点提醒交给系统发出，应用关闭也照常提醒。未允许时不提醒。") }
+        return ("未能交给系统", ps.error.isEmpty ? "原因未知。" : ps.error)
     }
 
     struct MedEditor: View {
@@ -384,12 +439,25 @@ struct HealthCharView: View {
 /// 健康的设置（网页版 SettingsPage）：体重单位、写进对话的三道开关
 struct HealthSettingsView: View {
     @ObservedObject private var model = SettingsModel.shared
+    @State private var syncing = false
+    @State private var hkNote = ""
+    @State private var hkFailed = false
 
     var body: some View {
         Form {
             Picker("体重单位", selection: Binding(get: { Health.unit(model.s) }, set: { model.set("weightUnit", .string($0)) })) {
                 Text("公斤").tag("kg")
                 Text("磅").tag("lb")
+            }
+            Section {
+                Button(syncing ? "正在同步" : "从「健康」app 同步") { syncHK() }.disabled(syncing)
+                if !hkNote.isEmpty { Text(hkNote).font(.footnote).foregroundStyle(hkFailed ? Theme.danger : Theme.secondaryText) }
+                Toggle("打开 Eira 时自动同步", isOn: model.bool("healthAutoSync", true))
+                Text(autoLine).font(.footnote).foregroundStyle(Theme.secondaryText)
+            } header: {
+                Text("系统健康数据")
+            } footer: {
+                HelpNote("读取最近 30 天的睡眠、步数、体重、饮水与经期，写进每日记录；心情、不适、排便、备注与用药是手记的，同步不会改动。首次同步会弹出系统授权，给哪几项由你在那张表上决定。手动同步成功一次之后，打开 Eira 或从后台回到前台时自动读取上次同步以来的数据，十分钟内不重复读取，只读不再询问授权。只读本机，不调用接口，不向「健康」写入任何数据。", title: "健康：从「健康」app 同步")
             }
             Section {
                 Toggle("我的记录写进对话", isOn: model.bool("healthInject", false))
@@ -405,5 +473,41 @@ struct HealthSettingsView: View {
         }
         .navigationTitle("设置")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// 自动同步那一行：现在开没开、上一次怎样（网页版 4.484 的 autoLine）
+    private var autoLine: String {
+        let base = "只读本机，不调用接口。"
+        if !HealthSync.autoOn(model.s) { return base + "已关闭，只在点上面一行时同步。" }
+        guard let last = HealthSync.last(model.s) else {
+            return base + (HealthSync.everSynced(model.s) ? "打开应用时自动同步。" : "手动同步成功一次之后生效。")
+        }
+        let at = Date(millis: last["at"]?.number ?? 0)
+        let f = DateFormatter()
+        f.dateFormat = "M 月 d 日 HH:mm"
+        if last["ok"]?.bool == true {
+            return base + "上次同步：\(f.string(from: at))" + (last["auto"]?.bool == true ? "（自动）" : "") + "，写入 \(Int(last["days"]?.number ?? 0)) 天。"
+        }
+        let err = last["error"]?.string ?? ""
+        return base + "上次同步失败（\(f.string(from: at))）：\(err.isEmpty ? "原因未知" : err)"
+    }
+
+    /// 手动同步：第一次弹系统授权表。拿不到时把系统给的原话写出来（多半是签名没带 HealthKit 权限）
+    private func syncHK() {
+        syncing = true
+        hkNote = ""
+        Task {
+            do {
+                let got = try await HealthSync.syncNow(days: 30)
+                hkFailed = false
+                hkNote = got.days > 0 || got.cycles > 0
+                    ? "已写入 \(got.days) 天" + (got.cycles > 0 ? "，经期 \(got.cycles) 次" : "")
+                    : "读到的数据是空的。请在「健康」app 的「共享」中确认已允许本应用读取。"
+            } catch {
+                hkFailed = true
+                hkNote = error.localizedDescription
+            }
+            syncing = false
+        }
     }
 }

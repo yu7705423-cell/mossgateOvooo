@@ -48,6 +48,17 @@ targets:
         NSLocalNetworkUsageDescription: 连接你在局域网里的电脑上运行的模型服务（例如 Ollama、LM Studio）。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        # 「健康 - 设置」里从「健康」app 同步（网页版 4.484）：只读不写。带着 HealthKit 权限上传 App Store Connect 时
+        # Update 这一条也必须有，否则上传被拒（90683，网页版 4.576），写明不写入
+        NSHealthShareUsageDescription: 用于把「健康」中的睡眠、步数、体重、饮水与经期同步到本应用的健康记录。
+        NSHealthUpdateUsageDescription: 本应用只读取「健康」中的数据，不会向「健康」写入任何数据。
+    # 读「健康」要 HealthKit 这一项能力。XcodeGen 按这里的 properties 生成这份文件；
+    # 签名用的描述文件里也要有这一项（scripts/asc.py 给包标识补上 HEALTHKIT 能力）
+    entitlements:
+      path: Eira.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
     settings:
       base:
         # 正式的包标识，在开发者网站登记过、App Store Connect 里建 App 时选的就是它。一经使用永不改：

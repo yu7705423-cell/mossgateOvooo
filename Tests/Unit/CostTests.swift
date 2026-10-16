@@ -370,3 +370,58 @@ extension CostTests {
         XCTAssertTrue(try MessageActions.servedText(head).hasPrefix("由「主」的 m 生成"))
     }
 }
+
+/// 换接口对比（网页版 4.561）：用户点了才调，只调选中的那一套一次，上下文不含这一轮；失败不换下一套、不重试；
+/// 加入候选不再调接口，版本与模型跟着
+extension CostTests {
+    func testCompareCallsChosenOnceWithoutTurn() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("旧的一版OLDTURN")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        let t = try XCTUnwrap(ChatEngine.lastTurn(chatId: "chat_a"))
+        MockNet.reset { req, _ in
+            .init(status: 200, body: req.url?.host == "third.test" ? MockNet.openaiStream("新的一版") : MockNet.anthropicStream("x"))
+        }
+        let third = try XCTUnwrap(CompareTurn.presets().first { $0.id == "svc_third" })
+        let r = try await CompareTurn.run(chatId: "chat_a", turnId: t.id, preset: third)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(hosts(), ["third.test"])
+        let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertFalse(body.contains("OLDTURN"))
+        XCTAssertEqual(r.raw, "新的一版")
+        // 生成对比不落库
+        XCTAssertEqual(try ChatEngine.lastTurn(chatId: "chat_a")?.versions.swipes.count, 1)
+
+        try await CompareTurn.adopt(chatId: "chat_a", turnId: t.id, r) { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let after = try XCTUnwrap(ChatEngine.lastTurn(chatId: "chat_a"))
+        XCTAssertEqual(after.id, t.id)
+        XCTAssertEqual(after.versions.swipes, ["旧的一版OLDTURN", "新的一版"])
+        XCTAssertEqual(after.versions.index, 1)
+        XCTAssertEqual(after.versions.served.count, 2)
+        XCTAssertEqual(after.versions.served[1].object?["preset"]?.string, "svc_third")
+        XCTAssertEqual(after.rows.map(\.content), ["新的一版"])
+        XCTAssertTrue(try MessageActions.servedText(XCTUnwrap(after.rows.first)).contains("三"))
+    }
+
+    func testCompareFailureNoFailover() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("旧的")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        let t = try XCTUnwrap(ChatEngine.lastTurn(chatId: "chat_a"))
+        try setSettings(["retryMax": .number(3), "chatFallback": .bool(true), "failoverMax": .number(0)])
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        let third = try XCTUnwrap(CompareTurn.presets().first { $0.id == "svc_third" })
+        do { _ = try await CompareTurn.run(chatId: "chat_a", turnId: t.id, preset: third); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(hosts(), ["third.test"])
+        XCTAssertEqual(try ChatEngine.lastTurn(chatId: "chat_a")?.versions.swipes, ["旧的"])
+    }
+
+    /// 不是最新一轮、或者是群聊：不调接口
+    func testCompareOnlyLatestOneToOne() async throws {
+        let third = try XCTUnwrap(CompareTurn.presets().first { $0.id == "svc_third" })
+        do { _ = try await CompareTurn.run(chatId: "chat_a", turnId: "turn_not_there", preset: third); XCTFail("应当拒绝") } catch {}
+        XCTAssertEqual(MockNet.count, 0)
+        let g = try GroupChat.create(memberIds: ["char_a", People.createCharacter(name: "小周").id], title: "", personaId: "me_root")
+        XCTAssertFalse(CompareTurn.can(g, turnId: "t", latestTurn: "t"))
+    }
+}

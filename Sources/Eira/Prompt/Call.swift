@@ -413,6 +413,33 @@ enum CallEngine {
         return text
     }
 
+    // MARK: - 接不接你的来电（网页版 call.answerOf / willAnswer，ARCHITECTURE 4.170）
+    //
+    // 默认总是接。角色卡上「接听你的来电」选了「按作息」（callAnswer: 'schedule'）才看「主动发起对话」里的免打扰时段：
+    // 时段内 15% 接，其余时间 90% 接。不为「接不接」单独跑一次模型（第 15 条）。角色打给你的那一路不受影响
+
+    /// 角色卡上的选项，取值与网页版一致：always（默认）/ schedule
+    static let answerChoices: [(value: String, label: String)] = [("always", "总是接听"), ("schedule", "按作息")]
+
+    static func answerOf(_ char: Character?) -> String { char?.row["callAnswer"]?.string == "schedule" ? "schedule" : "always" }
+
+    /// 选项下面那一句说明（网页版 AbilitiesPage 的 info），写出当前的免打扰时段
+    static func answerInfo(_ char: Character?) -> String {
+        if answerOf(char) == "always" { return "你打过去，角色总会接听。" }
+        let c = Proactive.config(char)
+        let span = c.quietFrom == c.quietTo ? "当前未设置" : "\(c.quietFrom):00 到 \(c.quietTo):00"
+        return "按「主动发起对话」中的免打扰时段（\(span)）：时段内多半不接，其余时间偶尔不接，未接时记一条未接来电。"
+    }
+
+    /// 这一通接不接。roll 是 0 到 1 之间掷出来的数，测试里传定值
+    static func willAnswer(_ char: Character, at date: Date = Date(), roll: Double = Double.random(in: 0..<1)) -> Bool {
+        if answerOf(char) == "always" { return true }
+        return roll < (Proactive.inQuiet(Proactive.config(char), date) ? 0.15 : 0.9)
+    }
+
+    /// 拨出去先响一会儿再接通：2.5 到 6 秒（网页版 dial 的 2500 + random * 3500 毫秒），立刻接通反而假
+    static func dialWait(roll: Double = Double.random(in: 0...1)) -> TimeInterval { 2.5 + 3.5 * min(1, max(0, roll)) }
+
     // MARK: - 角色打进来（网页版 call.ring，回复里的 [去电]）
 
     /// 角色在回复里写了 [去电]。正看着这段对话就响铃；不在就直接记一条未接来电（网页版：人不在这段对话里就不响铃）。

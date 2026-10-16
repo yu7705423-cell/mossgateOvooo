@@ -31,6 +31,9 @@ struct ChatSettingsView: View {
     @State private var otd: [OnThisDay.Year] = []
     @State private var showSkin = false
     @State private var query = ""
+    /// 角色主页：一张自带导航的页（主页里还能点进动态、编辑资料）
+    @State private var profileChar: String?
+    @State private var profilePath = NavigationPath()
 
     var body: some View {
         Form {
@@ -63,6 +66,23 @@ struct ChatSettingsView: View {
             }
         }
         .navigationDestination(isPresented: $showSkin) { SkinPageView(chatId: chatId) }
+        .sheet(item: Binding(get: { profileChar.map { EditTarget(id: $0) } }, set: { profileChar = $0?.id })) { t in
+            NavigationStack(path: $profilePath) {
+                ProfileView(subjectId: t.id, path: $profilePath)
+                    .navigationDestination(for: ChatAppView.ChatRoute.self) { r in
+                        switch r {
+                        case .profile(let id): ProfileView(subjectId: id, path: $profilePath)
+                        case .moment(let id): MomentDetailView(momentId: id, path: $profilePath)
+                        case .editChar(let id): CharacterEditView(charId: id, path: $profilePath)
+                        case .editPersona(let id): PersonaEditView(personaId: id)
+                        case .search: EmptyView()
+                        case .focus(let c, let m): ConversationView(chatId: c, focusId: m)
+                        }
+                    }
+                    .navigationDestination(for: String.self) { id in ConversationView(chatId: id) }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { profileChar = nil } } }
+            }
+        }
     }
 
     /// 菜单里的一项。分组、搜索、最近打开都读同一份，不各写一遍
@@ -92,8 +112,8 @@ struct ChatSettingsView: View {
         add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执", searchOnly: true,
             action: { showSkin = true })
         if c.isGroup {
-            add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称",
-                dest: AnyView(MenuPage("群资料") { GroupMembersSection(chatId: chatId); GroupProactiveSection(chatId: chatId) }))
+            add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称 成员私下找你 私信",
+                dest: AnyView(groupPage))
             add("face", "这个群", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "成员的头像 我的头像", dest: AnyView(facePage(c)))
             add("abilities", "这个群", "成员的能力", "\(c.characterIds.count) 人",
                 keys: "角色能力 能力 开关 语音 图片 音色 生图提示词 锁脸",
@@ -112,12 +132,20 @@ struct ChatSettingsView: View {
                 }))
             add("music", "这个角色", "角色在听什么", keys: "网易云 音乐 歌",
                 dest: AnyView(MenuPage("角色在听什么") { MusicCharSection(charId: charId) }))
+            // 角色主页（网页版 Conversation.js 的「角色主页」）：朋友圈式的个人页，人设不在那里出现
+            add("profile", "这个角色", "角色主页", keys: "主页 朋友圈 精选", action: { profilePath = NavigationPath(); profileChar = charId })
         }
         let how = "这段对话怎么聊"
-        add("pace", how, "节奏与自动回复", Self.paceLabel(c) + (AutoReply.listTag(c).isEmpty ? "" : " · 自动回复"),
-            keys: "回复节奏 按按钮 发完就回 延迟回复 自动回复 忙碌 休息",
+        let autoOn = c.isGroup ? AutoReply.membersOn(c) > 0 || AutoReply.isOn(c, AutoReply.mine) : !AutoReply.listTag(c).isEmpty
+        add("pace", how, "节奏与自动回复", Self.paceLabel(c) + (autoOn ? " · 自动回复" : ""),
+            keys: "回复节奏 按按钮 发完就回 延迟回复 自动回复 忙碌 休息 成员的自动回复 休息时不回复",
             dest: AnyView(MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }))
-        if !c.isGroup, let charId = c.characterIds.first {
+        if c.isGroup {
+            // 群里一段时间没有消息时由成员先开口，以及各成员私下给你发消息，都在群资料里（网页版 4.649）
+            add("proactive", how, "主动发起对话", GroupProactive.config(c).on ? "已开启" : "关闭",
+                keys: "主动消息 群里主动开口 成员私下找你 私信 间隔 免打扰",
+                dest: AnyView(groupPage))
+        } else if let charId = c.characterIds.first {
             let char = try? Repo.character(charId)
             add("proactive", how, "主动发起对话", Proactive.config(char).on ? "已开启" : "关闭",
                 keys: "主动消息 间隔 免打扰 深夜",
@@ -131,12 +159,24 @@ struct ChatSettingsView: View {
         if !c.isGroup {
             add("status", how, "状态栏", StatusBar.active(c) ? "已开启" : "关闭", keys: "心情 所在地 进度条",
                 dest: AnyView(StatusBarSettingsView(chatId: chatId)))
+            add("share", how, "共享位置", Self.geoLabel(c), keys: "位置 距离 城市 坐标",
+                dest: AnyView(GeoView(chatId: chatId)))
         }
         let lang = c.row.string("translateTo").trimmingCharacters(in: .whitespaces)
         add("translate", how, "翻译", lang.isEmpty ? "关闭" : lang, keys: "译文 语言 显示哪一种 译文怎么显示 只显示译文 只显示原文",
             dest: AnyView(TranslatePageView(chatId: chatId)))
         add("preset", how, "预设", ChatPresetPage.label(c), keys: "提示词 条目 参数",
             dest: AnyView(ChatPresetPage(chatId: chatId)))
+        add("history", how, "历史范围", HistoryRangePage.label(c), keys: "上下文 历史 读几条 条数 轮数",
+            dest: AnyView(HistoryRangePage(chatId: chatId)))
+        if c.isGroup {
+            add("lore", how, "世界书", "在各成员的角色资料里设置", keys: "设定 词条",
+                dest: AnyView(GroupLorePage(chatId: chatId)))
+        } else if let charId = c.characterIds.first {
+            let names = Self.loreNames(charId)
+            add("lore", how, "世界书", names.isEmpty ? "没有生效的世界书" : "生效中：\(names)", keys: "设定 词条 内置卡片",
+                dest: AnyView(LoreQuickView(charId: charId)))
+        }
         add("time", how, "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", summaryState, keys: "总结 记住",
@@ -250,6 +290,33 @@ struct ChatSettingsView: View {
             if !value.isEmpty { Text(value).foregroundStyle(Theme.text3).lineLimit(1) }
             Image(systemName: "chevron.right").font(.footnote).foregroundStyle(Theme.text3)
         }
+    }
+
+    /// 群资料：成员、成员私下找你、群里主动开口（网页版 GroupInfo）
+    private var groupPage: some View {
+        MenuPage("群资料") {
+            GroupMembersSection(chatId: chatId)
+            GroupDMSection(chatId: chatId)
+            GroupProactiveSection(chatId: chatId)
+        }
+    }
+
+    /// 共享位置那一行（网页版 geo.summary）：两端都填了写「甲 到 乙 · 距离」，没开写关闭
+    static func geoLabel(_ c: Chat) -> String {
+        let st = Geo.state(c)
+        guard st.on, let me = st.me, let ch = st.char else { return "关闭" }
+        let km = Geo.distance(me, ch)
+        let d = km == nil ? "缺少坐标" : Geo.distanceText(km)
+        return "\(me.place.isEmpty ? "未命名" : me.place) 到 \(ch.place.isEmpty ? "未命名" : ch.place) · \(d)"
+    }
+
+    /// 这个角色此刻生效的对话用世界书（网页版 lore.chatBooksFor：全局的加这个角色挂着的）
+    static func loreNames(_ charId: String) -> String {
+        guard let char = (try? Repo.character(charId)) ?? nil else { return "" }
+        return ((try? Repo.lorebooks()) ?? [])
+            .filter { $0.purpose == "chat" && ($0.global || char.lorebookIds.contains($0.id)) }
+            .map { $0.name.isEmpty ? "未命名" : $0.name }
+            .joined(separator: "、")
     }
 
     static func paceLabel(_ c: Chat) -> String {
@@ -435,8 +502,11 @@ struct ProactiveSection: View {
 
     /// 用户点的，手动一次：不看间隔与免打扰，也不挪下一次的时间
     private func sendNow() {
-        guard let chat = Proactive.soloChat(charId) else { problem = "与该角色还没有单聊"; return }
         if ((try? Repo.character(charId)) ?? nil)?.archived == true { problem = "封存的角色不再发起对话"; return }
+        // 只在群里认识的成员（从群资料「成员私下找你」进来）：建一段单聊再发（网页版 4.649）
+        let found: Chat?
+        do { found = try Proactive.ensureSoloChat(charId) } catch { problem = "未能建立单聊：\(error.localizedDescription)"; return }
+        guard let chat = found else { problem = "与该角色还没有单聊，也不在同一个群里"; return }
         sending = true
         problem = nil
         Task {
@@ -466,6 +536,41 @@ struct ProactiveSection: View {
         } catch {
             problem = "保存失败：\(error.localizedDescription)"
         }
+    }
+}
+
+/// 群资料里的「成员私下找你」（网页版 4.649）：逐个成员进他自己的「主动发起对话」。开关仍在角色身上，与单聊菜单里的是同一份；
+/// 只在群里认识、还没有单聊的成员，到点时建一段单聊再发
+struct GroupDMSection: View {
+    let chatId: String
+    @State private var members: [Character] = []
+    @State private var chat: Chat?
+
+    var body: some View {
+        Section {
+            ForEach(members) { m in
+                NavigationLink {
+                    MenuPage("主动发起对话") { ProactiveSection(charId: m.id) }
+                        .onDisappear(perform: load)
+                } label: {
+                    HStack {
+                        Text(chat.map { GroupChat.nameIn($0, m) } ?? m.displayName)
+                        Spacer()
+                        Text(Proactive.config(m).on ? "已开启" : "关闭").foregroundStyle(Theme.text3)
+                    }
+                }
+            }
+        } header: {
+            Text("成员私下找你")
+        } footer: {
+            HelpNote("各成员是否主动给你发私信，与该角色单聊菜单里的「主动发起对话」是同一个开关。与你还没有单聊的成员，到点时先建立一段单聊再发送。每次开口调用一次接口。", title: "成员私下找你")
+        }
+        .onAppear(perform: load)
+    }
+
+    private func load() {
+        chat = (try? Repo.chat(chatId)) ?? nil
+        members = chat.map { GroupChat.members($0) } ?? []
     }
 }
 
@@ -513,9 +618,8 @@ struct PaceSection: View {
                         get: { Pace.base(c) }, set: { set(["paceBase": .number(Double($0))]) }), in: 5...3600, step: 15)
                     Stepper(Pace.maxWait(c) == 0 ? "最长等多久：等到状态结束" : "最长等多久：\(Pace.maxWait(c) / 60) 分钟", value: Binding(
                         get: { Pace.maxWait(c) / 60 }, set: { set(["paceMax": .number(Double(max(0, $0) * 60))]) }), in: 0...1440, step: 5)
-                    if !c.isGroup {
-                        Toggle("休息时不回复", isOn: Binding(get: { Pace.sleepOn(c) }, set: { set(["paceSleep": .bool($0)]) }))
-                    }
+                    // 群里同样有这一项（网页版 4.649）：各成员按自己的免打扰时段算休息
+                    Toggle("休息时不回复", isOn: Binding(get: { Pace.sleepOn(c) }, set: { set(["paceSleep": .bool($0)]) }))
                     if Pace.pending(c) != nil {
                         HStack {
                             Text(Pace.pendingText(c)).font(.footnote).foregroundStyle(Theme.text2)
@@ -530,6 +634,9 @@ struct PaceSection: View {
             Text("节奏")
         } footer: {
             Text("发完就回时，每条消息调用一次接口。")
+            if chat?.isGroup == true {
+                HelpNote("休息时不回复：各成员自己的免打扰时段（在各成员的「主动发起对话」中设置）内视为休息。关闭后按空闲计算。", title: "休息时不回复（群聊）")
+            }
             HelpNote("按按钮：发出去只是发出去，什么时候回由发送键右边那个按钮决定。发完就回：消息一发出去就立刻生成回复，每条都调用一次接口。"
                  + "延迟回复：角色什么时候回取决于角色当时的状态。空闲时几分钟内回；「日常」里当前时段安排了事项，等这件事结束后回；"
                  + "免打扰时段（在「主动发起对话」中设置）内视为休息，起床后回。期间发出的多条消息一并回复，不消耗额外的接口调用；"
@@ -542,7 +649,9 @@ struct PaceSection: View {
     /// 自动回复（网页版 PacePage 的 CharAuto 与 AutoSide）：都是固定的话，不调接口
     @ViewBuilder
     private func autoSections(_ c: Chat) -> some View {
-        if !c.isGroup {
+        if c.isGroup {
+            groupAuto(c)
+        } else {
             let charDayOn = (c.characterIds.first.flatMap { try? Repo.character($0) }).map { DayPlan.isOn($0) } ?? false
             Section {
                 Toggle("忙碌或休息时自动回复", isOn: Binding(get: { AutoReply.config(c, AutoReply.hers).on },
@@ -576,6 +685,36 @@ struct PaceSection: View {
             HelpNote((mine.on ? (mine.max > 0 ? "已开启，还可回 \(max(0, mine.max - mine.used)) 条。" : "已开启，不限条数。") : "")
                  + "开启后角色发来消息时，替你回一句固定的话，不经过模型，不消耗接口调用。条数或结束时间任一达到时自动关闭，并在对话中留下一行提示。双方的自动回复不会互相触发。")
         }
+    }
+
+    /// 群聊：每个成员一份自动回复（网页版 PacePage 的 GroupAuto，4.649）。逐个成员开关，写明此刻在做什么。暂时离开在群里不适用
+    @ViewBuilder
+    private func groupAuto(_ c: Chat) -> some View {
+        let members = GroupChat.members(c)
+        let now = Clock.now(AppSettings.load()).millis
+        Section {
+            ForEach(members) { m in
+                let st = Pace.state(c, char: m, at: now)
+                let what = st.kind == "busy" ? "正在\(st.what)" : st.kind == "asleep" ? "休息中" : "空闲"
+                Toggle(isOn: Binding(get: { AutoReply.member(c, m.id).on }, set: { setMember(m.id, $0) })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(GroupChat.nameIn(c, m))
+                        Text("当前：\(what)" + (DayPlan.isOn(m) ? "" : "。尚未开启「日常」，没有当前事项与自动回复的内容"))
+                            .font(.footnote).foregroundStyle(Theme.text2)
+                    }
+                }
+            }
+        } header: {
+            Text("成员的自动回复")
+        } footer: {
+            HelpNote("开启后，该成员在「日常」当前时段有事项、或处于自己的免打扰时段时，你在群里发消息会先收到该成员的一条自动回复，每段忙碌或休息期间只回一次；之后在这段时间里，群里的回复不再写该成员的话。", title: "成员的自动回复")
+            HelpNote("内容按各成员的设定与正在做的事写成，随每天的日程一并生成，不另外调用接口。所有能发言的成员都回过自动回复时，这一条不再立即回复，延迟回复档在忙完之后照常回复。", title: "成员的自动回复：内容与回复")
+        }
+    }
+
+    private func setMember(_ charId: String, _ on: Bool) {
+        do { try AutoReply.setMember(chatId, charId, ["on": .bool(on)]); load(); problem = nil }
+        catch { problem = "未能保存：\(error.localizedDescription)" }
     }
 
     private func setAuto(_ side: String, _ patch: [String: JSONValue]) {

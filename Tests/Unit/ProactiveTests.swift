@@ -225,3 +225,47 @@ extension ProactiveTests {
         XCTAssertNotNil(Proactive.chatReady("char_a"))
     }
 }
+
+/// 群成员私下找你（网页版 4.649）：只在群里认识、还没有单聊的角色，到点时建一段单聊再发；建的那一刻不算刚聊过。
+/// 接口一直失败也只打一次；既没有单聊也不在群里的，不建会话、不调接口
+extension ProactiveTests {
+    func testGroupMemberGetsPrivateChat() async throws {
+        let me = try XCTUnwrap(Repo.activePersona()).id
+        var zhou = try People.createCharacter(name: "小周")
+        zhou.row["proactive"] = .bool(true)
+        zhou.row["proactiveMinutes"] = .number(60)
+        zhou.row["proactiveQuietFrom"] = .number(0)
+        zhou.row["proactiveQuietTo"] = .number(0)
+        try Database.shared.put(Collections.characters, zhou.row)
+        XCTAssertNil(Proactive.soloChat(zhou.id))
+        _ = try GroupChat.create(memberIds: ["char_a", zhou.id], title: "", personaId: me)
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        let now = Date().millis
+        Proactive.setNext(zhou.id, now - 1000)
+        let fired = await Proactive.tick(now: now)
+        XCTAssertEqual(fired, [zhou.id])
+        XCTAssertEqual(MockNet.count, 1)
+        let solo = try XCTUnwrap(Proactive.soloChat(zhou.id))
+        XCTAssertFalse(solo.isGroup)
+        XCTAssertEqual(solo.characterIds, [zhou.id])
+        XCTAssertEqual(solo.row.number("lastMessageAt"), 0)
+        // 再巡检一次：落点已挪走，不再打；不重复建会话
+        _ = await Proactive.tick(now: now + 1000)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(try Repo.chats().filter { $0.characterIds == [zhou.id] && !$0.isGroup }.count, 1)
+    }
+
+    func testStrangerGetsNoChat() async throws {
+        var lone = try People.createCharacter(name: "路人")
+        lone.row["proactive"] = .bool(true)
+        lone.row["proactiveQuietFrom"] = .number(0)
+        lone.row["proactiveQuietTo"] = .number(0)
+        try Database.shared.put(Collections.characters, lone.row)
+        let now = Date().millis
+        Proactive.setNext(lone.id, now - 1000)
+        let fired = await Proactive.tick(now: now)
+        XCTAssertFalse(fired.contains(lone.id))
+        XCTAssertEqual(MockNet.count, 0)
+        XCTAssertNil(Proactive.soloChat(lone.id))
+    }
+}

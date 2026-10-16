@@ -46,11 +46,254 @@ struct CanonView: View {
 
 }
 
-/// 记忆按角色分开，先选角色。
+/// 记忆首页的分组与计数（网页版 preset/memory/App.js 的 MemoryHome，4.649）。不调接口。
+///
+/// 上面只列主角（有记忆的排前面，没有的也列出来）；NPC（isNpc）与小号（parentId）收进「NPC 与小号」一组，
+/// 按归属的主角分开（小号看 parentId，NPC 看关系网里的第一个主角），只列有记忆的。charId 为空的是旧版本留下的记忆，单独一行。
+enum MemoryHome {
+    static let ranks = ["S", "A", "B", "C"]
+
+    struct Entry: Identifiable, Sendable {
+        let char: Character
+        let list: [Memory]
+        var id: String { char.id }
+    }
+
+    struct OwnerGroup: Identifiable, Sendable {
+        /// 归属的主角，空串是没有关联主角的
+        let owner: String
+        let name: String
+        let rows: [Entry]
+        var id: String { owner.isEmpty ? "none" : owner }
+    }
+
+    struct Plan: Sendable {
+        var mains: [Entry] = []
+        /// NPC 与小号一共几位（含没有记忆的）
+        var extras = 0
+        var groups: [OwnerGroup] = []
+        var loose: [Memory] = []
+        /// 各级条数，与 ranks 对齐
+        var stats: [Int] = [0, 0, 0, 0]
+        /// A、B 级里还在生效、可被召回的
+        var injected = 0
+
+        var extraRows: Int { groups.reduce(0) { $0 + $1.rows.count } }
+    }
+
+    static func isSide(_ c: Character) -> Bool { c.isNpc || !(c.parentId ?? "").isEmpty }
+
+    /// 按条数从多到少排；条数相同按原来的顺序
+    private static func byCount(_ list: [Entry]) -> [Entry] {
+        list.enumerated().sorted { a, b in
+            a.element.list.count != b.element.list.count ? a.element.list.count > b.element.list.count : a.offset < b.offset
+        }.map(\.element)
+    }
+
+    static func plan(chars: [Character], memories: [Memory]) -> Plan {
+        var byChar: [String: [Memory]] = [:]
+        for m in memories { byChar[m.charId, default: []].append(m) }
+        var p = Plan()
+        p.mains = byCount(chars.filter { !isSide($0) }.map { Entry(char: $0, list: byChar[$0.id] ?? []) })
+        let mainIds = Set(p.mains.map(\.id))
+        let names = Dictionary(p.mains.map { ($0.id, $0.char.displayName) }, uniquingKeysWith: { a, _ in a })
+        func ownerOf(_ c: Character) -> String {
+            if let pid = c.parentId, !pid.isEmpty, mainIds.contains(pid) { return pid }
+            let rel = (c.row["relations"]?.array ?? []).compactMap { $0["charId"]?.string }
+            return rel.first(where: { mainIds.contains($0) }) ?? ""
+        }
+        let extras = chars.filter(isSide)
+        p.extras = extras.count
+        let rows = extras.compactMap { c -> (Entry, String)? in
+            let list = byChar[c.id] ?? []
+            return list.isEmpty ? nil : (Entry(char: c, list: list), ownerOf(c))
+        }
+        var order: [String] = []
+        for (_, o) in rows where !order.contains(o) { order.append(o) }
+        p.groups = order.map { o in
+            OwnerGroup(owner: o, name: o.isEmpty ? "未关联主角" : (names[o] ?? "未关联主角"),
+                       rows: byCount(rows.filter { $0.1 == o }.map(\.0)))
+        }
+        p.loose = byChar[""] ?? []
+        p.stats = ranks.map { r in memories.filter { $0.rank == r }.count }
+        p.injected = memories.filter { ($0.rank == "A" || $0.rank == "B") && $0.supersededBy.isEmpty }.count
+        return p
+    }
+
+    /// 「S 1　A 2」：有的那几级
+    static func rankLine(_ list: [Memory]) -> String {
+        ranks.compactMap { r in
+            let n = list.filter { $0.rank == r }.count
+            return n > 0 ? "\(r) \(n)" : nil
+        }.joined(separator: "\u{3000}")
+    }
+
+    /// 列表里一行的副标题：条数、各级、其中几条来自群聊
+    static func subtitle(_ list: [Memory]) -> String {
+        let group = list.filter { !$0.row.string("twin").isEmpty || !$0.scopeChat.isEmpty }.count
+        return ["\(list.count) 条", rankLine(list), group > 0 ? "其中 \(group) 条来自群聊" : ""]
+            .filter { !$0.isEmpty }.joined(separator: " \u{00B7} ")
+    }
+
+    /// 各段对话共有几条尚未总结（网页版 pendingOf 的总和）
+    static func pendingTotal() -> Int {
+        ((try? Repo.chats()) ?? []).reduce(0) { n, c in n + (((try? MemorySummary.pending(chatId: c.id)) ?? []).count) }
+    }
+
+    struct Dupe: Identifiable, Sendable {
+        let char: Character
+        let count: Int
+        var id: String { char.id }
+    }
+
+    /// 每个角色疑似重复的组数（网页版 memcheck.pairs）。只列有的
+    static func dupes(_ chars: [Character], personaId: String) -> [Dupe] {
+        chars.compactMap { c in
+            let n = MemCheck.pairs(charId: c.id, personaId: personaId, limit: 20).count
+            return n > 0 ? Dupe(char: c, count: n) : nil
+        }
+    }
+}
+
+/// 「设定集 - 记忆」首页（网页版 MemoryHome，4.649）。
 struct MemoryCharsView: View {
     @ObservedObject private var model = SettingsModel.shared
-    @State private var chars: [Character] = []
+    @State private var plan = MemoryHome.Plan()
+    @State private var pending = 0
+    @State private var dupes: [MemoryHome.Dupe] = []
+    @State private var extraOpen = false
+    @State private var loaded = false
     @State private var problem: String?
+
+    var body: some View {
+        let every = Int(model.s.num("autoSummarizeInterval", 0))
+        List {
+            Section {
+                HStack(spacing: 0) {
+                    ForEach(MemoryHome.ranks.indices, id: \.self) { i in
+                        VStack(spacing: 2) {
+                            Text("\(plan.stats[i])").font(Theme.serif(22))
+                            Text("\(MemoryHome.ranks[i]) 级").font(.system(size: 12)).foregroundStyle(Theme.text2)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                }
+                .padding(.vertical, Theme.sp2)
+            } footer: {
+                HelpNote("记忆分三种：事件（发生过的事，按发生日期记）、事实（现在成立的事，有生效与失效日期）、进行中的事（有状态，了结后写明日期与结果）。每个角色另有一份「现状」：关于你、关于角色自己、你们之间、最近，总结时整块改写，每轮常驻。S 级压缩进「你们之间」（即关系底色）；A 与 B 级参与每轮召回（当前 \(plan.injected) 条可被召回）；C 级仅存档。", title: "记忆的种类与等级")
+            }
+
+            Section {
+                // 开关在会话菜单的「记忆总结」里（4.535），这里只摆状态：同一个开关只有一个入口
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(every > 0 ? "自动总结：每 \(every) 轮一次" : "自动总结：未开启")
+                    Text(every > 0
+                         ? "各段对话共有 \(pending) 条尚未总结。总结时额外调用一次接口。"
+                         : "各段对话共有 \(pending) 条尚未总结，这些内容不会成为记忆。")
+                        .font(.footnote).foregroundStyle(Theme.secondaryText)
+                    Text("在会话右上角菜单的「记忆总结」中开启或调整。")
+                        .font(.footnote).foregroundStyle(Theme.secondaryText)
+                }
+                NavigationLink { MemorySettingsView() } label: { IconRow(title: "记忆设置", icon: "settings") }
+                if !dupes.isEmpty {
+                    NavigationLink { MemoryDupesView(dupes: dupes) } label: {
+                        Text("发现 \(dupes.reduce(0) { $0 + $1.count }) 组可能重复的记忆")
+                    }
+                }
+            } footer: {
+                HelpNote("启用记忆、自动总结、召回方式与条数。", title: "记忆设置")
+                HelpNote("同一角色留了两条说同一件事的记忆时，召回可能把两个版本一起送进去。点击逐组处理。", title: "可能重复的记忆")
+            }
+
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+
+            if !plan.mains.isEmpty || !plan.loose.isEmpty {
+                Section {
+                    ForEach(plan.mains) { e in charLink(e) }
+                    if plan.extras > 0 {
+                        Button { extraOpen.toggle() } label: {
+                            IconRow(title: "NPC 与小号", icon: "users", value: extraOpen ? "收起" : "\(plan.extraRows) 位有记忆")
+                        }
+                        .foregroundStyle(Theme.text)
+                    }
+                    if !plan.loose.isEmpty {
+                        NavigationLink { LooseMemoryView() } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                IconRow(title: "没绑定角色", icon: "brain")
+                                Text("\(plan.loose.count) 条。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                            }
+                        }
+                    }
+                } header: {
+                    GroupTitle("角色")
+                } footer: {
+                    HelpNote("共 \(plan.extras) 位。按归属的主角分开列出有记忆的那几位；没有记忆的不列出，在各自的会话或「联系」中进入。", title: "NPC 与小号")
+                    HelpNote("旧版本留下的记忆，不会注入任何对话。指定角色后才生效，也可以多选删除。", title: "没绑定角色")
+                }
+            } else if loaded && problem == nil {
+                EmptyState(title: "暂无角色", desc: "在「联系」中创建角色后，这里按角色列出各自的记忆。")
+                    .listRowBackground(Color.clear)
+            }
+
+            if extraOpen && plan.extras > 0 {
+                if plan.groups.isEmpty {
+                    Text("NPC 与小号都还没有记忆。").foregroundStyle(Theme.secondaryText)
+                }
+                ForEach(plan.groups) { g in
+                    Section {
+                        ForEach(g.rows) { e in charLink(e) }
+                    } header: {
+                        GroupTitle("\(g.name) \u{00B7} \(g.rows.count)")
+                    }
+                }
+            }
+        }
+        .navigationTitle("记忆")
+        .onAppear(perform: reload)
+    }
+
+    private func charLink(_ e: MemoryHome.Entry) -> some View {
+        NavigationLink { MemoryListView(charId: e.id) } label: {
+            HStack(spacing: Theme.gap) {
+                Avatar(imageId: e.char.avatar, name: e.char.name, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(e.char.displayName)
+                    Text(MemoryHome.subtitle(e.list)).font(.footnote).foregroundStyle(Theme.secondaryText)
+                }
+            }
+        }
+    }
+
+    private func reload() {
+        model.reload()
+        let chars: [Character], memories: [Memory]
+        do {
+            chars = try Repo.characters()
+            memories = try Database.shared.all(Collections.memories).map(Memory.init(row:))
+            problem = nil
+        } catch {
+            problem = "读取失败：\(error.localizedDescription)"
+            loaded = true
+            return
+        }
+        plan = MemoryHome.plan(chars: chars, memories: memories)
+        loaded = true
+        // 积压条数与查重要读每段对话、两两比较，放到后台算
+        let owners = Set(memories.map(\.charId))
+        let withMemories = chars.filter { owners.contains($0.id) }
+        let me = (try? People.ensureActivePersona())?.id ?? ""
+        Task.detached(priority: .userInitiated) {
+            let n = MemoryHome.pendingTotal()
+            let d = MemoryHome.dupes(withMemories, personaId: me)
+            await MainActor.run { pending = n; dupes = d }
+        }
+    }
+}
+
+/// 「记忆设置」（网页版 preset/prompt/ContextPage.js）：启用记忆、自动总结的状态、兜底分条、召回的条数。对所有预设生效
+struct MemorySettingsView: View {
+    @ObservedObject private var model = SettingsModel.shared
+
     var body: some View {
         List {
             Section {
@@ -64,6 +307,24 @@ struct MemoryCharsView: View {
                 HelpNote("自动总结的开关与触发条件在会话菜单的「记忆总结」中设置，对所有会话生效。", title: "记忆：自动总结")
             }
             Section {
+                NumberRow(title: "固定带上最近几条", value: model.number("memoryRecent", 10), unit: "条", placeholder: "不带")
+                NumberRow(title: "召回最多取几条", value: model.number("memoryTopK", 6), unit: "条", placeholder: "全部")
+                NumberRow(title: "进行中的事常驻几天", value: model.number("openStaleDays", 3), unit: "天", placeholder: "一直常驻")
+                NumberRow(title: "现状块最多列几条进行中的事", value: model.number("openMax", 10), unit: "条", placeholder: "全部")
+            } header: {
+                Text("记忆")
+            } footer: {
+                HelpNote("每次请求带上最近发生的这么多条记忆，不问是否与这一轮有关。默认 10 条。现状块里的「最近」是一段综述，这里是逐条原文，两者并存。填 0 为不带。记忆总数少于这个值时，召回将无可挑选，但那几条已经全部带上。", title: "固定带上最近几条")
+                HelpNote("按相关度排序后取前若干条，S 级与上面那一档都不计入此数。填 0 表示凡是过了门槛的全部取用，仍受注入预算约束。关键词匹配与按意思找共用这个数。", title: "召回最多取几条")
+                HelpNote("没有到期日的进行中的事（例如「身体不舒服」），记下超过这么多天后不再每轮写进现状块。它仍保存在记忆中，仍可在现状页了结；聊到相关内容时由召回带上。有到期日的按到期日计算。填 0 为一直常驻，直到了结。", title: "进行中的事常驻几天")
+                HelpNote("超过时只列记下时间最近的这么多条，其余的不再每轮注入。填 0 为全部列出。", title: "现状块最多列几条进行中的事")
+            }
+            Section {
+                NumberRow(title: "兜底分条的长度", value: model.number("autoSplitAt", 40), unit: "字", placeholder: "不处理")
+            } footer: {
+                HelpNote("模型未按规则分条、整轮只回了一整段时，本地按句末标点与逗号断开。超过该字数才处理，已经分好条的不作改动。填 0 表示不处理，按模型的原文显示。「消息规则」只规定消息如何分条，在预设中不可关闭；每轮分几条在预设的参数中设置。兜底分条在模型未按规则分条时生效，不发起额外请求。", title: "兜底分条的长度")
+            }
+            Section {
                 NumberRow(title: "一次总结的条数", value: model.number("memoryBatch", 200), unit: "条", placeholder: "全部")
                 NumberRow(title: "总结记忆的输出上限", value: model.number("memoryExtractMaxTokens", 0), unit: "token", placeholder: "不限")
             } footer: {
@@ -71,22 +332,139 @@ struct MemoryCharsView: View {
                 HelpNote("没设「按轮数自动总结」时，一次总结最多拿最早的这么多条消息去拼请求，填 0 表示一次全拿；剩下的下次接着总结。设了轮数时一次总结的是最早的那么多轮，此项不起作用。输出上限偏小时会在半路截断，那一次照样计费。")
             }
             ProblemSection(text: model.problem)
-            if let problem { Text(problem).foregroundStyle(Theme.danger) }
-            ForEach(chars) { c in
-                NavigationLink { MemoryListView(charId: c.id) } label: {
+        }
+        .navigationTitle("记忆设置")
+        .onAppear { model.reload() }
+    }
+}
+
+/// 可能重复的记忆按角色列出，点进各自的体检页逐组处理
+struct MemoryDupesView: View {
+    let dupes: [MemoryHome.Dupe]
+    var body: some View {
+        List {
+            ForEach(dupes) { d in
+                NavigationLink { MemoryCheckView(charId: d.char.id) } label: {
                     HStack(spacing: Theme.gap) {
-                        Avatar(imageId: c.avatar, name: c.name)
-                        Text(c.name)
+                        Avatar(imageId: d.char.avatar, name: d.char.name, size: 36)
+                        Text(d.char.displayName)
+                        Spacer()
+                        Text("\(d.count) 组").foregroundStyle(Theme.secondaryText)
                     }
                 }
             }
-            if chars.isEmpty && problem == nil { Text("暂无角色。").foregroundStyle(Theme.secondaryText) }
         }
-        .navigationTitle("记忆")
-        .onAppear {
-            do { chars = try Repo.characters().filter { !$0.row.bool("isNpc") && $0.row.string("parentId").isEmpty }; problem = nil }
-            catch { problem = "读取失败：\(error.localizedDescription)" }
+        .navigationTitle("可能重复的记忆")
+    }
+}
+
+/// 没绑定角色的记忆（charId 为空，旧版本留下的，网页版 4.443）：不注入任何对话。指定角色后才生效，也可以多选删除
+struct LooseMemoryView: View {
+    @State private var list: [Memory] = []
+    @State private var chars: [Character] = []
+    @State private var picking = false
+    @State private var picked: Set<String> = []
+    @State private var confirmDelete = false
+    @State private var problem: String?
+
+    var body: some View {
+        List {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            ForEach(list) { m in
+                HStack(spacing: 10) {
+                    if picking {
+                        Image(systemName: picked.contains(m.id) ? "checkmark.circle.fill" : "circle").foregroundStyle(Theme.text)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(m.content.isEmpty ? "（空）" : m.content).lineLimit(3)
+                        Text([m.rank, m.at > 0 ? TimeText.day(Date(millis: m.at)) : ""].filter { !$0.isEmpty }.joined(separator: " \u{00B7} "))
+                            .font(.caption).foregroundStyle(Theme.secondaryText)
+                    }
+                    Spacer()
+                    if !picking {
+                        Menu {
+                            ForEach(chars) { c in
+                                Button(c.displayName) { assign(m, to: c.id) }
+                            }
+                        } label: { Text("指定角色").font(.footnote) }
+                        .disabled(chars.isEmpty)
+                    }
+                }
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard picking else { return }
+                    if picked.contains(m.id) { picked.remove(m.id) } else { picked.insert(m.id) }
+                }
+            }
+            if list.isEmpty && problem == nil {
+                Text("没有未绑定角色的记忆。").foregroundStyle(Theme.secondaryText)
+            }
         }
+        .navigationTitle("没绑定角色")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(picking ? "完成" : "多选") { picking.toggle(); picked = [] }.disabled(list.isEmpty)
+            }
+        }
+        .safeAreaInset(edge: .bottom) {
+            if picking {
+                HStack {
+                    Button("取消") { picking = false; picked = [] }
+                    Spacer()
+                    Button("删除 \(picked.count) 条") { confirmDelete = true }
+                        .foregroundStyle(Theme.dangerText).disabled(picked.isEmpty)
+                }
+                .padding(.horizontal, Theme.sp4).padding(.vertical, Theme.sp3)
+                .background(Theme.bg)
+            }
+        }
+        .confirmationDialog("删除 \(picked.count) 条记忆", isPresented: $confirmDelete, titleVisibility: .visible) {
+            Button("删除", role: .destructive) { removePicked() }
+        } message: {
+            Text("删除后不能恢复。")
+        }
+        .onAppear(perform: reload)
+    }
+
+    private func reload() {
+        do {
+            list = try LooseMemory.list()
+            let all = try Repo.characters()
+            chars = all.filter { !MemoryHome.isSide($0) } + all.filter { MemoryHome.isSide($0) }
+            problem = nil
+        } catch { problem = "读取失败：\(error.localizedDescription)" }
+    }
+
+    private func assign(_ m: Memory, to charId: String) {
+        do { try LooseMemory.assign([m.id], to: charId); reload() }
+        catch { problem = "未能保存：\(error.localizedDescription)" }
+    }
+
+    private func removePicked() {
+        do { try LooseMemory.remove(Array(picked)); picked = []; picking = false; reload() }
+        catch { problem = "未能删除：\(error.localizedDescription)" }
+    }
+}
+
+/// 没绑定角色的记忆：列出、指定角色、删除
+enum LooseMemory {
+    static func list() throws -> [Memory] {
+        try Database.shared.all(Collections.memories).map(Memory.init(row:))
+            .filter { $0.charId.isEmpty }
+            .sorted { $0.at > $1.at }
+    }
+
+    /// 指定角色：写上 charId，之后只在与该角色对话时注入
+    static func assign(_ ids: [String], to charId: String) throws {
+        guard !charId.isEmpty else { return }
+        for id in ids {
+            guard let row = try Database.shared.get(Collections.memories, id: id) else { continue }
+            try Knowledge.save(Memory(row: row), ["charId": .string(charId)])
+        }
+    }
+
+    static func remove(_ ids: [String]) throws {
+        for id in ids { try Knowledge.deleteMemory(id) }
     }
 }
 

@@ -197,4 +197,47 @@ final class MusicTests: StoreTestCase {
         XCTAssertFalse(try MusicLibrary.songs().contains { $0.neteaseId == "5" || $0.neteaseId == "6" })
         XCTAssertFalse(MockNet.requests.contains { $0.url?.host == "main.test" })
     }
+    /// 音乐来源只设一次、各处共用（网页版 4.609、4.610）：settings.musicSource 选了 QQ 音乐时，角色点歌先问 QQ 音乐，
+    /// 那边有原唱放得出来就不再问网易云；默认（没选过）网易云在前，未登录 QQ 音乐时不问 QQ
+    func testMusicSourceDecidesSearchOrder() async throws {
+        QQMusic.session = QQMusic.makeSession(protocols: [MockNet.self])
+        defer { QQMusic.session = QQMusic.makeSession() }
+        XCTAssertEqual(MusicLibrary.onlineSource(), "netease")
+        XCTAssertEqual(MusicLibrary.searchOrder(), ["netease"])
+
+        try setSettings(["musicSource": .string("qq")])
+        XCTAssertEqual(MusicLibrary.onlineSource(), "qq")
+        XCTAssertEqual(MusicLibrary.searchOrder(), ["qq", "netease"])
+        MockNet.reset { r, _ in
+            let u = r.url?.absoluteString ?? ""
+            if u.contains("client_search_cp") {
+                return .init(status: 200, body: #"{"code":0,"data":{"song":{"list":[{"songmid":"MID1","songid":1,"songname":"晴天","singer":[{"name":"周杰伦"}],"albummid":"","interval":269}]}}}"#)
+            }
+            if u.contains("musicu.fcg") {
+                return .init(status: 200, body: #"{"code":0,"req_0":{"code":0,"data":{"sip":["https://ws.stream.qqmusic.qq.com/"],"midurlinfo":[{"purl":"C400x.m4a?vkey=1"}]}}}"#)
+            }
+            return .init(status: 200, body: "{}")
+        }
+        let a = await MusicLibrary.playableSong("晴天 - 周杰伦")
+        XCTAssertEqual(a.song?.source, "qq")
+        XCTAssertEqual(a.song?.qqMid, "MID1")
+        XCTAssertEqual(a.notice, "")
+        XCTAssertFalse(MockNet.requests.contains { $0.url?.path.contains("cloudsearch") == true }, "QQ 音乐有原唱放得出来，不再问网易云")
+
+        // QQ 音乐搜不到时退到网易云
+        MockNet.reset { r, _ in
+            let u = r.url?.absoluteString ?? ""
+            if u.contains("client_search_cp") { return .init(status: 200, body: #"{"code":0,"data":{"song":{"list":[]}}}"#) }
+            if u.contains("cloudsearch") {
+                return .init(status: 200, body: #"{"code":200,"result":{"songs":[{"id":9,"name":"七里香","ar":[{"name":"周杰伦"}],"al":{"name":"","picUrl":""},"dt":200000}]}}"#)
+            }
+            if u.contains("player/url") { return .init(status: 200, body: #"{"code":200,"data":[{"url":"http://m.test/a.mp3"}]}"#) }
+            return .init(status: 200, body: "{}")
+        }
+        let b = await MusicLibrary.playableSong("七里香 - 周杰伦")
+        XCTAssertEqual(b.song?.neteaseId, "9")
+        let firstQQ = try XCTUnwrap(MockNet.requests.firstIndex { $0.url?.absoluteString.contains("client_search_cp") == true })
+        let firstNe = try XCTUnwrap(MockNet.requests.firstIndex { $0.url?.path.contains("cloudsearch") == true })
+        XCTAssertLessThan(firstQQ, firstNe, "选的那一家先问")
+    }
 }

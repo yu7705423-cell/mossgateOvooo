@@ -6,7 +6,7 @@
 
 密钥从环境变量读：ASC_KEY_ID、ASC_ISSUER_ID、ASC_KEY_P8（.p8 文件的全文）。
 
-照抄网页版仓库的 ios/asc.py（ARCHITECTURE 4.548），只去掉了补 HealthKit 那一段：原生版用不到。
+照抄网页版仓库的 ios/asc.py（ARCHITECTURE 4.548），连同补 HealthKit 那一段（健康 app 从苹果健康同步要用）。
 
 为什么每次现申请：
   把证书导出成 p12 放进仓库机密，要用户自己在 Mac 的钥匙串里做，而用户没有 Mac。
@@ -60,6 +60,16 @@ def prepare(bundle, out):
         raise SystemExit(f'开发者账号里没有包标识 {bundle}。先在 developer.apple.com 的 Identifiers 里登记它')
     bid = found[0]['id']
     team = found[0]['attributes'].get('seedId', '')
+    # 读健康数据要 HealthKit 这一项能力。登记时没勾的话补上；补不上照样往下走，签名时会报出来（网页版 ios/asc.py 同一段）
+    caps = call('GET', f'/bundleIds/{bid}/bundleIdCapabilities').get('data', [])
+    if not any(c['attributes'].get('capabilityType') == 'HEALTHKIT' for c in caps):
+        try:
+            call('POST', '/bundleIdCapabilities', {'data': {'type': 'bundleIdCapabilities',
+                 'attributes': {'capabilityType': 'HEALTHKIT'},
+                 'relationships': {'bundleId': {'data': {'type': 'bundleIds', 'id': bid}}}}})
+            print('能力      已为包标识补上 HealthKit')
+        except SystemExit as e:
+            print(f'能力      HealthKit 没补上：{e}')
     # 2. 私钥与证书请求，在这台机器上现做，不出这台机器
     key = os.path.join(out, 'key.pem')
     csr = os.path.join(out, 'csr.pem')

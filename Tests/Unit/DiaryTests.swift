@@ -54,6 +54,32 @@ final class DiaryTests: StoreTestCase {
         XCTAssertEqual(opened.lock?["tries"]?.number, 2)
     }
 
+    /// 译文跟随私聊的翻译（网页版 4.365）：同一次调用里要 titleTrans、processTrans；正文译文去掉删改记号后存 textTrans
+    func testWriteWithTranslation() async throws {
+        var chat = try XCTUnwrap(Database.shared.get(Collections.chats, id: "chat_a"))
+        chat["translateTo"] = .string("English")
+        try Database.shared.put(Collections.chats, chat)
+        MockNet.reset { _, _ in self.reply(#"{"write":"short","title":"雨","titleTrans":"Rain","mood":"low","process":"下雨了~~，烦~~。","processTrans":"It rained~~, annoying~~."}"#) }
+        guard case .wrote(let id) = try await Diary.write(charId: "char_a") else { return XCTFail("应当写了一篇") }
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(decoding: try XCTUnwrap(MockNet.requests.first?.httpBodyStreamData()), as: UTF8.self)
+        XCTAssertTrue(body.contains("## Translation"))
+        let e = try XCTUnwrap(Database.shared.get("diaries", id: id))
+        XCTAssertEqual(e.string("titleTrans"), "Rain")
+        XCTAssertEqual(e.string("textTrans"), "It rained.")
+
+        // 私聊没开翻译：不要译文，给了也不存
+        chat["translateTo"] = .string("")
+        try Database.shared.put(Collections.chats, chat)
+        MockNet.reset { _, _ in self.reply(#"{"write":"short","title":"雨","titleTrans":"Rain","process":"下雨了。","processTrans":"It rained."}"#) }
+        guard case .wrote(let id2) = try await Diary.write(charId: "char_a") else { return XCTFail("应当写了一篇") }
+        let plain = String(decoding: try XCTUnwrap(MockNet.requests.first?.httpBodyStreamData()), as: UTF8.self)
+        XCTAssertFalse(plain.contains("## Translation"))
+        let e2 = try XCTUnwrap(Database.shared.get("diaries", id: id2))
+        XCTAssertEqual(e2.string("titleTrans"), "")
+        XCTAssertEqual(e2.string("textTrans"), "")
+    }
+
     func testChooseNotToWrite() async throws {
         MockNet.reset { _, _ in self.reply(#"{"write":"none"}"#) }
         let out = try await Diary.write(charId: "char_a")

@@ -50,6 +50,8 @@ struct ConversationView: View {
     @State private var editingTrans: Message?
     /// 「查看思考」打开的那一段（网页版 4.580）
     @State private var viewingThink: ThinkText?
+    /// 「换接口对比」打开的那一轮（网页版 4.561）
+    @State private var comparing: CompareTarget?
     @State private var dicing = false
     /// 加号面板的分享音乐、发文件
     @State private var songPicking = false
@@ -104,6 +106,7 @@ struct ConversationView: View {
     @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
+    struct CompareTarget: Identifiable { let id: String }
     struct ThinkText: Identifiable {
         let id = UUID()
         let text: String
@@ -204,6 +207,12 @@ struct ConversationView: View {
         .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
         .navigationDestination(isPresented: $editingPanel) { PanelEditView() }
         .navigationDestination(isPresented: $showGeo) { GeoView(chatId: chatId) }
+        .sheet(item: $comparing) { t in
+            NavigationStack {
+                CompareTurnView(chatId: chatId, turnId: t.id) { comparing = nil; reload() }
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { comparing = nil } } }
+            }
+        }
         .navigationDestination(isPresented: $showFace) {
             FaceSetupView(chatId: chatId) { m in if let m { messages.append(m) }; reload() }
         }
@@ -1244,6 +1253,9 @@ struct ConversationView: View {
             if t.isEmpty { notice = "这一轮没有记录思考过程" } else { viewingThink = ThinkText(text: t) }
         case .served:
             notice = (try? MessageActions.servedText(m)) ?? "这一条生成时尚未记录模型"
+        case .compare:
+            guard !isBusy, CompareTurn.can(chat, turnId: m.turnId, latestTurn: messages.last(where: { $0.role == .char })?.turnId ?? "") else { return }
+            comparing = CompareTarget(id: m.turnId)
         case .select:
             picking = [m.id]
             pickOrder = [m.id]
@@ -1330,13 +1342,22 @@ struct ConversationView: View {
     private func afterSend(_ text: String) {
         guard let c = try? Repo.chat(chatId) else { return }
         // 角色拉黑了你或把你删了：发出去的标成被拒收，不回、不排延迟回复、不调接口
-        if Ties.charRejects(c) != nil { return }
-        // 角色在忙或在休息、开着自动回复：先收到一句（随日程写好，不调接口）。延迟回复档照常排，其余档不再立即回
-        let autos = (try? AutoReply.fire(chatId, AutoReply.hers)) ?? []
+        if !c.isGroup && Ties.charRejects(c) != nil { return }
+        // 角色在忙或在休息、开着自动回复：先收到一句（随日程写好，不调接口）。延迟回复档照常排，其余档不再立即回。
+        // 群里按成员各回一句（网页版 4.649）：能发言的都回过自动回复时不再立即回，还有人空着就照常让群里回
+        var hold = false
+        var autos: [Message] = []
+        if c.isGroup {
+            do { let r = try AutoReply.afterGroupSend(chatId); autos = r.rows; hold = r.hold }
+            catch { problem = "自动回复未能保存：\(error.localizedDescription)" }
+        } else {
+            autos = (try? AutoReply.fire(chatId, AutoReply.hers)) ?? []
+            hold = !autos.isEmpty
+        }
         if !autos.isEmpty { messages += autos; turn = nil }
         switch Pace.mode(c) {
         case Pace.now:
-            if autos.isEmpty { generate() }
+            if !hold { generate() }
         case Pace.paced:
             do { try Pace.schedule(chatId, text: text); chat = try Repo.chat(chatId) }
             catch { problem = "延迟回复未能排上：\(error.localizedDescription)" }
@@ -1724,7 +1745,7 @@ struct MessageRow: View, Equatable {
             && a.chatCharIds == b.chatCharIds && a.narrName == b.narrName && a.narrTone == b.narrTone && a.innerLook == b.innerLook
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare }
 
     let message: Message
     let char: Character?
@@ -1967,6 +1988,10 @@ struct MessageRow: View, Equatable {
         }
         if !mine && !message.turnId.isEmpty {
             Button { onAction?(.served) } label: { Label("生成信息", systemImage: "info.circle") }
+        }
+        // 换接口对比（网页版 4.561）：只在一对一会话、最新一轮
+        if canRegen && chatCharIds.count <= 1 {
+            Button { onAction?(.compare) } label: { Label("换接口对比", systemImage: "square.split.2x1") }
         }
         Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
         Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
@@ -2354,7 +2379,11 @@ struct MessageRow: View, Equatable {
                     let mineToo = groups[e]?.contains { $0.1 == "me" } ?? false
                     let who = (groups[e] ?? []).map { nameOf?($0.1) ?? $0.1 }.joined(separator: "、")
                     Button { onAction?(.react(e)) } label: {
-                        Text(n > 1 ? "\(e) \(n)" : e).font(.footnote)
+                        HStack(spacing: 2) {
+                            ReactFace(e: e, size: 13, color: Theme.bubbleTheirsText)
+                            if n > 1 { Text("\(n)") }
+                        }
+                        .font(.footnote)
                             .padding(.horizontal, 6).padding(.vertical, 2)
                             .background(mineToo ? Theme.placeholder : Theme.bubbleTheirs, in: Capsule())
                     }
@@ -2511,5 +2540,128 @@ private struct ListenBarIfOn: View {
 
     var body: some View {
         if music.listenChat == chatId { ListenBar(chatId: chatId) }
+    }
+}
+
+/// 换接口对比（网页版 ComparePage，4.561）：选一套填全的接口，拿去掉这一轮的同样前文重写一遍，两版并排。
+/// 点「生成对比」先确认，一次一次对话请求；喜欢新的那版「加入候选」，和重新生成的候选一样左右切换
+struct CompareTurnView: View {
+    let chatId: String
+    let turnId: String
+    var onAdopted: () -> Void
+
+    @State private var presets: [ChatPreset] = []
+    @State private var pick = ""
+    @State private var current = ""
+    @State private var currentModel = ""
+    @State private var out: CompareTurn.Result?
+    @State private var busy = false
+    @State private var confirming = false
+    @State private var problem: String?
+    @State private var gone = false
+
+    var body: some View {
+        Form {
+            if gone {
+                Section { Text("这一轮已不存在，或已不是最新一轮。").foregroundStyle(Theme.text2) }
+            } else {
+                Section {
+                    if presets.isEmpty {
+                        Text("没有填全的接口。请先在「设置 - 接口」中填写密钥与模型。").foregroundStyle(Theme.text2)
+                    }
+                    ForEach(presets) { p in
+                        Button { pick = p.id } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(p.name.isEmpty ? "接口" : p.name).foregroundStyle(Theme.text)
+                                    Text(p.model).font(.footnote).foregroundStyle(Theme.text2)
+                                }
+                                Spacer()
+                                if pick == p.id { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
+                            }
+                        }
+                    }
+                } header: {
+                    Text("用哪一套")
+                } footer: {
+                    Text("每次生成调用一次接口。")
+                    HelpNote("拿同样的前文（不含这一轮）交给另一套接口重写，两版并排查看。只用选中的这一套，失败不换下一套、不重试。喜欢新的那版可以加入候选，在气泡下左右切换。", title: "换接口对比")
+                }
+                Section {
+                    Button(busy ? "正在生成" : "生成对比") { confirming = true }
+                        .disabled(busy || pick.isEmpty)
+                }
+                HStack(alignment: .top, spacing: Theme.sp2) {
+                    column("现在这一版" + (currentModel.isEmpty ? "" : " · \(currentModel)"), current)
+                    column(out.map { "对比 · \($0.model)" } ?? "对比",
+                           out.map { CompareTurn.plain($0.raw) } ?? (busy ? "正在生成" : "尚未生成"))
+                }
+                if out != nil {
+                    Section { Button("加入候选") { adopt() }.disabled(busy) }
+                }
+            }
+            if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
+        }
+        .navigationTitle("换接口对比")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+        .confirmationDialog(confirmText, isPresented: $confirming, titleVisibility: .visible) {
+            Button("生成") { run() }
+        }
+    }
+
+    private var confirmText: String {
+        let p = presets.first { $0.id == pick }
+        return "用「\(p.map { $0.name.isEmpty ? "接口" : $0.name } ?? "接口")」（\(p?.model ?? "")）拿同样的前文重写这一轮。调用一次对话接口。"
+    }
+
+    private func column(_ head: String, _ text: String) -> some View {
+        VStack(alignment: .leading, spacing: Theme.sp2) {
+            Text(head).font(.footnote).foregroundStyle(Theme.text2)
+            Text(text).font(.system(size: 14)).foregroundStyle(Theme.text).textSelection(.enabled)
+        }
+        .frame(maxWidth: .infinity, alignment: .topLeading)
+    }
+
+    private func load() {
+        presets = CompareTurn.presets()
+        guard let t = try? CompareTurn.turn(chatId: chatId, turnId: turnId) else { gone = true; return }
+        let i = t.versions.index
+        current = CompareTurn.plain(t.versions.swipes.indices.contains(i) ? t.versions.swipes[i] : "")
+        let served = CompareTurn.currentServed(t)
+        currentModel = served?["model"]?.string ?? ""
+        if pick.isEmpty {
+            let used = served?["preset"]?.string ?? ""
+            pick = (presets.first { $0.id != used } ?? presets.first)?.id ?? ""
+        }
+    }
+
+    private func run() {
+        guard let preset = presets.first(where: { $0.id == pick }), !busy else { return }
+        busy = true
+        out = nil
+        problem = nil
+        Task {
+            do {
+                let r = try await CompareTurn.run(chatId: chatId, turnId: turnId, preset: preset)
+                await MainActor.run { out = r }
+            } catch {
+                await MainActor.run { problem = "对比未能生成：\(error.localizedDescription)" }
+            }
+            await MainActor.run { busy = false }
+        }
+    }
+
+    private func adopt() {
+        guard let r = out, !busy else { return }
+        busy = true
+        Task {
+            do {
+                try await CompareTurn.adopt(chatId: chatId, turnId: turnId, r) { _ in }
+                await MainActor.run { busy = false; onAdopted() }
+            } catch {
+                await MainActor.run { busy = false; problem = "未能加入候选：\(error.localizedDescription)" }
+            }
+        }
     }
 }

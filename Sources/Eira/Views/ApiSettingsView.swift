@@ -4,6 +4,7 @@ import SwiftUI
 /// 存在 settings.services.chat 里，和网页版同一形状，导入的备份里带了接口就直接能用。
 struct ApiSettingsView: View {
     @State private var settings = AppSettings.load()
+    @ObservedObject private var model = SettingsModel.shared
     @State private var editing: EditTarget?
     @State private var problem: String?
 
@@ -36,7 +37,28 @@ struct ApiSettingsView: View {
                 HelpNote("聊天回复使用主用；其余后台任务使用副用，未设副用时使用主用。")
             }
 
-            if let problem {
+            // 网页版 ApiPage「回复的获取方式」：settings.streamMode，'stream'（默认）或 'once'
+            Section {
+                Toggle(isOn: Binding(
+                    get: { model.s.streams },
+                    set: { v in model.update { $0.raw["streamMode"] = .string(v ? "stream" : "once") } })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("流式接收")
+                        if !model.s.streams {
+                            Text("当前为一次性接收完整回复。").font(.footnote).foregroundStyle(Theme.secondaryText)
+                        }
+                    }
+                }
+            } header: {
+                Text("回复的获取方式")
+            } footer: {
+                HelpNote(model.s.streams
+                         ? "边生成边接收。消息仍然在整段生成完毕后一次显示，此项只影响与接口之间的传输方式，不影响界面。"
+                         : "部分接口不支持流式返回，此时应保持关闭。", title: "流式接收")
+                HelpNote("生成期间，会话标题显示为「正在输入」，不再插入占位气泡。两种接收方式发出的请求内容与费用完全相同。", title: "回复的获取方式")
+            }
+
+            if let problem = problem ?? model.problem {
                 Section { Text(problem).foregroundStyle(Theme.danger) }
             }
         }
@@ -72,6 +94,13 @@ struct PresetEditor: View {
     @State private var model = ""
     @State private var siteUrl = ""
     @State private var topupUrl = ""
+    /// 以下三项和网页版 newChatPreset 的默认一致（effort 'low'、temperature 0.9、midSystem 不写）。
+    /// 已有的一套只在用户动过时才写回（touched），与网页版只在 onChange 时 set 一样：
+    /// 导入时 effort 是空串的，不因为打开又保存了一次就多出 output_config
+    @State private var effort = "low"
+    @State private var temperature: Double? = 0.9
+    @State private var midSystem = ""
+    @State private var touched: Set<String> = []
     @State private var isMain = false
     @State private var isFallback = false
     @State private var confirmDelete = false
@@ -106,6 +135,49 @@ struct PresetEditor: View {
                 Text("地址、密钥与模型")
             } footer: {
                 HelpNote("地址留空时使用该格式的官方地址。密钥只保存在本机。")
+            }
+            if provider == "anthropic" {
+                Section {
+                    Picker("思考深度", selection: Binding(
+                        get: { effort.isEmpty ? "low" : effort },
+                        set: { effort = $0; touched.insert("effort") })) {
+                        Text("低").tag("low")
+                        Text("中").tag("medium")
+                        Text("高").tag("high")
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("思考深度")
+                } footer: {
+                    HelpNote("Opus 5 系列不接受 temperature 参数，传入会返回 400，输出深度改由 effort 控制。日常对话选择「低」即可。", title: "思考深度")
+                }
+            } else {
+                Section {
+                    Picker("发送身份", selection: Binding(
+                        get: { midSystem == "system" ? "system" : "user" },
+                        set: { midSystem = $0; touched.insert("midSystem") })) {
+                        Text("用户消息（推荐）").tag("user")
+                        Text("原样 system").tag("system")
+                    }
+                    .pickerStyle(.segmented)
+                } header: {
+                    Text("对话中插入的设定以什么身份发送")
+                } footer: {
+                    HelpNote(midSystem == "system"
+                             ? "原样以 system 发送。仅适用于认得对话中途 system 消息的接口（如 OpenAI 官方）。经中转转给 Claude、Gemini 等模型时，这些内容常被丢弃或只保留第一条。"
+                             : "设了深度的世界书条目、本轮召回的记忆、时间与状态等插在对话中间的内容，以用户消息发送并用 <context> 标注。各类中转均能正确接收。",
+                             title: "对话中插入的设定以什么身份发送")
+                }
+                Section {
+                    Slider(value: Binding(
+                        get: { temperature ?? 0.9 },
+                        set: { temperature = ($0 * 100).rounded() / 100; touched.insert("temperature") }),
+                           in: 0...2, step: 0.05)
+                } header: {
+                    Text("temperature\u{3000}\(Self.number(temperature ?? 0.9))")
+                } footer: {
+                    HelpNote("数值越高输出越发散。角色扮演建议 0.8 至 1.0。", title: "temperature")
+                }
             }
             Section {
                 TextField("站点链接", text: $siteUrl)
@@ -157,6 +229,8 @@ struct PresetEditor: View {
             "baseUrl": .string(baseUrl.trimmingCharacters(in: .whitespaces)),
             "apiKey": .string(apiKey.trimmingCharacters(in: .whitespacesAndNewlines)),
             "model": .string(model.trimmingCharacters(in: .whitespaces)),
+            "effort": .string(effort), "midSystem": .string(midSystem),
+            "temperature": temperature.map { JSONValue.number($0) } ?? JSONValue.null,
         ])
         guard p.usable else { testResult = "密钥或模型未填写。"; testOk = false; return }
         testing = true
@@ -179,6 +253,13 @@ struct PresetEditor: View {
         name = p.name; provider = p.provider.rawValue; baseUrl = p.baseUrl; apiKey = p.apiKey; model = p.model
         recentModels = (chatJSON["presets"]?.array ?? []).first(where: { $0["id"]?.string == presetId })?["recentModels"]?.array?.compactMap(\.string) ?? []
         siteUrl = p.siteUrl; topupUrl = p.topupUrl
+        effort = p.effort; temperature = p.temperature; midSystem = p.midSystem
+    }
+
+    /// 网页版直接把数字插进标签：0.9、1、0.85，不补零
+    static func number(_ v: Double) -> String {
+        let r = (v * 100).rounded() / 100
+        return r == r.rounded() ? String(Int(r)) : String(format: "%g", r)
     }
 
     private func save() {
@@ -186,7 +267,7 @@ struct PresetEditor: View {
         var services = s.raw["services"]?.object ?? [:]
         var chat = services["chat"]?.object ?? [:]
         var list = chat["presets"]?.array ?? []
-        let fields: [String: JSONValue] = [
+        var fields: [String: JSONValue] = [
             "id": .string(presetId),
             "name": .string(name.trimmingCharacters(in: .whitespaces)),
             "provider": .string(provider),
@@ -196,13 +277,17 @@ struct PresetEditor: View {
             "siteUrl": .string(siteUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
             "topupUrl": .string(topupUrl.trimmingCharacters(in: .whitespacesAndNewlines)),
         ]
+        if touched.contains("effort") { fields["effort"] = .string(effort) }
+        if touched.contains("temperature") { fields["temperature"] = temperature.map { JSONValue.number($0) } ?? JSONValue.null }
+        if touched.contains("midSystem") { fields["midSystem"] = .string(midSystem) }
         if let i = list.firstIndex(where: { $0["id"]?.string == presetId }), case .object(var old) = list[i] {
             old.merge(fields) { _, new in new }
             list[i] = .object(old)
         } else {
             var fresh = fields
-            fresh["effort"] = .string("")
-            fresh["temperature"] = .number(0.9)
+            // 网页版 newChatPreset：effort 'low'、temperature 0.9；midSystem 只在选过时写
+            fresh["effort"] = .string(effort.isEmpty ? "low" : effort)
+            fresh["temperature"] = .number(temperature ?? 0.9)
             list.append(.object(fresh))
         }
         chat["presets"] = .array(list)

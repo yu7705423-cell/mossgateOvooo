@@ -257,6 +257,9 @@ struct VoicePresetEditView: View {
     @State private var testResult: String?
     @State private var testOk = false
     @State private var confirmDelete = false
+    @State private var vmodels: VoiceModels.Result?
+    @State private var fetchingModels = false
+    @State private var showAllModels = false
 
     private var preset: VoicePreset? { model.s.voicePresets.first { $0.id == id } }
 
@@ -283,10 +286,12 @@ struct VoicePresetEditView: View {
                         TextField("GroupId（新版密钥可留空）", text: field("groupId"))
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
-                    TextField(p.kind == "eleven" ? "模型（可留空）" : p.kind == "minimax" ? "模型，如 speech-02-hd" : "模型，如 gpt-4o-mini-tts",
-                              text: field("model"))
-                        .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    if p.kind != "minimax" {
+                        TextField(p.kind == "eleven" ? "模型（可留空）" : "模型，如 gpt-4o-mini-tts", text: field("model"))
+                            .textInputAutocapitalization(.never).autocorrectionDisabled()
+                    }
                 }
+                if p.kind == "minimax" { minimaxModels(p) }
                 Section {
                     Picker("语种", selection: field("lang")) {
                         ForEach(VoicePreset.langs) { Text($0.label).tag($0.id) }
@@ -319,6 +324,42 @@ struct VoicePresetEditView: View {
                 dismiss()
             }
         }
+    }
+
+    /// MiniMax 的语音模型：内置的常用型号（含 speech-2.8 与 2.6），填了密钥时并上接口里列出的语音模型（网页版 4.578）。
+    /// 列表不是上限，列表外的型号可以手填（第 13 条）
+    @ViewBuilder private func minimaxModels(_ p: VoicePreset) -> some View {
+        let r = vmodels ?? VoiceModels.Result(list: VoiceModels.minimax, all: [], got: 0)
+        let shown = showAllModels && !r.all.isEmpty ? r.all : r.list
+        let current = p.model
+        Section {
+            Picker("模型", selection: field("model")) {
+                Text("未选择").tag("")
+                if !current.isEmpty && !shown.contains(current) { Text(current).tag(current) }
+                ForEach(shown, id: \.self) { Text($0).tag($0) }
+            }
+            TextField("列表外的型号可在此手填", text: field("model"))
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+            Text(fetchingModels ? "正在向接口查询语音模型"
+                 : r.got > 0 ? "从接口取得 \(r.got) 个语音模型，已与内置的常用型号合并"
+                 : "内置的常用型号")
+                .font(.footnote).foregroundStyle(Theme.secondaryText)
+            if !r.all.isEmpty { Toggle("显示全部", isOn: $showAllModels) }
+            Button(fetchingModels ? "正在拉取" : "重新拉取") { Task { await loadModels(p) } }
+                .disabled(fetchingModels || p.apiKey.isEmpty)
+        } header: {
+            Text("语音模型")
+        } footer: {
+            HelpNote("MiniMax 没有列出语音模型的接口，列表为内置的常用型号。填写密钥后另向 /v1/models 查询一次：中转站列出的语音模型并入列表、排在前面；官方接口只返回文本模型，或查询出错时，仍使用内置的列表。查询模型列表不计费。列表外的型号可以手填。", title: "语音接口：MiniMax 语音模型")
+        }
+        .task(id: p.id + "|" + p.kind) { await loadModels(p) }
+    }
+
+    private func loadModels(_ p: VoicePreset) async {
+        guard p.kind == "minimax" else { return }
+        fetchingModels = true
+        vmodels = await VoiceModels.minimaxList(baseUrl: p.base, apiKey: p.apiKey)
+        fetchingModels = false
     }
 
     private func kindNote(_ k: String) -> String {
@@ -386,5 +427,58 @@ struct AsrSettingsView: View {
             ProblemSection(text: model.problem)
         }
         .navigationTitle("语音识别")
+    }
+}
+
+/// MiniMax 的语音模型（网页版 ai/voice.js 的 MINIMAX_MODELS 与 fetchVoiceModels，ARCHITECTURE 4.578）。
+///
+/// MiniMax 官方没有「列出语音模型」的接口，它的 /v1/models 只列聊天模型，所以内置那一份永远在。
+/// 填了密钥时另去问一下 /v1/models：有的中转站会把语音模型也列进去，像语音的并到内置那一份前面；
+/// 问不到、出错都退回内置那一份，不报错。列模型不调用模型，不计费，不计进请求次数。没填密钥不发请求
+enum VoiceModels {
+    static let minimax = [
+        "speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo",
+        "speech-2.5-hd-preview", "speech-2.5-turbo-preview",
+        "speech-02-hd", "speech-02-turbo",
+        "speech-01-hd", "speech-01-turbo", "speech-01-240228", "speech-01-turbo-240228",
+    ]
+
+    struct Result: Equatable {
+        /// 语音模型：接口列出的像语音的在前，内置的在后，去重
+        var list: [String]
+        /// 接口回的全部并上内置的（「显示全部」用）；没问接口时为空
+        var all: [String]
+        /// 接口里认出来的语音模型有几个
+        var got: Int
+    }
+
+    /// 一个模型名像不像会说话的那种（网页版 looksLikeVoice）
+    static func looksLikeVoice(_ id: String) -> Bool {
+        id.range(of: #"(^|[-_./])(tts|speech|audio|voice|sovits|vits|t2a)"#, options: [.regularExpression, .caseInsensitive]) != nil
+    }
+
+    static func merge(_ got: [String]) -> Result {
+        func uniq(_ a: [String]) -> [String] { var seen = Set<String>(); return a.filter { seen.insert($0).inserted } }
+        let voice = got.filter(looksLikeVoice)
+        return Result(list: uniq(voice + minimax), all: uniq(got + minimax), got: voice.count)
+    }
+
+    static func minimaxList(baseUrl: String, apiKey: String, session: URLSession = .shared) async -> Result {
+        let builtin = Result(list: minimax, all: [], got: 0)
+        let key = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !key.isEmpty else { return builtin }
+        var base = baseUrl.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"/+$"#, with: "", options: .regularExpression)
+        if base.isEmpty { base = "https://api.minimaxi.com" }
+        let path = base.range(of: #"/v\d+$"#, options: .regularExpression) != nil ? "/models" : "/v1/models"
+        guard let u = URL(string: base + path) else { return builtin }
+        var req = URLRequest(url: u)
+        req.setValue("Bearer \(key)", forHTTPHeaderField: "authorization")
+        req.timeoutInterval = 20
+        guard let r = try? await session.data(for: req),
+              let status = (r.1 as? HTTPURLResponse)?.statusCode, (200..<300).contains(status),
+              let json = try? JSONValue.parse(r.0) else { return builtin }
+        let got = ModelList.normalize(json)
+        return got.isEmpty ? builtin : merge(got)
     }
 }

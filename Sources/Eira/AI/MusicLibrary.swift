@@ -200,19 +200,40 @@ enum MusicLibrary {
         return all.first { bt.count >= 2 && (bare($0.title + $0.artist).contains(bt) || (bare($0.title).count >= 2 && bt.contains(bare($0.title)))) }
     }
 
-    /// 本机曲库里有就用；没有就到网易云搜，收进曲库。都找不到返回 nil。
+    // MARK: - 在线搜歌用哪一家（网页版 music.onlineSource，ARCHITECTURE 4.609、4.610）
+
+    /// 音乐 app 搜索页、「我的」页、「设置 - 音乐服务」顶上切换「网易云 / QQ 音乐」，记住上次选的（settings.musicSource）。
+    /// 会话里分享音乐、角色点歌找歌跟着它，不另放开关（第 5 条：同一个开关只有一个入口）
+    static func onlineSource(_ s: AppSettings = .load()) -> String { s.raw["musicSource"]?.string == "qq" ? "qq" : "netease" }
+
+    static func sourceName(_ src: String) -> String { src == "qq" ? "QQ 音乐" : "网易云" }
+
+    /// 角色点歌、找歌时依次问的几家：选的那一家在前，另一家兜底。
+    /// 网易云不登录也能搜能放，一直在列；QQ 音乐登录了、或者用户选的就是它时才问（原生版未登录也能搜 QQ，播放地址多半取不到）
+    static func searchOrder(_ s: AppSettings = .load()) -> [String] {
+        let first = onlineSource(s)
+        let qqOn = first == "qq" || QQMusic.loggedIn(s)
+        let all = first == "qq" ? ["qq", "netease"] : ["netease", "qq"]
+        return all.filter { $0 != "qq" || qqOn }
+    }
+
+    /// 本机曲库里有就用；没有就按 searchOrder 依次去网易云、QQ 音乐搜，收进曲库。都找不到返回 nil。
     static func resolve(_ q: String) async -> Song? {
         if let s = findLocal(q) { return s }
         let (title, artist) = splitQuery(q)
         let q2 = [title, artist].filter { !$0.isEmpty }.joined(separator: " ")
-        if let list = try? await Netease.search(q2, limit: 5), !list.isEmpty {
-            let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
-            return try? fromNetease(pick)
+        for src in searchOrder() {
+            if src == "qq" {
+                if let list = try? await QQMusic.search(q2, limit: 5), !list.isEmpty {
+                    let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
+                    if let song = try? fromQQ(pick) { return song }
+                }
+            } else if let list = try? await Netease.search(q2, limit: 5), !list.isEmpty {
+                let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
+                if let song = try? fromNetease(pick) { return song }
+            }
         }
-        // 网易云找不到时，登录了 QQ 音乐就到那边找
-        guard QQMusic.loggedIn(), let list = try? await QQMusic.search(q2, limit: 5), !list.isEmpty else { return nil }
-        let pick = list.first { bare($0.title) == bare(title) } ?? list[0]
-        return try? fromQQ(pick)
+        return nil
     }
 
     // MARK: - 点歌：歌名加歌手，原唱放不了就放翻唱（网页版 music.playableSong，ARCHITECTURE 4.219）
@@ -242,7 +263,7 @@ enum MusicLibrary {
     }
 
     /// 角色点的那一首，找一个放得出来的版本。
-    /// 本机曲库里有就用它；否则去网易云（登录了 QQ 音乐再到那边）搜：歌名对得上、歌手也对得上的是原唱，
+    /// 本机曲库里有就用它；否则按 searchOrder 依次去网易云、QQ 音乐搜（用户选的那一家在前）：歌名对得上、歌手也对得上的是原唱，
     /// 歌名对得上、歌手不同的是别人唱的。原唱逐个问一次播放地址，放得出来就用；都放不了或没搜到原唱，依次试别人唱的版本。
     /// 问播放地址是音乐服务的接口，不是模型，不算多调一次（第 15 条）
     static func playableSong(_ query: String) async -> Playable {
@@ -255,23 +276,23 @@ enum MusicLibrary {
         }
         let want = "\(artist.isEmpty ? "" : "\(artist)的")《\(title)》"
 
-        // 先问网易云，原唱、翻唱都放不了再问 QQ 音乐（登录了才问）。一家一家来：前一家有原唱放得出来，后一家不搜
-        var sources: [(String) async throws -> [Candidate]] = [{ q in
+        // 先问用户选的那一家（settings.musicSource），原唱、翻唱都放不了再问另一家（网页版 4.609）。
+        // 一家一家来：前一家有原唱放得出来，后一家不搜
+        let netease: (String) async throws -> [Candidate] = { q in
             try await Netease.search(q, limit: 10).map { t in
                 Candidate(key: t.id, title: t.title, artist: t.artist,
                           plays: { !(((try? await Netease.songUrl(t.id)) ?? "").isEmpty) },
                           keep: { try MusicLibrary.fromNetease(t) })
             }
-        }]
-        if QQMusic.loggedIn() {
-            sources.append { q in
-                try await QQMusic.search(q, limit: 10).map { t in
-                    Candidate(key: t.mid, title: t.title, artist: t.artist,
-                              plays: { !(((try? await QQMusic.songUrl(t.mid)) ?? "").isEmpty) },
-                              keep: { try MusicLibrary.fromQQ(t) })
-                }
+        }
+        let qq: (String) async throws -> [Candidate] = { q in
+            try await QQMusic.search(q, limit: 10).map { t in
+                Candidate(key: t.mid, title: t.title, artist: t.artist,
+                          plays: { !(((try? await QQMusic.songUrl(t.mid)) ?? "").isEmpty) },
+                          keep: { try MusicLibrary.fromQQ(t) })
             }
         }
+        let sources = searchOrder().map { $0 == "qq" ? qq : netease }
 
         var fallback: Playable?
         for run in sources {

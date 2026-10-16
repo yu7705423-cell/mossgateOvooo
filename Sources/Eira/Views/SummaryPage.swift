@@ -1,7 +1,7 @@
 import SwiftUI
 
 /// 会话菜单里的「记忆总结」（网页版 SummaryPage.js，4.535、4.606）：上面是这段对话积了多少、一个「立即总结」，
-/// 下面是自动总结的开关与触发条件。自动总结仍是全局的（对所有会话生效），页面上写明；开关只在这一处（第 5 条），
+/// 下面是自动总结的开关与触发条件（离开会话、隔夜两条由 MemWatch 盯着，4.441）。自动总结仍是全局的（对所有会话生效），页面上写明；开关只在这一处（第 5 条），
 /// 「设定集 - 记忆」那里只留一行状态。
 /// 设了「每 N 轮」就按轮数：一次总结最早的 N 轮（用户定的「设多少轮就总结多少轮」），状态一律按轮数写，不再按条数。
 struct SummaryPage: View {
@@ -81,11 +81,15 @@ struct SummaryPage: View {
             Section {
                 NumberRow(title: "未总结的消息达到", value: model.number("autoSummarizeMessages", 0), unit: "条", placeholder: "不看")
                 NumberRow(title: "未总结的文字达到", value: model.number("autoSummarizeChars", 0), unit: "字", placeholder: "不看")
+                NumberRow(title: "离开会话多少分钟后", value: model.number("autoSummarizeIdle", 0), unit: "分钟", placeholder: "不看")
+                Toggle("隔夜总结", isOn: model.bool("autoSummarizeOvernight", false))
                 NumberRow(title: "一次最多连续总结几批", value: model.number("autoSummarizeCatchUp", 1), unit: "批", placeholder: "追平")
             } header: {
                 Text("其他触发条件")
             } footer: {
                 Text("每次总结调用一次接口；连续总结几批就调用几次。")
+                HelpNote("离开会话多少分钟后：退出一段会话（换到别处、回到主界面、应用退到后台）这么多分钟后，积压达到两轮即总结。对话结束是整理的自然时机。填 0 表示不看。", title: "记忆总结：离开会话后")
+                HelpNote("隔夜总结：打开应用或回到前台时，积压里最后一条是前一天或更早的，即总结那段会话。关闭后不看。", title: "记忆总结：隔夜总结")
                 HelpNote("条数与字数各自独立，与轮数任一条件先满足即总结，填 0 表示不看。触发后一次只总结最早的一批：设了轮数时一批是那么多轮，否则一批的条数在「设定集 - 记忆」的「一次总结的条数」中设置。一次最多连续总结几批：填几批就连着总结几批，每批调用一次接口；填 0 为追平为止。失败的那一次也算试过，要再攒够一个间隔才重试。", title: "记忆总结：其他触发条件")
             }
         }

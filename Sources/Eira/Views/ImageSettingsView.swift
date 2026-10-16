@@ -31,10 +31,12 @@ struct ImageSettingsView: View {
             Section {
                 TextEditor(text: model.textBinding("imagePrompt"))
                     .frame(minHeight: 90)
+                ImgPromptPresetRows(scope: .global, state: ImgPrompts.state { model.s.raw[$0] })
             } header: {
                 Text("全局生图提示词")
             } footer: {
                 HelpNote("接在每一张图的提示词末尾。其中单独成行的「Negative」之后的部分作为负面提示词处理，不会当作画面内容发送。")
+                HelpNote("可以把几段提示词存为预设，点选一份即把上面这一栏换成它。当前那份改过之后，可以存回或另存一份。删除预设不影响这一栏里正在用的文字。", title: "生图提示词预设")
             }
             Section {
                 Toggle("生图前先写一遍提示词", isOn: model.bool("writeImagePrompt", false))
@@ -227,6 +229,202 @@ struct ImagePresetEditView: View {
                 await MainActor.run { testError = error.localizedDescription }
             }
             await MainActor.run { testing = false }
+        }
+    }
+}
+
+// MARK: - 生图提示词预设（网页版 ui/imgpresets.js，ARCHITECTURE 4.522）
+
+/// 预设存在哪儿：全局那一份在设置里，角色那一份在角色卡上。字段名两边相同（ImgPrompts）
+enum ImgPromptScope: Hashable {
+    case global
+    case char(String)
+}
+
+/// 两处的读写。写不进去抛出，由界面写在屏幕上（第 20 条）
+@MainActor
+enum ImgPromptStore {
+    static func read(_ scope: ImgPromptScope) throws -> ImgPrompts.State {
+        switch scope {
+        case .global:
+            let raw = SettingsModel.shared.s.raw
+            return ImgPrompts.state { raw[$0] }
+        case .char(let id):
+            guard let c = try Repo.character(id) else { throw StoreError(message: "该角色已不存在") }
+            return ImgPrompts.state { c.row[$0] }
+        }
+    }
+
+    static func write(_ scope: ImgPromptScope, _ patch: [String: JSONValue]) throws {
+        switch scope {
+        case .global:
+            let model = SettingsModel.shared
+            model.update { s in for (k, v) in patch { s.raw[k] = v } }
+            if let p = model.problem { throw StoreError(message: p) }
+        case .char(let id):
+            guard let c = try Repo.character(id) else { throw StoreError(message: "该角色已不存在") }
+            _ = try People.update(c, patch)
+        }
+    }
+}
+
+/// 提示词那一栏下面的几行：选用哪一份、存为预设、改过之后存回、管理。全局与角色卡共用。
+/// state 由调用方按自己手上的那份记录算好传进来；写完调 onWrite，调用方重读
+struct ImgPromptPresetRows: View {
+    let scope: ImgPromptScope
+    let state: ImgPrompts.State
+    var onWrite: () -> Void = {}
+
+    @State private var naming = false
+    @State private var nameText = ""
+    @State private var switching: ImgPrompts.Preset?
+    @State private var done: String?
+    @State private var problem: String?
+
+    var body: some View {
+        Menu {
+            ForEach(state.rows) { r in
+                Button { pick(r) } label: {
+                    if state.current?.id == r.id { Label(r.name, systemImage: "checkmark") } else { Text(r.name) }
+                }
+            }
+            if !state.rows.isEmpty { Divider() }
+            Button("将当前内容存为预设") { saveAsTapped() }
+        } label: {
+            LabeledContent("预设", value: state.current?.name ?? (state.rows.isEmpty ? "尚无预设" : "未选用"))
+        }
+        .alert("存为预设", isPresented: $naming) {
+            TextField("名称", text: $nameText)
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                let made = ImgPrompts.saveAs(state, name: nameText)
+                run("已存为预设「\(made.row.name)」。") { made.patch }
+            }
+        } message: {
+            Text("保存当前填写的提示词。")
+        }
+        .confirmationDialog("当前填写的提示词没有存为预设，切换后将被替换。",
+                            isPresented: Binding(get: { switching != nil }, set: { if !$0 { switching = nil } }),
+                            titleVisibility: .visible, presenting: switching) { r in
+            Button("切换到「\(r.name)」") { run(nil) { ImgPrompts.apply(state, id: r.id) } }
+        }
+        if state.dirty, let cur = state.current {
+            HStack {
+                Text("当前内容与预设「\(cur.name)」不同，尚未存回。").font(.footnote).foregroundStyle(Theme.text2)
+                Spacer()
+                Button("存回") { run("已存回「\(cur.name)」。") { ImgPrompts.overwrite(state) } }
+                    .buttonStyle(.borderless)
+            }
+        }
+        if !state.rows.isEmpty {
+            NavigationLink("管理预设") { ImgPromptPresetsPage(scope: scope, onWrite: onWrite) }
+        }
+        if let done { Text(done).font(.footnote).foregroundStyle(Theme.text2) }
+        if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+    }
+
+    private func pick(_ r: ImgPrompts.Preset) {
+        if r.id == state.current?.id && !state.dirty { return }
+        // 那一栏里有没存进任何一份的文字，换掉之前说一声
+        if ImgPrompts.needsConfirm(state, to: r) { switching = r; return }
+        run(nil) { ImgPrompts.apply(state, id: r.id) }
+    }
+
+    private func saveAsTapped() {
+        guard !state.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            problem = "提示词为空，无法存为预设。"; done = nil; return
+        }
+        nameText = ""
+        naming = true
+    }
+
+    private func run(_ ok: String?, _ make: () -> [String: JSONValue]?) {
+        guard let patch = make() else { return }
+        do {
+            try ImgPromptStore.write(scope, patch)
+            done = ok
+            problem = nil
+            onWrite()
+        } catch {
+            problem = "未能保存：\(error.localizedDescription)"
+            done = nil
+        }
+    }
+}
+
+/// 管理预设（整页）：套用、重命名、删除
+struct ImgPromptPresetsPage: View {
+    let scope: ImgPromptScope
+    var onWrite: () -> Void = {}
+
+    @State private var state = ImgPrompts.State(rows: [], current: nil, text: "")
+    @State private var renaming: ImgPrompts.Preset?
+    @State private var nameText = ""
+    @State private var deleting: ImgPrompts.Preset?
+    @State private var done: String?
+    @State private var problem: String?
+
+    var body: some View {
+        Form {
+            Section {
+                if state.rows.isEmpty { Text("没有已存的预设。").foregroundStyle(Theme.text2) }
+                ForEach(state.rows) { r in
+                    HStack(spacing: Theme.gap) {
+                        Button { run("已套用「\(r.name)」。") { ImgPrompts.apply(state, id: r.id) } } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(state.current?.id == r.id ? "\(r.name)（当前）" : r.name).foregroundStyle(Theme.text)
+                                Text(r.text.isEmpty ? "（空）" : (r.text.count > 120 ? String(r.text.prefix(120)) + "…" : r.text))
+                                    .font(.footnote).foregroundStyle(Theme.text2).lineLimit(3)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        Menu {
+                            Button("重命名") { nameText = r.name; renaming = r }
+                            Button("删除", role: .destructive) { deleting = r }
+                        } label: {
+                            Image(systemName: "ellipsis").frame(width: 32, height: 32)
+                        }
+                        .accessibilityLabel("更多")
+                    }
+                }
+            } header: {
+                Text("点按一份即套用到提示词栏")
+            }
+            if let done { Section { Text(done).foregroundStyle(Theme.text2) } }
+            ProblemSection(text: problem)
+        }
+        .navigationTitle(scope == .global ? "全局生图提示词预设" : "这个角色的生图提示词预设")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: load)
+        .alert("重命名预设", isPresented: Binding(get: { renaming != nil }, set: { if !$0 { renaming = nil } })) {
+            TextField("名称", text: $nameText)
+            Button("取消", role: .cancel) {}
+            Button("保存") { if let r = renaming { run(nil) { ImgPrompts.rename(state, id: r.id, name: nameText) } } }
+        }
+        .confirmationDialog("只删除这份预设，当前填写的提示词不受影响。",
+                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible, presenting: deleting) { r in
+            Button("删除预设「\(r.name)」", role: .destructive) { run(nil) { ImgPrompts.remove(state, id: r.id) } }
+        }
+    }
+
+    private func load() {
+        do { state = try ImgPromptStore.read(scope) } catch { problem = "读取失败：\(error.localizedDescription)" }
+    }
+
+    private func run(_ ok: String?, _ make: () -> [String: JSONValue]?) {
+        guard let patch = make() else { return }
+        do {
+            try ImgPromptStore.write(scope, patch)
+            done = ok
+            problem = nil
+            load()
+            onWrite()
+        } catch {
+            problem = "未能保存：\(error.localizedDescription)"
+            done = nil
         }
     }
 }

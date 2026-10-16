@@ -479,3 +479,75 @@ struct FontSection: View {
         catch { problem = "未能存到本机：\(error.localizedDescription)" }
     }
 }
+
+/// 回应样式（网页版 4.474，reactStyle）：线条（默认）把八个常用回应画成自己的单色符号，emoji 照旧显示系统 emoji。
+/// 存的永远是 emoji 码点，角色写的、历史里的、旧数据里的一个字不变，只在显示那一层换画法（ReactFace）。
+struct ReactStyleSection: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        Section {
+            Picker("回应样式", selection: Binding(get: { ReactLook.style(model.s) }, set: { model.set("reactStyle", .string($0)) })) {
+                Text("线条").tag(ReactLook.line)
+                Text("emoji").tag(ReactLook.emoji)
+            }
+        } footer: {
+            HelpNote("线条：心、赞、踩、哈哈、双叹号、问号、泪滴、流泪这八个显示为本应用绘制的单色符号，颜色随气泡文字色，其余回应仍显示为 emoji。emoji：回应显示为系统 emoji。", title: "回应样式")
+        }
+    }
+}
+
+/// 回应的画法对位（网页版 system/reaction.js 的 DRAWN）。emoji 一律从码点生成，源码里不写 emoji 字面量（第 2 条）。
+/// 对位时去掉变体选择符 FE0F：模型少写一个也认得出。
+enum ReactLook {
+    static let line = "line"
+    static let emoji = "emoji"
+
+    /// 没设过、或者设的不是 emoji，都是线条（网页版 style()）
+    static func style(_ s: AppSettings) -> String { s.raw["reactStyle"]?.string == emoji ? emoji : line }
+
+    private static func cp(_ codes: UInt32...) -> String {
+        String(String.UnicodeScalarView(codes.compactMap { Unicode.Scalar($0) }))
+    }
+
+    /// 顺序同网页版：前六个是线条那一档的常用六个（照 iMessage）
+    static let drawn: [(e: String, icon: String, label: String)] = [
+        (cp(0x2764, 0xFE0F), "reactHeart", "心"),
+        (cp(0x1F44D), "reactUp", "赞"),
+        (cp(0x1F44E), "reactDown", "踩"),
+        (cp(0x1F602), "reactHaha", "哈哈"),
+        (cp(0x203C, 0xFE0F), "reactBang", "双叹号"),
+        (cp(0x2753), "reactQ", "问号"),
+        (cp(0x1F4A7), "reactTear", "泪滴"),
+        (cp(0x1F622), "reactCry", "流泪"),
+    ]
+
+    static func strip(_ e: String) -> String {
+        String(String.UnicodeScalarView(e.unicodeScalars.filter { $0.value != 0xFE0F }))
+    }
+
+    /// 这个 emoji 在线条那一档有没有画法：有就回图标名，没有（或者用的是 emoji 那一档）回空，照旧显示 emoji
+    static func iconOf(_ e: String, style: String) -> String {
+        guard style == line else { return "" }
+        let k = strip(e)
+        return drawn.first(where: { strip($0.e) == k })?.icon ?? ""
+    }
+}
+
+/// 一个回应怎么画（网页版 chat/pages/ReactFace.js）：线条那一档里有画法的画成 SVG 符号，颜色跟着前景色（气泡文字色）；
+/// 其余的、以及 emoji 那一档，照旧显示 emoji 本身
+struct ReactFace: View {
+    let e: String
+    var size: CGFloat = 14
+    var color: Color = Theme.text
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        let icon = ReactLook.iconOf(e, style: ReactLook.style(model.s))
+        if icon.isEmpty {
+            Text(e).font(.system(size: size))
+        } else {
+            SvgIcon(name: icon, size: size + 2, lineWidth: 1.8, color: color)
+        }
+    }
+}

@@ -277,3 +277,80 @@ enum MessageActions {
         return "由「\(name)」的 \(model) 生成\(when)"
     }
 }
+
+/// 换一套接口对比（网页版 4.561 的 ComparePage）：拿同样的前文（去掉这一轮）交给另一套接口重写一遍，两版并排看。
+/// 用户点了才调，每次一次对话请求（第 15 条：手动的不算自动多调，不登记 ExtraCalls）；用量里记成 chat.compare。
+/// 只调这一套：不换下一套、不顺带排日程压底色，召回不记账。喜欢新的那版「加入候选」：和重新生成留下的几版放在一起，切过去就是它
+enum CompareTurn {
+    static let task = "chat.compare"
+
+    /// 只在一对一会话、最新一轮
+    static func can(_ chat: Chat?, turnId: String, latestTurn: String) -> Bool {
+        guard let chat, !chat.isGroup, !turnId.isEmpty else { return false }
+        return turnId == latestTurn
+    }
+
+    /// 填全的接口（网页版 chatPresets().filter(apiKey && model)）
+    static func presets(_ s: AppSettings = .load()) -> [ChatPreset] { s.chatPresets.filter(\.usable) }
+
+    /// 这一轮现在显示的那一版用的哪一套。默认选的是另一套
+    static func currentServed(_ t: ChatEngine.Turn) -> [String: JSONValue]? {
+        let list = t.versions.served
+        return list.indices.contains(t.versions.index) ? list[t.versions.index].object : nil
+    }
+
+    /// 去掉思考段之后的正文（并排显示用）
+    static func plain(_ raw: String) -> String { ReplyParser.stripThink(raw).0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    struct Result: Sendable {
+        var raw: String
+        var served: JSONValue
+        var model: String
+    }
+
+    /// 最新一轮，且就是这一轮。不是就不调接口
+    static func turn(chatId: String, turnId: String) throws -> ChatEngine.Turn {
+        guard let t = try ChatEngine.lastTurn(chatId: chatId), t.id == turnId else { throw StoreError(message: "这一轮已不是最新一轮") }
+        return t
+    }
+
+    /// 用指定的那一套重写这一轮。一次请求，不重试、不换下一套，不落库
+    static func run(chatId: String, turnId: String, preset: ChatPreset) async throws -> Result {
+        guard let chat = try Repo.chat(chatId), !chat.isGroup,
+              let charId = chat.characterIds.first, let char = try Repo.character(charId) else {
+            throw StoreError(message: "只有一对一会话可以换接口对比")
+        }
+        _ = try turn(chatId: chatId, turnId: turnId)
+        guard preset.usable else { throw StoreError(message: "这一套接口没有填全密钥与模型，未调用接口") }
+        let settings = AppSettings.load().forChat(chat)
+        let built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: turnId)
+        let r = try await Provider.$keepThink.withValue(true) {
+            try await AIService.shared.send(task: Self.task, preset: preset, system: built.system, messages: built.messages, retries: 0)
+        }
+        let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !plain(raw).isEmpty else { throw StoreError(message: "模型返回了空内容") }
+        return Result(raw: raw, served: ChatEngine.servedEntry(r), model: r.model)
+    }
+
+    /// 加入候选：追加进这一轮的 swipes 与 served（更早的候选没有记录补 null），再切过去。不调接口
+    static func adopt(chatId: String, turnId: String, _ r: Result, onRow: @escaping ChatEngine.OnRow) async throws {
+        let t = try turn(chatId: chatId, turnId: turnId)
+        guard let chat = try Repo.chat(chatId), let charId = chat.characterIds.first, let char = try Repo.character(charId) else {
+            throw StoreError(message: "这段会话不存在")
+        }
+        guard !ChatEngine.plan(raw: r.raw, chat: chat, char: char).plan.isEmpty else { throw StoreError(message: "这个版本没有内容") }
+        guard var head = t.rows.first(where: { $0.row["swipes"] != nil || $0.row["raw"] != nil }) ?? t.rows.first else {
+            throw StoreError(message: "这一轮已不存在")
+        }
+        let swipes = t.versions.swipes + [r.raw]
+        var served = (0..<(swipes.count - 1)).map { t.versions.served.indices.contains($0) ? t.versions.served[$0] : JSONValue.null }
+        served.append(r.served)
+        head.row["swipes"] = .array(swipes.map { .string($0) })
+        head.row["served"] = .array(served)
+        head.row["swipeIndex"] = .number(Double(t.versions.index))
+        head.row.touch()
+        try Repo.save(head)
+        // 从现在那一版走到新加的最后一版：存着的原文重新切一遍，和左右切换候选同一条路
+        try await ChatEngine.switchVersion(chatId: chatId, step: swipes.count - 1 - t.versions.index, onRow: onRow)
+    }
+}

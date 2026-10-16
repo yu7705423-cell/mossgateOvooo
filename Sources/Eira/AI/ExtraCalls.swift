@@ -22,12 +22,15 @@ enum ExtraCalls {
                   when: { _ in "关系转折级记忆有增删改之后的第一条消息（走记忆接口，没单独配时走副用）" }),
         ExtraCall(id: "autoSummarize", label: "自动总结记忆",
                   isOn: { s in (s.raw["memoryEnabled"]?.bool ?? true)
-                      && ["autoSummarizeInterval", "autoSummarizeMessages", "autoSummarizeChars"].contains { (s.raw[$0]?.number ?? 0) > 0 } },
+                      && (["autoSummarizeInterval", "autoSummarizeMessages", "autoSummarizeChars", "autoSummarizeIdle"].contains { (s.raw[$0]?.number ?? 0) > 0 }
+                          || s.raw["autoSummarizeOvernight"]?.bool == true) },
                   when: { s in
                       var parts: [String] = []
                       if let n = s.raw["autoSummarizeInterval"]?.number, n > 0 { parts.append("每累计 \(Int(n)) 轮角色回复") }
                       if let n = s.raw["autoSummarizeMessages"]?.number, n > 0 { parts.append("未总结消息达到 \(Int(n)) 条") }
                       if let n = s.raw["autoSummarizeChars"]?.number, n > 0 { parts.append("未总结文字达到 \(Int(n)) 字") }
+                      if let n = s.raw["autoSummarizeIdle"]?.number, n > 0 { parts.append("离开会话 \(Int(n)) 分钟后") }
+                      if s.raw["autoSummarizeOvernight"]?.bool == true { parts.append("隔夜打开应用") }
                       return parts.joined(separator: "，或") + "时一次（走记忆接口，没单独配时走副用）"
                   }),
         // 挂在会话上，不是全局设置：有一段会话开了就算开着

@@ -88,6 +88,103 @@ enum AutoReply {
         return text.isEmpty ? nil : (text, key)
     }
 
+    // MARK: - 群聊：按成员各自设置（网页版 4.649）
+    //
+    // 从前群里那一页照单聊画，只有第一个成员；群聊发消息也不走自动回复。现在每个成员一份，存在 chat.autoReply.members[角色 id]：
+    // on 与 window（同一段忙碌只回一次），和单聊那份同一个规矩：不调接口，内容取该成员当天日程里的那一句。
+
+    struct Member: Equatable {
+        var on = false
+        var window = ""
+    }
+
+    static func member(_ chat: Chat, _ charId: String) -> Member {
+        let o = chat.row["autoReply"]?.object?["members"]?.object?[charId]?.object ?? [:]
+        return Member(on: o["on"]?.bool == true, window: o["window"]?.string ?? "")
+    }
+
+    /// 改某个成员的那一份。其余成员、单聊那两份原样留着
+    static func setMember(_ chatId: String, _ charId: String, _ patch: [String: JSONValue]) throws {
+        guard !charId.isEmpty, var chat = try Repo.chat(chatId) else { return }
+        var all = chat.row["autoReply"]?.object ?? [:]
+        var members = all["members"]?.object ?? [:]
+        var cur = members[charId]?.object ?? [:]
+        let base = member(chat, charId)
+        if cur["on"] == nil { cur["on"] = .bool(base.on) }
+        if cur["window"] == nil { cur["window"] = .string(base.window) }
+        for (k, v) in patch { cur[k] = v }
+        members[charId] = .object(cur)
+        all["members"] = .object(members)
+        chat.row["autoReply"] = .object(all)
+        chat.row.touch()
+        try Repo.save(chat)
+    }
+
+    /// 群里开着自动回复的成员有几位（菜单那一行用）
+    static func membersOn(_ chat: Chat) -> Int {
+        guard chat.isGroup else { return 0 }
+        return chat.characterIds.filter { member(chat, $0).on }.count
+    }
+
+    private static func memberState(_ chat: Chat, _ charId: String, at real: Date) -> (state: Pace.State, key: String)? {
+        guard member(chat, charId).on, let char = try? Repo.character(charId) else { return nil }
+        let world = Clock.now(AppSettings.load(), real: real)
+        let st = Pace.state(chat, char: char, at: world.millis)
+        guard st.kind == "busy" || st.kind == "asleep" else { return nil }
+        return (st, "\(st.kind):\(Int(st.until / 60_000)):\(st.what)")
+    }
+
+    /// 这个成员此刻该不该回、回什么。和 stateReply 同一个判断，按这个成员的作息与日程；没有当天日程里的那一句就不回
+    static func memberReply(_ chat: Chat, _ charId: String, at real: Date = Date()) -> (text: String, key: String)? {
+        guard let ms = memberState(chat, charId, at: real), member(chat, charId).window != ms.key,
+              let char = try? Repo.character(charId), DayPlan.isOn(char) else { return nil }
+        let st = ms.state, key = ms.key
+        let world = Clock.now(AppSettings.load(), real: real)
+        guard let d = try? DayPlan.day(char.id, date: DayPlan.dateKey(char, world)) else { return nil }
+        var text = ""
+        if st.kind == "asleep" {
+            text = d.string("sleepAuto")
+        } else {
+            let cur = DayPlan.slotNow(char, world)
+            text = (d["items"]?.array ?? []).first(where: {
+                $0["slot"]?.string == cur.id && $0["state"]?.string == DayPlan.plan && !($0["auto"]?.string ?? "").isEmpty
+            })?["auto"]?.string ?? ""
+        }
+        return text.isEmpty ? nil : (text, key)
+    }
+
+    /// 这个成员此刻是不是「已经回过自动回复、人还在忙」。群里这一轮写给他的话不落（和禁言同一个机制），群内身份那一块写明他不在
+    static func memberAway(_ chat: Chat, _ charId: String, at real: Date = Date()) -> Pace.State? {
+        guard let ms = memberState(chat, charId, at: real), member(chat, charId).window == ms.key else { return nil }
+        return ms.state
+    }
+
+    /// 你在群里发了一条：在忙或在休息、开着的成员各回一句。回落下来的那几条
+    @discardableResult
+    static func fireGroup(_ chatId: String, at real: Date = Date()) throws -> [Message] {
+        guard let chat = try Repo.chat(chatId), chat.isGroup else { return [] }
+        var out: [Message] = []
+        for id in chat.characterIds {
+            guard let fresh = try Repo.chat(chatId), let r = memberReply(fresh, id, at: real) else { continue }
+            var m = Message.new(chatId: chatId, role: .char, authorId: id, content: tag + r.text)
+            m.row["auto"] = .bool(true)
+            m = try Repo.append(m)
+            try setMember(chatId, id, ["window": .string(r.key)])
+            out.append(m)
+        }
+        if !out.isEmpty { try touchChat(chatId) }
+        return out
+    }
+
+    /// 你在群里发了一条之后：各成员的自动回复落下来，以及这一条还要不要立即让群里回（网页版 afterSend 的群聊那一段）。
+    /// 能发言的成员都回过自动回复时不再立即回，延迟回复档照常排到忙完之后
+    static func afterGroupSend(_ chatId: String, at real: Date = Date()) throws -> (rows: [Message], hold: Bool) {
+        let rows = try fireGroup(chatId, at: real)
+        guard !rows.isEmpty, let chat = try Repo.chat(chatId) else { return (rows, false) }
+        let speaking = GroupChat.speaking(chat, members: GroupChat.members(chat))
+        return (rows, rows.count >= speaking.count)
+    }
+
     // MARK: - 自动回复的标记（网页版 4.586）：自动回的那一条带 [自动回复]，停止的提示只给你看
 
     static let tag = "[自动回复] "
@@ -129,7 +226,8 @@ enum AutoReply {
         guard let chat = try Repo.chat(chatId), isOn(chat, side) else { return [] }
         let char = try chat.characterIds.first.flatMap { try Repo.character($0) }
         if side == hers {
-            guard let r = stateReply(chat, at: real) else { return [] }
+            // 群里角色那边按成员各一份（fireGroup），旧版在群里存下的这一份不算（网页版 4.649）
+            guard !chat.isGroup, let r = stateReply(chat, at: real) else { return [] }
             var m = Message.new(chatId: chatId, role: .char, authorId: char?.id ?? "", content: tag + r.text)
             m.row["auto"] = .bool(true)
             m = try Repo.append(m)

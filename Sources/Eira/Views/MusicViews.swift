@@ -156,7 +156,6 @@ struct MusicFrontView: View {
                     }
                 }
             }
-            QQMusicSection()
             Section {
                 NavigationLink { LibraryView() } label: {
                     HStack { Text("本机曲库"); Spacer(); Text("已收 \(librarySize) 首").foregroundStyle(Theme.secondaryText) }
@@ -179,8 +178,8 @@ struct MusicFrontView: View {
 
 struct MusicSearchView: View {
     @ObservedObject private var player = MusicPlayer.shared
+    @ObservedObject private var model = SettingsModel.shared
     @State private var key = ""
-    @State private var source = "netease"
     @State private var results: [NeTrack] = []
     @State private var qqResults: [QQMusic.Track] = []
     @State private var searching = false
@@ -189,12 +188,8 @@ struct MusicSearchView: View {
 
     var body: some View {
         List {
-            Picker("来源", selection: $source) {
-                Text("网易云").tag("netease")
-                Text("QQ 音乐").tag("qq")
-            }
-            .pickerStyle(.segmented)
-            .onChange(of: source) { _, _ in if !key.trimmingCharacters(in: .whitespaces).isEmpty { run() } }
+            MusicSourcePicker()
+                .onChange(of: source) { _, _ in if !key.trimmingCharacters(in: .whitespaces).isEmpty { run() } }
             TextField("搜索歌曲、歌手", text: $key).submitLabel(.search).onSubmit(run)
             if searching { ProgressView() }
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
@@ -229,6 +224,9 @@ struct MusicSearchView: View {
         .sheet(item: $sharing) { s in NavigationStack { ShareSongView(song: s) } }
     }
 
+    /// 和「我的」、设置页、会话里分享音乐是同一家（settings.musicSource，网页版 4.609、4.610）
+    private var source: String { MusicLibrary.onlineSource(model.s) }
+
     private func run() {
         let k = key.trimmingCharacters(in: .whitespaces)
         guard !k.isEmpty else { return }
@@ -242,6 +240,21 @@ struct MusicSearchView: View {
             } catch { problem = "搜索失败：\(error.localizedDescription)" }
             searching = false
         }
+    }
+}
+
+/// 顶上那一条「网易云 / QQ 音乐」：搜索页、「我的」、「设置 - 音乐服务」共用一个 settings.musicSource，
+/// 在一处切了别处跟着；会话里分享音乐、角色点歌先找哪一家也跟着它（网页版 4.609、4.610）
+struct MusicSourcePicker: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        Picker("来源", selection: Binding(get: { MusicLibrary.onlineSource(model.s) },
+                                        set: { model.set("musicSource", .string($0)) })) {
+            Text("网易云").tag("netease")
+            Text("QQ 音乐").tag("qq")
+        }
+        .pickerStyle(.segmented)
     }
 }
 
@@ -271,7 +284,20 @@ struct ShareSongView: View {
     }
 }
 
+/// 「我的」：顶上切换网易云、QQ 音乐，切到哪家只显示那一家（网页版 4.610 的 MineTab）
 struct MusicMineView: View {
+    @ObservedObject private var model = SettingsModel.shared
+
+    var body: some View {
+        VStack(spacing: 0) {
+            MusicSourcePicker().padding(.horizontal, Theme.sp4).padding(.top, Theme.sp3)
+            if MusicLibrary.onlineSource(model.s) == "qq" { List { QQMusicSection() } } else { NeteaseMineSections() }
+        }
+    }
+}
+
+/// 「我的」里网易云那一半：账号资料与听歌排行
+private struct NeteaseMineSections: View {
     @ObservedObject private var player = MusicPlayer.shared
     @State private var profile: Netease.Profile?
     @State private var week = true
@@ -749,53 +775,9 @@ struct MusicSettingsView: View {
 
     var body: some View {
         Form {
-            Section {
-                let nick = Netease.config(model.s)["nickname"]?.string ?? ""
-                if Netease.userCookie(model.s).isEmpty {
-                    Button("登录网易云") { login = true }
-                } else {
-                    LabeledContent("已登录", value: nick.isEmpty ? "网易云账号" : nick)
-                    Button("退出登录", role: .destructive) {
-                        do { try Netease.logout(); model.reload() } catch { problem = error.localizedDescription }
-                    }
-                }
-                if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
-            } header: {
-                Text("我的网易云账号")
-            } footer: {
-                HelpNote("原生版直接连接网易云，不需要另外部署接口服务器。登录后可读最近播放与歌单，在本机播放的歌曲会记入该账号的听歌记录。")
-            }
-            Section {
-                if QQMusic.loggedIn(model.s) {
-                    LabeledContent("已登录", value: "QQ 号 \(QQMusic.uin(model.s))")
-                    Button("退出登录", role: .destructive) {
-                        do { try QQMusic.logout(); model.reload() } catch { problem = error.localizedDescription }
-                    }
-                } else {
-                    Button("扫码登录 QQ 音乐") { qqLogin = true }
-                }
-            } header: {
-                Text("我的 QQ 音乐账号")
-            } footer: {
-                Text("非官方接入，QQ 音乐改版后可能暂时不能用。")
-                HelpNote("原生版直接连接 QQ 音乐，走的是 QQ 音乐网页与客户端自己用的接口，不是公开接口。用手机 QQ 扫码登录；登录信息只存在本机。登录后可以播放、读自己建的歌单；会员歌曲需要会员账号。网易云找不到角色点的歌时，会到 QQ 音乐找。QQ 音乐的歌导出给网页版时只保留名称与歌手。", title: "QQ 音乐")
-            }
-            Section {
-                TextField("来源地址 realIP（可不填）", text: realIPBinding).keyboardType(.numbersAndPunctuation)
-            } footer: {
-                HelpNote("网易云按出口 IP 风控（提示 -462）时，填一个中国大陆 IP 后重试。未填写时用本机随机生成的一个国内 IP。")
-            }
-            Section {
-                NumberRow(title: "角色的听歌记录多久读一次", value: gapBinding, unit: "分钟", placeholder: "只手动读")
-                NumberRow(title: "多久以前的记录不再告诉角色", value: model.number("musicFresh", 120), unit: "分钟", placeholder: "不限")
-                NumberRow(title: "听满多少秒才记一次听歌", value: model.number("scrobbleAfter", 30), unit: "秒", placeholder: "立即")
-                Toggle("分享的歌带上歌词", isOn: model.bool("songLyric", true))
-                NumberRow(title: "歌词带前几句", value: model.number("songLyricLines", 20), unit: "句", placeholder: "整首")
-            } header: {
-                Text("角色在听什么")
-            } footer: {
-                HelpNote("角色的网易云账号在与该角色的会话设置里登录。登录后，请求回复之前按上面的间隔读一次它的最近播放，写进这一轮的上下文；只调网易云，不调用模型接口。")
-            }
+            // 顶上切换网易云、QQ 音乐，切到哪家只显示那一家；和音乐 app 里选的是同一家（网页版 4.610）
+            Section { MusicSourcePicker() }
+            if MusicLibrary.onlineSource(model.s) == "qq" { qqPart } else { neteasePart }
         }
         .navigationTitle("音乐服务")
         .sheet(isPresented: $login, onDismiss: { model.reload() }) {
@@ -803,6 +785,60 @@ struct MusicSettingsView: View {
         }
         .sheet(isPresented: $qqLogin, onDismiss: { model.reload() }) {
             NavigationStack { QQLoginView { qqLogin = false } }
+        }
+    }
+
+    @ViewBuilder private var neteasePart: some View {
+        Section {
+            let nick = Netease.config(model.s)["nickname"]?.string ?? ""
+            if Netease.userCookie(model.s).isEmpty {
+                Button("登录网易云") { login = true }
+            } else {
+                LabeledContent("已登录", value: nick.isEmpty ? "网易云账号" : nick)
+                Button("退出登录", role: .destructive) {
+                    do { try Netease.logout(); model.reload() } catch { problem = error.localizedDescription }
+                }
+            }
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } header: {
+            Text("我的网易云账号")
+        } footer: {
+            HelpNote("原生版直接连接网易云，不需要另外部署接口服务器。登录后可读最近播放与歌单，在本机播放的歌曲会记入该账号的听歌记录。")
+        }
+        Section {
+            TextField("来源地址 realIP（可不填）", text: realIPBinding).keyboardType(.numbersAndPunctuation)
+        } footer: {
+            HelpNote("网易云按出口 IP 风控（提示 -462）时，填一个中国大陆 IP 后重试。未填写时用本机随机生成的一个国内 IP。")
+        }
+        Section {
+            NumberRow(title: "角色的听歌记录多久读一次", value: gapBinding, unit: "分钟", placeholder: "只手动读")
+            NumberRow(title: "多久以前的记录不再告诉角色", value: model.number("musicFresh", 120), unit: "分钟", placeholder: "不限")
+            NumberRow(title: "听满多少秒才记一次听歌", value: model.number("scrobbleAfter", 30), unit: "秒", placeholder: "立即")
+            Toggle("分享的歌带上歌词", isOn: model.bool("songLyric", true))
+            NumberRow(title: "歌词带前几句", value: model.number("songLyricLines", 20), unit: "句", placeholder: "整首")
+        } header: {
+            Text("角色在听什么")
+        } footer: {
+            HelpNote("角色的网易云账号在与该角色的会话设置里登录。登录后，请求回复之前按上面的间隔读一次它的最近播放，写进这一轮的上下文；只调网易云，不调用模型接口。")
+        }
+    }
+
+    @ViewBuilder private var qqPart: some View {
+        Section {
+            if QQMusic.loggedIn(model.s) {
+                LabeledContent("已登录", value: "QQ 号 \(QQMusic.uin(model.s))")
+                Button("退出登录", role: .destructive) {
+                    do { try QQMusic.logout(); model.reload() } catch { problem = error.localizedDescription }
+                }
+            } else {
+                Button("扫码登录 QQ 音乐") { qqLogin = true }
+            }
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } header: {
+            Text("我的 QQ 音乐账号")
+        } footer: {
+            Text("非官方接入，QQ 音乐改版后可能暂时不能用。")
+            HelpNote("原生版直接连接 QQ 音乐，走的是 QQ 音乐网页与客户端自己用的接口，不是公开接口。用手机 QQ 扫码登录；登录信息只存在本机。登录后可以播放、读自己建的歌单；会员歌曲需要会员账号。角色点歌时先到「音乐」里选的那一家找，找不到可以播放的版本再到另一家找。QQ 音乐的歌导出给网页版时只保留名称与歌手。", title: "QQ 音乐")
         }
     }
 
@@ -940,30 +976,24 @@ struct ListenBar: View {
 struct SongPickView: View {
     let chatId: String
     var done: () -> Void
+    @ObservedObject private var model = SettingsModel.shared
     @State private var key = ""
     @State private var results: [NeTrack] = []
+    @State private var qqResults: [QQMusic.Track] = []
     @State private var searching = false
     @State private var problem: String?
 
     var body: some View {
         List {
-            TextField("搜索歌曲、歌手", text: $key).submitLabel(.search).onSubmit(run)
+            // 搜哪一家跟着音乐 app 里选的（settings.musicSource），这里不另放切换（网页版 4.609，第 5 条）
+            TextField("在\(MusicLibrary.sourceName(MusicLibrary.onlineSource(model.s)))搜索歌曲、歌手", text: $key).submitLabel(.search).onSubmit(run)
             if searching { ProgressView() }
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
             ForEach(Array(results.enumerated()), id: \.offset) { _, t in
-                Button {
-                    do {
-                        let song = try MusicLibrary.fromNetease(t)
-                        _ = try MusicListen.share(song, chatId: chatId)
-                        NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
-                        done()
-                    } catch { problem = "未能分享：\(error.localizedDescription)" }
-                } label: {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(t.title).foregroundStyle(Theme.text)
-                        Text([t.artist, t.album].filter { !$0.isEmpty }.joined(separator: " · ")).font(.caption).foregroundStyle(Theme.text3)
-                    }
-                }
+                pickRow(t.title, [t.artist, t.album].filter { !$0.isEmpty }.joined(separator: " · ")) { try MusicLibrary.fromNetease(t) }
+            }
+            ForEach(Array(qqResults.enumerated()), id: \.offset) { _, t in
+                pickRow(t.title, t.artist) { try MusicLibrary.fromQQ(t) }
             }
         }
         .navigationTitle("分享音乐")
@@ -971,14 +1001,34 @@ struct SongPickView: View {
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("取消", action: done) } }
     }
 
+    private func pickRow(_ title: String, _ sub: String, keep: @escaping () throws -> MusicLibrary.Song) -> some View {
+        Button {
+            do {
+                let song = try keep()
+                _ = try MusicListen.share(song, chatId: chatId)
+                NotificationCenter.default.post(name: .eiraChatChanged, object: chatId)
+                done()
+            } catch { problem = "未能分享：\(error.localizedDescription)" }
+        } label: {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title).foregroundStyle(Theme.text)
+                if !sub.isEmpty { Text(sub).font(.caption).foregroundStyle(Theme.text3) }
+            }
+        }
+    }
+
     private func run() {
         let k = key.trimmingCharacters(in: .whitespaces)
         guard !k.isEmpty else { return }
         searching = true
         problem = nil
-        Task {
-            do { results = try await Netease.search(k); if results.isEmpty { problem = "没有匹配的歌曲" } }
-            catch { problem = "搜索失败：\(error.localizedDescription)" }
+        let src = MusicLibrary.onlineSource(model.s)
+        Task { @MainActor in
+            do {
+                if src == "qq" { qqResults = try await QQMusic.search(k); results = [] }
+                else { results = try await Netease.search(k); qqResults = [] }
+                if results.isEmpty && qqResults.isEmpty { problem = "没有匹配的歌曲" }
+            } catch { problem = "搜索失败：\(error.localizedDescription)" }
             searching = false
         }
     }
@@ -1089,7 +1139,7 @@ struct QQPlaylistView: View {
     }
 }
 
-/// 首页里的 QQ 音乐一块：登录了列出自己建的歌单；也可以贴一张歌单的链接打开
+/// 「我的」里的 QQ 音乐一块（网页版 4.609、4.610）：登录了列出自己建的歌单；也可以贴一张歌单的链接打开
 struct QQMusicSection: View {
     @State private var lists: [QQMusic.Playlist] = []
     @State private var problem: String?
@@ -1097,6 +1147,9 @@ struct QQMusicSection: View {
 
     var body: some View {
         Section {
+            if !QQMusic.loggedIn() {
+                NavigationLink { MusicSettingsView() } label: { Text("尚未登录 QQ 音乐，前往登录") }
+            }
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
             ForEach(lists) { l in
                 NavigationLink { QQPlaylistView(id: l.id, name: l.name) } label: {

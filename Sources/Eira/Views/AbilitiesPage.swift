@@ -110,6 +110,9 @@ struct AbilitiesPage: View {
                     HelpNote("角色可以接听你的来电，也可以主动打给你。关闭后两者都不再发生。", title: "角色能力：通话")
                     }
                     Group {
+                    callAnswer
+                    }
+                    Group {
                     ability("canListen")
                     HelpNote("角色可以拉你一起听歌、点歌、分享歌曲与建自己的歌单。", title: "角色能力：一起听")
                     ability("canSendGift")
@@ -213,6 +216,24 @@ struct AbilitiesPage: View {
         }
     }
 
+    // MARK: - 通话：接不接你的来电（网页版 AbilitiesPage 的「接听你的来电」，字段 callAnswer，取值见 CallEngine.answerChoices）
+
+    @ViewBuilder private var callAnswer: some View {
+        if let char, Abilities.isOn("canCall", char) {
+            VStack(alignment: .leading, spacing: 2) {
+                Picker("接听你的来电", selection: Binding(
+                    get: { CallEngine.answerOf(self.char) },
+                    set: { patch(["callAnswer": .string($0)]) })) {
+                    ForEach(CallEngine.answerChoices.indices, id: \.self) { i in
+                        Text(CallEngine.answerChoices[i].label).tag(CallEngine.answerChoices[i].value)
+                    }
+                }
+                Text(CallEngine.answerInfo(char)).font(.footnote).foregroundStyle(Theme.text2)
+            }
+            HelpNote("总是接听：你打过去，角色总会接听。按作息：按「主动发起对话」中的免打扰时段，时段内多半不接，其余时间偶尔不接，未接时记一条未接来电。不增加调用次数。", title: "接听你的来电")
+        }
+    }
+
     // MARK: - 语音（从编辑资料挪来，字段不变）
 
     @ViewBuilder private var voiceSection: some View {
@@ -255,6 +276,7 @@ struct AbilitiesPage: View {
         if let char, Abilities.isOn("canSendImage", char) {
             Section {
                 TextField("这个角色的生图提示词", text: stringBinding("imagePrompt"), axis: .vertical).lineLimit(2...10)
+                ImgPromptPresetRows(scope: .char(charId), state: ImgPrompts.state { char.row[$0] }, onWrite: reloadChar)
                 NavigationLink { FaceLockView(owner: .char(charId)) } label: {
                     LabeledContent("锁脸", value: faceLabel(char))
                 }
@@ -262,6 +284,7 @@ struct AbilitiesPage: View {
                 Text("生图")
             } footer: {
                 HelpNote("生图提示词接在这个角色发的每一张图的画面描述后面，全局提示词在「设置 - 生图」中设置，两者都会生效。锁脸让这个角色每次生成的长相保持一致。外貌在「联系」的编辑资料中填写。", title: "生图")
+                HelpNote("这个角色的生图提示词可以存为几份预设，点选一份即把提示词栏换成它。当前那份改过之后，可以存回或另存一份。删除预设不影响提示词栏里正在用的文字。", title: "这个角色的生图提示词预设")
             }
         }
     }
@@ -290,6 +313,12 @@ struct AbilitiesPage: View {
         } catch {
             problem = "读取失败：\(error.localizedDescription)"
         }
+    }
+
+    /// 预设那几行写过之后重读，提示词栏跟上
+    private func reloadChar() {
+        do { char = try Repo.character(charId) ?? char; problem = nil }
+        catch { problem = "读取失败：\(error.localizedDescription)" }
     }
 
     /// 随改随存。写不进去在屏幕上说（第 20 条）

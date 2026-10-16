@@ -27,6 +27,12 @@ enum MomentText {
         return (try? Repo.character(id))?.displayName ?? "已删除"
     }
 
+    /// 译文显示方式（网页版 transView.mode）：原文与译文、只显示译文、只显示原文。入口在会话菜单的「翻译」页
+    @MainActor static var transMode: String {
+        let v = SettingsModel.shared.s.raw["translateShow"]?.string ?? "both"
+        return ["both", "trans", "orig"].contains(v) ? v : "both"
+    }
+
     static func avatar(_ id: String) -> String {
         if id == "me" { return (try? Repo.activePersona())?.avatar ?? "" }
         return (try? Repo.character(id))?.avatar ?? ""
@@ -98,10 +104,25 @@ struct MomentCard: View {
             VStack(alignment: .leading, spacing: 0) {
                 Text(MomentText.name(mo.authorId)).font(.system(size: 13, weight: .medium))
                 if !mo.text.isEmpty {
-                    Text(mo.text).font(.system(size: 14)).lineSpacing(5).padding(.top, 3)
+                    let shown = MessageActions.transPair(mo.text, mo.translation, mode: MomentText.transMode)
+                    Text(shown.main).font(.system(size: 14)).lineSpacing(5).padding(.top, 3)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(Rectangle())
                         .onTapGesture { onOpen?(mo) }
+                    if !shown.sub.isEmpty {
+                        Text(shown.sub).font(.system(size: 13)).lineSpacing(4).foregroundStyle(Theme.text3).padding(.top, 2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                if mo.imagePending {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.mini)
+                        Text("正在配图")
+                    }
+                    .font(.system(size: 12)).foregroundStyle(Theme.text3).padding(.top, Theme.sp2)
+                } else if !mo.imageError.isEmpty {
+                    Text("配图没生成出来：\(mo.imageError)").font(.system(size: 12)).foregroundStyle(Theme.dangerText)
+                        .frame(maxWidth: .infinity, alignment: .leading).padding(.top, Theme.sp2)
                 }
                 if !mo.images.isEmpty {
                     MomentPhotos(ids: mo.images) { viewing = $0 }.padding(.top, Theme.sp2)
@@ -178,11 +199,15 @@ struct CommentList: View {
         let byId = Dictionary(mo.comments.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
         VStack(alignment: .leading, spacing: 2) {
             ForEach(mo.comments) { c in
-                Group {
+                let shown = MessageActions.transPair(c.text, c.translation, mode: MomentText.transMode)
+                VStack(alignment: .leading, spacing: 1) {
                     if let to = byId[c.replyTo] {
-                        Text("\(Text(MomentText.name(c.authorId)).fontWeight(.medium)) 回复 \(Text(MomentText.name(to.authorId)).fontWeight(.medium))：\(c.text)")
+                        Text("\(Text(MomentText.name(c.authorId)).fontWeight(.medium)) 回复 \(Text(MomentText.name(to.authorId)).fontWeight(.medium))：\(shown.main)")
                     } else {
-                        Text("\(Text(MomentText.name(c.authorId)).fontWeight(.medium))：\(c.text)")
+                        Text("\(Text(MomentText.name(c.authorId)).fontWeight(.medium))：\(shown.main)")
+                    }
+                    if !shown.sub.isEmpty {
+                        Text(shown.sub).font(.system(size: 11)).foregroundStyle(Theme.text3)
                     }
                 }
                 .font(.system(size: 12)).lineSpacing(4)
@@ -620,12 +645,25 @@ struct MomentDetailView: View {
     @State private var mo: Moments.Moment?
     @State private var commenting: MomentsTab.CommentTarget?
     @State private var problem: String?
+    @State private var notice: String?
+    @State private var rewriting = false
 
     var body: some View {
         ScrollView {
             if let mo {
                 MomentCard(mo: mo, onComment: { m, c in commenting = MomentsTab.CommentTarget(mo: m, reply: c) },
                            onOpen: nil, onProblem: { problem = $0 })
+                // 重新生成配图（网页版 4.589）：角色发的、写过画面描述的才有。一次生图调用，成功才换下旧图
+                if !mo.isMine && !mo.recalled && !mo.imagePending
+                    && !mo.imagePrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    HStack(spacing: Theme.sp4) {
+                        Button("重新生成配图") { redraw(nil) }
+                        Button("修改描述后重新生成") { rewriting = true }
+                        Spacer()
+                    }
+                    .font(.system(size: 13)).padding(.horizontal, Theme.sp4).padding(.top, Theme.sp2)
+                }
+                if let notice { Text(notice).font(.system(size: 13)).foregroundStyle(Theme.text3).padding(Theme.sp4) }
                 if let problem { Text(problem).font(.system(size: 13)).foregroundStyle(Theme.dangerText).padding(Theme.sp4) }
             } else {
                 EmptyState(title: "这条动态已不在了")
@@ -637,6 +675,61 @@ struct MomentDetailView: View {
         .onAppear { mo = Moments.get(momentId) }
         .onReceive(NotificationCenter.default.publisher(for: .eiraMomentsChanged)) { _ in mo = Moments.get(momentId) }
         .sheet(item: $commenting) { t in NavigationStack { CommentSheet(momentId: t.mo.id, replyTo: t.reply) } }
+        .sheet(isPresented: $rewriting) {
+            NavigationStack {
+                MomentRedrawView(initial: mo?.imagePrompt ?? "") { redraw($0) }
+            }
+        }
+    }
+
+    private func redraw(_ prompt: String?) {
+        problem = nil
+        notice = nil
+        let id = momentId
+        Task { @MainActor in
+            do {
+                try await Moments.redrawImage(id, prompt: prompt)
+                notice = "配图已重新生成"
+            } catch {
+                // 画的时候失败的，原因已经写在动态上；没开始画就失败的（没配生图接口等）写在这里
+                if (Moments.get(id)?.imageError ?? "").isEmpty { problem = "配图没生成出来：\(error.localizedDescription)" }
+            }
+        }
+    }
+}
+
+/// 修改配图描述后重新生成（整页，有输入框）
+struct MomentRedrawView: View {
+    let initial: String
+    var onSubmit: (String) -> Void
+    @State private var desc = ""
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        Form {
+            Section {
+                TextEditor(text: $desc).frame(minHeight: 140)
+            } header: { Text("配图描述") } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("调用一次生图接口。")
+                    HelpNote("角色写朋友圈时给出的画面描述。修改后按新的描述重新生成，原图在新图生成成功后替换。", title: "修改配图描述")
+                }
+            }
+        }
+        .navigationTitle("修改配图描述")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("重新生成") {
+                    let t = desc.trimmingCharacters(in: .whitespacesAndNewlines)
+                    dismiss()
+                    onSubmit(t)
+                }
+                .disabled(desc.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .onAppear { desc = initial }
     }
 }
 

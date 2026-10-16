@@ -16,6 +16,8 @@ enum Moments {
         var text: String
         var replyTo: String
         var createdAt: Double
+        /// 译文（网页版 4.363）：跟随这个角色私聊的翻译设置，写评论的那一次调用里一起给的
+        var translation: String
 
         init(_ v: JSONValue) {
             let o = v.object ?? [:]
@@ -24,6 +26,7 @@ enum Moments {
             text = o["text"]?.string ?? ""
             replyTo = o["replyTo"]?.string ?? ""
             createdAt = o["createdAt"]?.number ?? 0
+            translation = o["translation"]?.string ?? ""
         }
     }
 
@@ -39,6 +42,12 @@ enum Moments {
         var recalled: Bool { row["recalled"].map { $0 != .null && $0 != .bool(false) } ?? false }
         var editedAt: Double { row.number("editedAt") ?? 0 }
         var isMine: Bool { authorId == "me" }
+        /// 正文的译文（网页版 4.363）
+        var translation: String { row.string("translation") }
+        /// 配图（网页版 4.587、4.589）：角色给的画面描述、正在画、上一次没画出来的原因
+        var imagePrompt: String { row.string("imagePrompt") }
+        var imagePending: Bool { row.bool("imagePending") }
+        var imageError: String { row.string("imageError") }
         /// 我发的那条的可见范围：nil 为所有角色，其余为这几位（空为仅自己）
         var visibleTo: [String]? { row["visibleTo"]?.array.map { $0.compactMap(\.string) } }
     }
@@ -92,13 +101,14 @@ enum Moments {
     }
 
     @discardableResult
-    static func addComment(_ id: String, authorId: String, text: String, replyTo: String = "") throws -> Comment? {
+    static func addComment(_ id: String, authorId: String, text: String, replyTo: String = "", translation: String = "") throws -> Comment? {
         guard let mo = get(id) else { return nil }
         var c: [String: JSONValue] = [
             "id": .string(Ids.make("cm")), "authorId": .string(authorId), "text": .string(text),
             "replyTo": replyTo.isEmpty ? .null : .string(replyTo), "createdAt": .number(Date().millis),
         ]
         if replyTo.isEmpty { c["replyTo"] = .null }
+        if !translation.isEmpty { c["translation"] = .string(translation) }
         try update(id, ["comments": .array((mo.row["comments"]?.array ?? []) + [.object(c)])])
         return Comment(.object(c))
     }
@@ -196,21 +206,86 @@ enum Moments {
         return j
     }
 
-    /// 角色发一条动态（朋友圈页右上角「刷新」，一次调用）
+    /// 角色发朋友圈时给出配图一栏的比例，0 到 100，默认 30（网页版 imageRate，4.587）
+    static func imageRate(_ s: AppSettings = .load()) -> Double {
+        let n = s.raw["momentImageRate"]?.number ?? 30
+        return n.isFinite ? min(100, max(0, n)) : 30
+    }
+
+    /// 角色发一条动态（朋友圈页右上角「刷新」，一次调用）。
+    ///
+    /// 配图一栏按比例随机给（网页版 4.587）：掷中才接 task.moment-image，给了仍由角色定配不配；没掷中的这一条
+    /// 模型照样写了 imagePrompt 也不画。没配生图接口不给。roll 是这一次掷出的数（0 到 100），测试用；不给就随机。
+    /// 写了画面描述就另起一次生图调用，画好挂上，失败把原因记在动态上（imageError），不重试。
+    /// 译文跟随这个角色私聊的翻译设置，同一次调用里多要一个 translation 字段（网页版 4.363）
     @discardableResult
-    static func createMoment(charId: String) async throws -> Moment {
+    static func createMoment(charId: String, roll: Double? = nil) async throws -> Moment {
         guard let c = try Repo.character(charId) else { throw StoreError(message: "角色不存在") }
         let s = AppSettings.load()
         let user = userName()
+        let withImage = s.imageReady && (roll ?? Double.random(in: 0..<100)) < imageRate(s)
+        let tr = GenTrans.forChar(charId)
         let system = Templates.render("task.moment-create", ["charName": c.name], settings: s)
+            + (withImage ? "\n\n" + Templates.render("task.moment-image", [:], settings: s) : "")
+            + GenTrans.part(tr, settings: s)
             + "\n\n## Your own settings\n\(charContext(c))" + recentChat(charId, user)
         let j = try await runJSON("moment.create", system, maxTokens: 500)
         let text = (j["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw StoreError(message: "模型没有返回动态内容") }
         var extra: [String: JSONValue] = ["mood": .string(j["mood"]?.string ?? "")]
-        let prompt = (j["imagePrompt"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        if !prompt.isEmpty && prompt != "null" { extra["imagePrompt"] = .string(prompt) }
-        return try create(authorId: charId, text: text, extra: extra)
+        let translation = GenTrans.textTrans(tr, j)
+        if !translation.isEmpty { extra["translation"] = .string(translation) }
+        let mo = try create(authorId: charId, text: text, extra: extra)
+        let prompt = withImage ? (j["imagePrompt"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) : ""
+        guard !prompt.isEmpty, prompt != "null" else { return mo }
+        try update(mo.id, ["imagePending": .bool(true), "imagePrompt": .string(prompt)])
+        let id = mo.id
+        Task { await Moments.drawFirst(id, prompt: prompt, charId: charId) }
+        return get(id) ?? mo
+    }
+
+    /// 发动态时顺带的那一张。失败把原因记在动态上，不重试
+    private static func drawFirst(_ momentId: String, prompt: String, charId: String) async {
+        do {
+            guard let char = try Repo.character(charId) else { throw StoreError(message: "角色不存在") }
+            let img = try await paint(prompt: prompt, char: char)
+            try update(momentId, ["images": .array([.string(img)]), "imagePending": .bool(false), "imageError": .string("")])
+        } catch {
+            Diagnostics.shared.record("moment-image-failed", ["error": error.localizedDescription])
+            try? update(momentId, ["imagePending": .bool(false), "imageError": .string(error.localizedDescription)])
+        }
+    }
+
+    /// 画一张并存好，返回图片 id。提示词与聊天里的图同样拼（生图世界书、外貌、固定提示词、画风、全局提示词）
+    private static func paint(prompt: String, char: Character) async throws -> String {
+        let s = AppSettings.load()
+        guard let preset = s.activeImage, preset.ready else { throw StoreError(message: "尚未配置生图接口") }
+        let ps = ImageGen.parts(prompt: prompt, char: char, all: (try? Repo.characters()) ?? [], settings: s)
+        let data = try await ImageGen.generate(prompt: ImageGen.compose(ps), negative: ImageGen.negativeOf(ps), preset: preset)
+        return try Images.save(data, maxPixel: 1024)
+    }
+
+    /// 重新生成配图（网页版 redrawImage，4.589）。用户在动态页点的，一次生图调用（手动的，不经 claim）。
+    /// prompt 给了就先换成新的描述再画。新图存好才换下旧图；失败时旧图留着，原因记在动态上。
+    /// 旧图不删：原生版还没有核引用的删图，同一张图可能还挂在别处（网页版第 20 条）
+    @discardableResult
+    static func redrawImage(_ momentId: String, prompt: String? = nil) async throws -> String {
+        guard let mo = get(momentId) else { throw StoreError(message: "这条动态已不存在") }
+        guard !mo.isMine, let char = try Repo.character(mo.authorId) else {
+            throw StoreError(message: "只有角色发的动态可以重新生成配图")
+        }
+        let p = (prompt ?? mo.imagePrompt).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !p.isEmpty else { throw StoreError(message: "这条动态没有配图的描述") }
+        guard AppSettings.load().imageReady else { throw StoreError(message: "尚未配置生图接口") }
+        try update(momentId, ["imagePending": .bool(true), "imagePrompt": .string(p), "imageError": .string("")])
+        do {
+            let img = try await paint(prompt: p, char: char)
+            try update(momentId, ["images": .array([.string(img)]), "imagePending": .bool(false), "imageError": .string("")])
+            return img
+        } catch {
+            try? update(momentId, ["imagePending": .bool(false), "imageError": .string(error.localizedDescription)])
+            throw error
+        }
     }
 
     /// 角色评论一条动态，并点赞（一次调用）
@@ -218,13 +293,16 @@ enum Moments {
         guard let mo = get(momentId), let c = try Repo.character(charId) else { throw StoreError(message: "数据不存在") }
         let user = userName()
         let author = mo.isMine ? user : ((try? Repo.character(mo.authorId))?.name ?? "对方")
+        let s = AppSettings.load()
+        let tr = GenTrans.forChar(charId)
         let system = Templates.render("task.moment-comment",
-                                      ["charName": c.name, "authorName": author, "momentText": mo.text], settings: .load())
+                                      ["charName": c.name, "authorName": author, "momentText": mo.text], settings: s)
+            + GenTrans.part(tr, settings: s)
             + "\n\n## Your own settings\n\(charContext(c))" + thread(mo, charId: charId, user: user) + recentChat(charId, user)
         let j = try await runJSON("moment.comment", system, maxTokens: 300)
         let text = (j["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw StoreError(message: "模型没有返回评论") }
-        try addComment(momentId, authorId: charId, text: text)
+        try addComment(momentId, authorId: charId, text: text, translation: GenTrans.textTrans(tr, j))
         if get(momentId)?.likes.contains(charId) == false { try toggleLike(momentId, who: charId) }
     }
 
@@ -259,6 +337,7 @@ enum Moments {
         let user = userName()
         let own = mo.authorId == charId
         let canTake = own && c.row["canRecall"]?.bool != false && !mo.recalled
+        let tr = GenTrans.forChar(charId)
         let system: String
         if own {
             system = Templates.render("task.moment-reply", ["charName": c.name, "userName": user, "momentText": mo.text,
@@ -269,11 +348,11 @@ enum Moments {
             system = Templates.render("task.moment-reply-thread", ["charName": c.name, "userName": user, "authorName": author,
                                                                    "momentText": mo.text, "commentText": commentText], settings: s)
         }
-        let full = system + "\n\n## Your own settings\n\(charContext(c))" + thread(mo, charId: charId, user: user) + recentChat(charId, user)
+        let full = system + GenTrans.part(tr, settings: s) + "\n\n## Your own settings\n\(charContext(c))" + thread(mo, charId: charId, user: user) + recentChat(charId, user)
         let j = try await runJSON("moment.reply", full, maxTokens: 300)
         let text = (j["text"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { throw StoreError(message: "模型没有返回回复") }
-        try addComment(momentId, authorId: charId, text: text, replyTo: replyTo)
+        try addComment(momentId, authorId: charId, text: text, replyTo: replyTo, translation: GenTrans.textTrans(tr, j))
         if canTake && j["recall"]?.bool == true { try update(momentId, ["recalled": .number(Date().millis)]) }
     }
 
@@ -344,6 +423,68 @@ enum Moments {
         return "\n\n[你的朋友圈]\n\(lines.joined(separator: "\n"))\n"
             + "These are the most recent posts you published on your own moments feed, newest first, with the time, the text, "
             + "how many photos were attached, whether \(userName) liked it, and every comment under it in order with who wrote it.\n"
+    }
+}
+
+/// 聊天之外生成的文字跟随哪一段私聊的翻译（网页版 ai/transfor.js 的 forChar，translate.js 的 jsonPart、pickTrans，4.363、4.365）。
+///
+/// 朋友圈、日记这些不在会话里，自己没有翻译设置。跟随这个角色与当前身份的那段私聊（几段都有时取最近聊过的）；
+/// 私聊没开翻译就不翻。同一次调用里一起写，不另调接口（网页版第 15 条）。
+enum GenTrans {
+    struct Target: Equatable, Sendable {
+        var lang: String
+        var extra: String
+        var chatId: String
+    }
+
+    static func forChar(_ charId: String, personaId: String? = nil) -> Target? {
+        guard !charId.isEmpty else { return nil }
+        let pid = personaId ?? ((try? Repo.activePersona())?.id ?? "")
+        let own = ((try? Repo.chats()) ?? []).filter { !$0.row.bool("group") && $0.characterIds == [charId] }
+        let mine = own.filter { pid.isEmpty || $0.personaId.isEmpty || $0.personaId == pid }
+        guard let chat = (mine.isEmpty ? own : mine).max(by: { $0.lastMessageAt < $1.lastMessageAt }) else { return nil }
+        let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !lang.isEmpty else { return nil }
+        return Target(lang: lang, extra: TranslateOne.rulesOf(chat, .load()), chatId: chat.id)
+    }
+
+    private static func extra(_ t: Target) -> String {
+        t.extra.isEmpty ? "" : "\nAdditional requirements: \(t.extra)"
+    }
+
+    /// 只要 text 一个字段的译文（task.json-trans，朋友圈）。没开翻译时是空串
+    static func part(_ t: Target?, settings s: AppSettings) -> String {
+        guard let t else { return "" }
+        return "\n\n" + Templates.render("task.json-trans", ["lang": t.lang, "extra": extra(t)], settings: s)
+    }
+
+    /// 几个字段各要一个「字段名 + Trans」（task.json-trans-fields，日记等）。没开翻译时是空串
+    static func fieldsPart(_ t: Target?, _ fields: [String], settings s: AppSettings) -> String {
+        guard let t else { return "" }
+        return "\n\n" + Templates.render("task.json-trans-fields", [
+            "lang": t.lang, "extra": extra(t), "fields": fields.map { "\"\($0)\"" }.joined(separator: ", "),
+        ], settings: s)
+    }
+
+    /// 回来的译文能不能用：有字、不是照抄原文（网页版 usable）
+    static func usable(_ tr: String?, _ text: String) -> String {
+        let s = (tr ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty, s.filter({ !$0.isWhitespace }) != text.filter({ !$0.isWhitespace }) else { return "" }
+        return s
+    }
+
+    /// 朋友圈那种：text 的译文在 translation 里。原文本来就是目标语言的不存
+    static func textTrans(_ t: Target?, _ obj: JSONValue) -> String {
+        guard let t else { return "" }
+        let src = obj["text"]?.string ?? ""
+        guard !TranslateOne.alreadyIn(src, t.lang) else { return "" }
+        return usable(obj["translation"]?.string, src)
+    }
+
+    /// 某个字段的译文（字段名 + Trans）。原文本来就是目标语言、或者照抄原文的，都当没有（网页版 pickTrans）
+    static func pick(_ t: Target?, _ obj: JSONValue, _ field: String) -> String {
+        guard let t, let src = obj[field]?.string, !TranslateOne.alreadyIn(src, t.lang) else { return "" }
+        return usable(obj["\(field)Trans"]?.string, src)
     }
 }
 

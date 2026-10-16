@@ -69,6 +69,18 @@ final class CallSession: ObservableObject {
         }
     }
 
+    /// 我打出去：先响 2.5 到 6 秒再看接不接（网页版 call.dial）。角色卡选了「按作息」时可能不接，记一条未接听；
+    /// 接不接不调模型，接通之后才开始第一轮
+    func dial() {
+        guard phase == .connecting, direction == "out" else { return }
+        clock = Timer.scheduledTimer(withTimeInterval: CallEngine.dialWait(), repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.phase == .connecting, !self.finished else { return }
+                if CallEngine.willAnswer(self.char) { self.start() } else { self.end(outcome: "missed") }
+            }
+        }
+    }
+
     func accept() {
         guard phase == .ringing else { return }
         clock?.invalidate()
@@ -414,9 +426,9 @@ struct CallView: View {
         }
         .background(Theme.background)
         .overlay(alignment: .bottom) { if session.phase == .ringing { ringingBar } }
-        .onAppear { session.phase == .ringing ? session.ring() : session.start() }
+        .onAppear { session.phase == .ringing ? session.ring() : session.dial() }
         .onChange(of: session.outcome) { _, o in
-            // 响够了没人接：未接来电已经记下，收起来电页
+            // 响够了没人接、或者打出去角色没接：通话记录已经记下，收起通话页
             if o == "missed" { onEnd(); dismiss() }
         }
     }
@@ -426,7 +438,7 @@ struct CallView: View {
         if session.transcribing { return "正在识别" }
         switch session.phase {
         case .ringing: return session.video ? "邀请你视频通话" : "邀请你语音通话"
-        case .connecting: return "正在接通"
+        case .connecting: return session.direction == "out" ? "正在呼叫" : "正在接通"
         case .active: return CallEngine.duration(session.seconds)
         case .ended: return "通话结束"
         }

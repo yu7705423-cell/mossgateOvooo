@@ -120,7 +120,8 @@ enum Provider {
         if p.provider == .openai && p.midSystem == "system" { return messages }
         var out: [AIMessage] = []
         for m in messages {
-            let m = m.role == .system ? AIMessage(role: .user, content: "<context>\n\(m.content)\n</context>") : m
+            // 网页版是 { ...m, role: 'user' }：带着的图一并留下
+            let m = m.role == .system ? AIMessage(role: .user, content: "<context>\n\(m.content)\n</context>", images: m.images) : m
             // 带图的不并：并进去图就挂到别的话上了（网页版同样）
             if let last = out.last, last.role == m.role, last.images.isEmpty, m.images.isEmpty {
                 out[out.count - 1].content = last.content + "\n\n" + m.content

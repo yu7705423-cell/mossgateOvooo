@@ -81,6 +81,64 @@ struct UsageLimitsView: View {
                 HelpNote("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
             }
 
+            // 朋友圈（网页版 LimitsPage 的 momentsCount、ownMomentsCount、momentChatRecent、momentImageRate）
+            Section {
+                NumberRow(title: "带上你最近几条朋友圈", value: model.number("momentsCount", 3), unit: "条", placeholder: "全部")
+                NumberRow(title: "带上角色自己最近几条朋友圈", value: model.number("ownMomentsCount", 3), unit: "条", placeholder: "全部")
+                NumberRow(title: "写动态与评论时带上最近几条私聊", value: model.number("momentChatRecent", 20), unit: "条", placeholder: "全部")
+            } header: {
+                Text("朋友圈")
+            } footer: {
+                Text("不增加调用次数，只增加每次请求的长度。填 0 表示全部带上。")
+                HelpNote("每次请求带上你自己发的最近这么多条朋友圈：时间、文字、几张图、配的歌，以及这个角色点过赞、评论过什么。图片本身不发送，只说明张数。填 0 表示全部带上。", title: "带上你最近几条朋友圈")
+                HelpNote("每次请求带上这个角色自己发的最近这么多条朋友圈，以及每条下面的全部评论（谁说的、说了什么）。用于让角色在聊天中知道自己发过什么、你评论过什么、自己回复过什么。填 0 表示全部带上。", title: "带上角色自己最近几条朋友圈")
+                HelpNote("角色写朋友圈、评论、回复评论时，同一次请求里带上与你私聊的最近这么多条消息，回复评论时还带上这条动态下已有的评论。", title: "写动态与评论时带上最近几条私聊")
+            }
+
+            Section {
+                NumberRow(title: "角色朋友圈配图的比例", value: model.number("momentImageRate", 30), unit: "%", placeholder: "0", range: 0...100)
+            } footer: {
+                Text("每配一张图调用一次生图接口。填 100 表示每一条都可以配图，填 0 表示一律不配图。")
+                HelpNote("角色每次写朋友圈时，按这个比例随机决定这一条可不可以配图；可以配图时由角色决定配不配，不可以的那一条只有文字与歌。未配置生图接口时一律不配图。", title: "角色朋友圈配图的比例")
+            }
+
+            // 排日程（网页版 dayPlanRecent、dayPlanSceneBeats）
+            Section {
+                NumberRow(title: "排日程时带几条最近的对话", value: model.number("dayPlanRecent", 12), unit: "条", placeholder: "全部")
+                NumberRow(title: "排日程时带进行中的线下几段", value: model.number("dayPlanSceneBeats", 4), unit: "段", placeholder: "全部")
+            } header: {
+                Text("日程")
+            } footer: {
+                Text("不增加调用次数，只增加这一次请求的长度。填 0 表示全部带上。")
+                HelpNote("每天排角色的日程时，把与该角色最近这么多条对话（含线下正文）连同历史摘要与最近的记忆一并发出，日程据此确定角色此刻所在的地方与正在发生的事。", title: "排日程时带几条最近的对话")
+                HelpNote("有尚未收场的线下剧情时，排日程会另外带上这一场的地点、最近写到的时刻与最近这么多段正文的全文，日程据此接上剧情中角色所在的地方与正在发生的事。上面那一项中的对话每条只取前 200 字，这一项不截断。填 0 表示这一场的正文全部带上。", title: "排日程时带进行中的线下几段")
+            }
+
+            // 总结记忆时发给模型去重的已有记忆（网页版 memoryDedupeAll、memoryDedupeRelevant、memoryDedupeRecent）
+            Section {
+                Toggle("发送全部已有记忆", isOn: model.bool("memoryDedupeAll", false))
+                if !(s.raw["memoryDedupeAll"]?.bool ?? false) {
+                    NumberRow(title: "与这一批对话相关的已有记忆", value: model.number("memoryDedupeRelevant", 30), unit: "条", placeholder: "相关的全部")
+                    NumberRow(title: "最近记下的已有记忆", value: model.number("memoryDedupeRecent", 10), unit: "条", placeholder: "不另外发送")
+                }
+            } header: {
+                Text("总结记忆")
+            } footer: {
+                Text(s.raw["memoryDedupeAll"]?.bool ?? false
+                     ? "开启后每次发送全部，记忆越多，每次请求越长。"
+                     : "关闭时只发送上面两类：与要总结的这一批对话相关的、最近记下的。不额外调用接口。")
+                HelpNote("总结记忆时会把已有的记忆发给模型，用于去重和改写旧条目。开启后每次发送全部，记忆越多，每次请求越长。关闭时只发送下面两类：与要总结的这一批对话相关的、最近记下的。", title: "发送全部已有记忆")
+                HelpNote("按关键词与字面重合挑出与要总结的对话相关的记忆，不额外调用接口。填 0 表示相关的全部发送。", title: "与这一批对话相关的已有记忆")
+                HelpNote("另外发送最近记下的几条。刚记下的最容易与新内容重复。填 0 表示不另外发送。", title: "最近记下的已有记忆")
+            }
+
+            Section {
+                NumberRow(title: "批量生成时发多少条已有词条", value: model.number("eventDedupeList", 0), unit: "条", placeholder: "全部")
+            } footer: {
+                Text("条数越多重复越少，每次请求也越长。填 0 表示全部发送。无论此处如何设置，入库时都会再比对一次。")
+                HelpNote("批量生成随机事件时，会把该格已有的词条一并发给模型以避免重复。", title: "批量生成时发多少条已有词条")
+            }
+
             Section {
                 NumberRow(title: "未读达到几条暂停主动发起对话", value: model.number("proactiveMaxUnread", 3), unit: "条", placeholder: "不限")
             } footer: {
@@ -199,9 +257,12 @@ struct UsageLimitsView: View {
     static func taskLabel(_ task: String) -> String {
         [
             "chat.reply": "对话回复",
+            "chat.compare": "换一套接口对比",
             "chat.vision-describe": "发给角色的图写成描述",
             "card.import": "读取角色卡",
             "card.core": "生成核心设定",
+            "card.examples": "生成对话示例",
+            "card.appearance": "从人设中提取外貌",
             "vision": "识图",
             "api.test": "测试连接",
             "image": "生图",

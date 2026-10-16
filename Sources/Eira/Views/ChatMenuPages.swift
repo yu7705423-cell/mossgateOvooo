@@ -570,6 +570,81 @@ struct ChatPresetPage: View {
     }
 }
 
+// MARK: - 历史范围（网页版 HistoryPage.js，4.443）
+
+/// 每一轮请求带上最近多少历史消息。这一项属于预设，这里只是入口：改的是这段会话所用的那一套预设，使用它的会话都跟着变
+struct HistoryRangePage: View {
+    let chatId: String
+    @ObservedObject private var model = SettingsModel.shared
+
+    /// 这段会话所用的那一套：选过且还在的那一套，否则全局那一套
+    static func presetId(_ c: Chat?, _ s: AppSettings) -> String {
+        if let id = c?.presetId, !id.isEmpty, s.presets.contains(where: { $0.id == id }) { return id }
+        return Presets.activeId(s)
+    }
+
+    /// 菜单那一行：「20 条」「10 轮」，0 写「全部」
+    static func label(_ c: Chat, _ s: AppSettings = .load()) -> String {
+        let v = Presets.values(s, presetId(c, s))
+        let byTurn = v.raw["historyMode"]?.string == "turn"
+        let key = byTurn ? "historyTurns" : "historyLimit"
+        let n = max(0, Int((v.raw[key]?.number ?? (byTurn ? 10 : 20)).rounded()))
+        return n > 0 ? "\(n) \(byTurn ? "轮" : "条")" : "全部"
+    }
+
+    private var pid: String { Self.presetId((try? Repo.chat(chatId)) ?? nil, model.s) }
+
+    var body: some View {
+        let id = pid
+        let v = Presets.values(model.s, id)
+        let byTurn = v.raw["historyMode"]?.string == "turn"
+        let key = byTurn ? "historyTurns" : "historyLimit"
+        let name = Presets.name(model.s, id)
+        Form {
+            Section {
+                Picker("按什么计", selection: Binding(get: { byTurn ? "turn" : "count" },
+                                                  set: { m in model.update { Presets.patch(&$0, id, ["historyMode": .string(m)]) } })) {
+                    Text("按条数").tag("count")
+                    Text("按轮数").tag("turn")
+                }
+                .pickerStyle(.segmented)
+                NumberRow(title: byTurn ? "每轮带最近几轮" : "每轮带最近几条",
+                          value: Binding(get: { v.raw[key]?.number ?? (byTurn ? 10 : 20) },
+                                         set: { n in model.update { Presets.patch(&$0, id, [key: .number(max(0, n.rounded()))]) } }),
+                          unit: byTurn ? "轮" : "条", placeholder: "全部")
+                LabeledContent("所属预设", value: name.isEmpty ? "默认" : name)
+            } footer: {
+                Text("填 0 表示整段对话都带，对话越长每次请求越贵。")
+                HelpNote("每一轮请求带上最近这么多历史消息，更早的不进上下文，只能通过长期记忆或历史压缩留下来。按轮数时，一轮是你说一次、角色回一次；按条数时，角色拆成的几条气泡各算一条。这一项属于所用的预设，改动对使用该预设的会话都生效。要给这段对话单独一套，在菜单的「预设」里换一套。", title: "历史范围")
+            }
+        }
+        .navigationTitle("历史范围")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+// MARK: - 群聊的世界书（网页版：群聊中在各成员的角色资料里设置）
+
+struct GroupLorePage: View {
+    let chatId: String
+
+    var body: some View {
+        let chat = (try? Repo.chat(chatId)) ?? nil
+        let members = chat.map { GroupChat.members($0) } ?? []
+        Form {
+            Section {
+                ForEach(members) { m in
+                    NavigationLink(chat.map { GroupChat.nameIn($0, m) } ?? m.displayName) { LoreQuickView(charId: m.id) }
+                }
+            } footer: {
+                HelpNote("群聊中世界书按成员各自挂载的生效，在各成员的角色资料里设置；全局生效的书对所有成员生效。", title: "群聊的世界书")
+            }
+        }
+        .navigationTitle("世界书")
+        .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
 // MARK: - 更多（网页版 ChatMorePage.js）：表情包、每轮的接口调用、清空
 
 extension ExtraCalls {

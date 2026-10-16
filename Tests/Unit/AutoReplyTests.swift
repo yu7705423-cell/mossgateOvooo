@@ -54,3 +54,53 @@ final class AutoReplyTests: StoreTestCase {
         XCTAssertFalse(text.contains("自动回复已停止"))
     }
 }
+
+/// 群聊的自动回复按成员设置（网页版 4.649）：开着、在休息的成员各回一句当天日程里的那一句，每段只回一次；
+/// 能发言的都回过了才不再立即回；旧版在群里存下的那一份不算。都不调接口
+extension AutoReplyTests {
+    /// 让这个角色此刻在休息、开着「日常」、当天日程里写好了休息时的那一句
+    private func asleep(_ id: String, _ line: String) throws {
+        var c = try XCTUnwrap(Repo.character(id))
+        let h = DayPlan.hour(c)
+        c.row["proactiveQuietFrom"] = .number(Double(h))
+        c.row["proactiveQuietTo"] = .number(Double((h + 2) % 24))
+        c.row["dayOn"] = .bool(true)
+        try Database.shared.put(Collections.characters, c.row)
+        try DayPlan.save(id, date: DayPlan.dateKey(c, Clock.now(.load())), ["items": .array([]), "sleepAuto": .string(line)])
+    }
+
+    func testGroupMembersEachReplyOnce() throws {
+        let zhou = try People.createCharacter(name: "小周")
+        let g = try GroupChat.create(memberIds: ["char_a", zhou.id], title: "", personaId: "me_root")
+        try asleep("char_a", "睡了")
+        try asleep(zhou.id, "明天说")
+        // 旧版在群里存下的「角色那边」不算
+        try AutoReply.set(g.id, AutoReply.hers, ["on": .bool(true), "text": .string("旧的")])
+        XCTAssertTrue(try AutoReply.fire(g.id, AutoReply.hers).isEmpty)
+
+        try AutoReply.setMember(g.id, "char_a", ["on": .bool(true)])
+        XCTAssertTrue(AutoReply.member(try XCTUnwrap(Repo.chat(g.id)), "char_a").on)
+        XCTAssertFalse(AutoReply.member(try XCTUnwrap(Repo.chat(g.id)), zhou.id).on)
+        let first = try AutoReply.afterGroupSend(g.id)
+        XCTAssertEqual(first.rows.map(\.content), ["[自动回复] 睡了"])
+        XCTAssertEqual(first.rows.first?.authorId, "char_a")
+        // 还有一位空着，照常让群里回
+        XCTAssertFalse(first.hold)
+        XCTAssertNotNil(AutoReply.memberAway(try XCTUnwrap(Repo.chat(g.id)), "char_a"))
+        // 同一段休息只回一次
+        XCTAssertTrue(try AutoReply.fireGroup(g.id).isEmpty)
+    }
+
+    func testGroupAllRepliedHolds() throws {
+        let zhou = try People.createCharacter(name: "小周")
+        let g = try GroupChat.create(memberIds: ["char_a", zhou.id], title: "", personaId: "me_root")
+        try asleep("char_a", "睡了")
+        try asleep(zhou.id, "明天说")
+        try AutoReply.setMember(g.id, "char_a", ["on": .bool(true)])
+        try AutoReply.setMember(g.id, zhou.id, ["on": .bool(true)])
+        XCTAssertEqual(AutoReply.membersOn(try XCTUnwrap(Repo.chat(g.id))), 2)
+        let out = try AutoReply.afterGroupSend(g.id)
+        XCTAssertEqual(Set(out.rows.map(\.content)), ["[自动回复] 睡了", "[自动回复] 明天说"])
+        XCTAssertTrue(out.hold)
+    }
+}

@@ -119,15 +119,46 @@ enum Proactive {
         }
     }
 
+    /// 这个角色与你（当前身份）同在的群。只在群里认识、还没有单聊时据此建一段单聊（网页版 group.groupsOf）
+    static func groupsOf(_ charId: String) -> [Chat] {
+        let me = (try? Repo.activePersona())?.id ?? ""
+        let all = (try? Repo.personas()) ?? []
+        let root = Repo.rootId(of: me, in: all)
+        return ((try? Repo.chats()) ?? []).filter { c in
+            c.isGroup && c.characterIds.contains(charId)
+                && (me.isEmpty || c.personaId.isEmpty || Repo.rootId(of: c.personaId, in: all) == root)
+        }
+    }
+
+    /// 单人会话；没有、而这个角色和你同在某个群里时建一段（网页版 4.649 的 ensurePrivateChat quiet）。
+    /// 建的那一刻 lastMessageAt 记 0：记成现在的话，holdUntil 当成刚聊过，主动消息一直往后推
+    static func ensureSoloChat(_ charId: String) throws -> Chat? {
+        if let c = soloChat(charId) { return c }
+        guard !groupsOf(charId).isEmpty else { return nil }
+        let me = (try? Repo.activePersona())?.id ?? ""
+        let row = Row.new(prefix: "chat", [
+            "characterIds": .array([.string(charId)]), "personaId": .string(me),
+            "title": .string(""), "lastMessageAt": .number(0), "unread": .number(0), "summary": .string(""),
+        ])
+        try Database.shared.put(Collections.chats, row)
+        return Chat(row: row)
+    }
+
     /// 还能再堆几条未读。0 表示不设上限。
     static func roomLeft(_ chat: Chat, _ s: AppSettings = .load()) -> Int {
         let cap = Int(s.raw["proactiveMaxUnread"]?.number ?? 3)
         return cap > 0 ? max(0, cap - chat.unread) : 0
     }
 
-    /// 这个角色现在能不能被发：有单人会话、没在当面、未读没堆满、没在生成（网页版 proactive.js 的 chatFor）。
+    /// 这个角色现在能不能被发：有单人会话（只在群里认识的建一段）、没在当面、未读没堆满、没在生成（网页版 proactive.js 的 chatFor）。
     static func chatReady(_ charId: String, _ s: AppSettings = .load()) -> Chat? {
-        guard let chat = soloChat(charId) else { return nil }
+        // 只在群里认识、还没有单聊的角色：第一条私信要有地方落，建一段单聊（网页版 4.649）。建不成在屏幕上说
+        let found: Chat?
+        do { found = try ensureSoloChat(charId) } catch {
+            Problems.report("未能为主动消息建立单聊：\(error.localizedDescription)")
+            return nil
+        }
+        guard let chat = found else { return nil }
         // 会话切到线下时不主动发消息：两个人正在一处
         if Face.on(chat) { return nil }
         let cap = Int(s.raw["proactiveMaxUnread"]?.number ?? 3)

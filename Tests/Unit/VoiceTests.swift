@@ -217,4 +217,33 @@ final class VoiceTests: StoreTestCase {
         XCTAssertEqual(m.row.string("voiceScript"), "<情绪 开心>你好<情绪 难过>再见")
         XCTAssertEqual(m.row.string("media"), "done")
     }
+    /// MiniMax 语音模型（网页版 4.578）：内置有 2.8 与 2.6；没填密钥不发请求；官方 /v1/models 只回文本模型时仍是内置那一份；
+    /// 中转站列了语音模型的并进来排在前面，文本模型不混进来；出错退回内置那一份
+    func testMinimaxVoiceModels() async throws {
+        XCTAssertEqual(Array(VoiceModels.minimax.prefix(4)), ["speech-2.8-hd", "speech-2.8-turbo", "speech-2.6-hd", "speech-2.6-turbo"])
+
+        MockNet.reset { _, _ in .init(status: 200, body: #"{"data":[{"id":"MiniMax-Text-01"}]}"#) }
+        let none = await VoiceModels.minimaxList(baseUrl: "", apiKey: "")
+        XCTAssertEqual(none.list, VoiceModels.minimax)
+        XCTAssertEqual(MockNet.count, 0)
+
+        let official = await VoiceModels.minimaxList(baseUrl: "https://api.minimaxi.com", apiKey: "k")
+        XCTAssertEqual(official.list, VoiceModels.minimax)
+        XCTAssertEqual(official.got, 0)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(MockNet.requests.first?.url?.absoluteString, "https://api.minimaxi.com/v1/models")
+
+        MockNet.reset { _, _ in .init(status: 200, body: #"{"data":[{"id":"gpt-4o"},{"id":"relay-speech-3"},{"id":"speech-2.8-hd"}]}"#) }
+        let relay = await VoiceModels.minimaxList(baseUrl: "https://relay.test/v1/", apiKey: "k")
+        XCTAssertEqual(MockNet.requests.first?.url?.absoluteString, "https://relay.test/v1/models")
+        XCTAssertEqual(relay.got, 2)
+        XCTAssertEqual(relay.list.first, "relay-speech-3")
+        XCTAssertEqual(relay.list.filter { $0 == "speech-2.8-hd" }.count, 1)
+        XCTAssertFalse(relay.list.contains("gpt-4o"))
+        XCTAssertTrue(relay.all.contains("gpt-4o"))
+
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let failed = await VoiceModels.minimaxList(baseUrl: "", apiKey: "k")
+        XCTAssertEqual(failed.list, VoiceModels.minimax)
+    }
 }

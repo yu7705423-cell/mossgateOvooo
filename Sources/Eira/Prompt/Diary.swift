@@ -464,10 +464,13 @@ enum Diary {
         cal.timeZone = .current
         let wd = p.count == 3 ? cal.date(from: DateComponents(year: p[0], month: p[1], day: p[2], hour: 12)).map { weekdays[cal.component(.weekday, from: $0) - 1] } ?? "" : ""
         let userName = try Repo.personas().first { $0.id == pid }?.name ?? "the user"
+        // 译文跟随这个角色私聊的翻译（网页版 4.365）。process 的译文照原样带删改记号，存的时候同样去掉
+        let tr = GenTrans.forChar(charId, personaId: pid)
         let system = Templates.render("task.diary", [
             "charName": char.name, "userName": userName, "date": date, "weekday": wd,
             "moodList": moods.map { "\($0.id) = \($0.label)" }.joined(separator: "\n"),
-        ], settings: s) + "\n\n## \(date)\n" + (try context(char, date: date, pid: pid))
+        ], settings: s) + GenTrans.fieldsPart(tr, ["title", "process"], settings: s)
+            + "\n\n## \(date)\n" + (try context(char, date: date, pid: pid))
         let r = try await AIService.shared.send(task: "diary.write", system: system,
                                                 messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.")],
                                                 maxTokens: 4000)
@@ -488,14 +491,19 @@ enum Diary {
                             "tries": .number(0), "lastTryAt": .number(0), "openedAt": .number(0), "hintAt": .number(0)])
         }
         let mood = j["mood"]?.string ?? ""
-        let row = Row.new(prefix: "diary", [
+        var fields: [String: JSONValue] = [
             "owner": .string(charId), "charId": .string(charId), "personaId": .string(pid), "date": .string(date),
             "kind": .string(kinds.contains { $0.id == kind } ? kind : "full"),
             "title": .string(String((j["title"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(titleMax))),
             "mood": .string(moods.contains { $0.id == mood } ? mood : ""),
             "process": .string(process), "text": .string(parsed.text), "edits": .number(Double(parsed.edits)),
             "font": .string("hand"), "paper": .string(""), "imageIds": .array([]), "source": .string(source), "lock": lock,
-        ])
+        ]
+        let titleTrans = String(GenTrans.pick(tr, j, "title").prefix(titleMax * 3))
+        let textTrans = parseProcess(GenTrans.pick(tr, j, "process")).text
+        if !textTrans.isEmpty { fields["textTrans"] = .string(textTrans) }
+        if !titleTrans.isEmpty { fields["titleTrans"] = .string(titleTrans) }
+        let row = Row.new(prefix: "diary", fields)
         try Database.shared.put("diaries", row)
         return .wrote(row.id)
     }

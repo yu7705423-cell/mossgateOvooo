@@ -29,6 +29,15 @@ struct CharacterEditView: View {
     @State private var saved = false
     @State private var archived = false
     @State private var abilityCount = ""
+    /// 「从人设中生成 / 提取」：正在跑的那一栏、等用户确认覆盖的那一栏、各栏按钮下面的结果
+    @State private var making: CardFields.Kind?
+    @State private var askOverwrite: CardFields.Kind?
+    @State private var pullNote: [CardFields.Kind: PullNote] = [:]
+
+    private struct PullNote: Equatable {
+        let text: String
+        let failed: Bool
+    }
 
     var body: some View {
         Form {
@@ -73,19 +82,31 @@ struct CharacterEditView: View {
             } footer: {
                 HelpNote("会话中还没有消息时显示，不发给模型。")
             }
-            Section("说话示例") { TextField("说话示例", text: $exampleDialogue, axis: .vertical).lineLimit(3...30) }
+            Section {
+                TextField("说话示例", text: $exampleDialogue, axis: .vertical).lineLimit(3...30)
+                pullButton(.examples)
+            } header: {
+                Text("说话示例")
+            } footer: {
+                Text("读取上方的人设，调用一次接口写出几句该角色的典型发言。")
+                HelpNote("提供几句角色的典型发言。示例比形容词更有效。这一栏已有内容时，生成前先确认是否覆盖。", title: "说话示例")
+            }
             Section {
                 TextField("核心设定", text: $core, axis: .vertical).lineLimit(2...20)
+                pullButton(.core)
             } header: {
                 Text("核心设定")
             } footer: {
+                Text("读取上方的人设，调用一次接口整理出核心设定。")
                 HelpNote("放在提示词末尾，每次请求都会带上。")
             }
             Section {
                 TextField("外貌", text: $appearance, axis: .vertical).lineLimit(2...10)
+                pullButton(.appearance)
             } header: {
                 Text("外貌")
             } footer: {
+                Text("读取上方的人设，调用一次接口整理出外貌。")
                 HelpNote("仅用于生成图片。图片描述里出现这个角色的名字时，外貌随提示词一起发给生图接口。写发型、五官、身形、常穿什么，不写性格。")
             }
             Section {
@@ -118,6 +139,13 @@ struct CharacterEditView: View {
         .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {
             Button("删除角色", role: .destructive, action: remove)
         }
+        .confirmationDialog(askOverwrite.map { pullTitle($0) } ?? "", isPresented: Binding(
+            get: { askOverwrite != nil }, set: { if !$0 { askOverwrite = nil } }),
+            titleVisibility: .visible, presenting: askOverwrite) { k in
+            Button("覆盖", role: .destructive) { pull(k) }
+        } message: { k in
+            Text("将以生成的内容覆盖这一栏现有的\(k.label)。")
+        }
         .onChange(of: avatarItem) { _, item in
             guard let item else { return }
             Task {
@@ -138,6 +166,62 @@ struct CharacterEditView: View {
             load()
             // 从「角色能力」返回时开关数要跟上
             abilityCount = Abilities.countLabel((try? Repo.character(charId)) ?? nil)
+        }
+    }
+
+    // MARK: - 从人设中生成 / 提取（网页版 4.590）
+
+    @ViewBuilder private func pullButton(_ k: CardFields.Kind) -> some View {
+        Button(making == k ? (k == .appearance ? "正在提取" : "正在生成") : (k == .appearance ? "从人设中提取" : "从人设中生成")) {
+            // 那一栏已经有内容时先问，免得盖掉自己写的
+            if value(k).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { pull(k) } else { askOverwrite = k }
+        }
+        .disabled(making != nil)
+        if let n = pullNote[k] {
+            Text(n.text).font(.footnote).foregroundStyle(n.failed ? Theme.danger : Theme.text2)
+        }
+    }
+
+    private func pullTitle(_ k: CardFields.Kind) -> String {
+        k == .appearance ? "重新提取外貌" : "重新生成\(k.label)"
+    }
+
+    private func value(_ k: CardFields.Kind) -> String {
+        switch k {
+        case .core: return core
+        case .examples: return exampleDialogue
+        case .appearance: return appearance
+        }
+    }
+
+    /// 读输入框里的人设（可能尚未保存）调一次接口。结果当即写进库里的那一栏，不等「保存」，花了钱的结果不会因为没点保存而丢；
+    /// 其他尚未保存的改动照旧等「保存」。失败写在按钮下面（第 20 条）
+    private func pull(_ k: CardFields.Kind) {
+        askOverwrite = nil
+        making = k
+        pullNote[k] = nil
+        let text = persona
+        Task {
+            do {
+                let out = try await CardFields.make(k, persona: text)
+                await MainActor.run {
+                    switch k {
+                    case .core: core = out
+                    case .examples: exampleDialogue = out
+                    case .appearance: appearance = out
+                    }
+                    do {
+                        guard let c = try Repo.character(charId) ?? loaded else { throw StoreError(message: "这个角色不存在") }
+                        loaded = try People.update(c, [k.field: .string(out)])
+                        pullNote[k] = PullNote(text: k == .appearance ? "已提取。" : "已生成\(k.label)。", failed: false)
+                    } catch {
+                        pullNote[k] = PullNote(text: "已生成，但未能保存：\(error.localizedDescription)。点右上角「保存」再试一次。", failed: true)
+                    }
+                }
+            } catch {
+                await MainActor.run { pullNote[k] = PullNote(text: error.localizedDescription, failed: true) }
+            }
+            await MainActor.run { making = nil }
         }
     }
 

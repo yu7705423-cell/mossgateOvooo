@@ -474,7 +474,9 @@ struct DiaryReadView: View {
                     }
                     if e.locked { lockPanel(e) } else {
                         if !e.title.isEmpty { Text(e.title).font(.title3) }
-                        (Text(replay ?? e.text) + Text(struckOut).strikethrough().foregroundColor(Theme.tertiaryText))
+                        // 译文跟随译文显示方式（网页版 transView.pair，4.365）：只显示译文时正文换成译文，只显示原文时不画译文
+                        let shown = MessageActions.transPair(e.text, e.row.string("textTrans"), mode: MomentText.transMode)
+                        (Text(replay ?? shown.main) + Text(struckOut).strikethrough().foregroundColor(Theme.tertiaryText))
                             .textSelection(.enabled)
                         ForEach(e.imageIds, id: \.self) { img in
                             LocalImage(id: img, maxPixel: 1000, fit: true)
@@ -483,7 +485,7 @@ struct DiaryReadView: View {
                                 .onTapGesture { viewing = img }
                         }
                         let trans = [e.row.string("titleTrans"), e.row.string("textTrans")].filter { !$0.isEmpty }.joined(separator: "\n\n")
-                        if !trans.isEmpty && replay == nil {
+                        if !trans.isEmpty && !shown.sub.isEmpty && replay == nil {
                             Text(trans).font(.subheadline).foregroundStyle(Theme.secondaryText).textSelection(.enabled)
                         }
                         if !e.mine && Diary.parseProcess(e.process).edits > 0 {
