@@ -9,16 +9,32 @@ import UIKit
 /// - 通话中每一轮都不落库，挂断时合成一条通话记录，正文里带着整段对白，角色下次聊天记得电话里说了什么；
 /// - 打完自动写一段总结，默认开着（网页版用户明确要求的例外，登记在 ExtraCalls）。
 enum CallEngine {
+    /// 一句原文、一句译文（网页版 call.js 的 segs，4.633）
+    struct Seg: Equatable, Sendable {
+        var t: String
+        var tr: String
+    }
+
     struct Line: Equatable, Sendable {
         var role: String           // user | char
         var text: String
         var audio: [String] = []   // 这一句合成出来的声音（files 的 id）
+        /// 台词后面括起来的那一截正好是这段对话要的译文时，直接当译文（4.478）
+        var trans: String = ""
+        /// 单独的翻译接口逐句翻回来的（4.633）
+        var segs: [Seg] = []
 
         var json: JSONValue {
             var o: [String: JSONValue] = ["role": .string(role), "text": .string(text)]
             if !audio.isEmpty { o["audio"] = .array(audio.map { .string($0) }) }
+            if !trans.isEmpty { o["trans"] = .string(trans) }
+            if !segs.isEmpty { o["segs"] = CallEngine.segsJSON(segs) }
             return .object(o)
         }
+    }
+
+    static func segsJSON(_ segs: [Seg]) -> JSONValue {
+        .array(segs.map { .object(["t": .string($0.t), "tr": .string($0.tr)]) })
     }
 
     struct Prepared: Sendable {
@@ -28,10 +44,11 @@ enum CallEngine {
 
     /// 接通时拼一次。聊天记录照常带上，后面不挂此刻的状态与召回。
     /// 视频通话要说一句是视频：画面挂在对方的话上，不说模型不知道那是摄像头；对方看得见，动作单独写成 [动作：…]（网页版 4.483）。
-    /// 这段对话设了翻译语言时，每句后面跟 [译文：…]，同一次回复里写，不另调接口（网页版 4.633）
+    /// 这段对话设了翻译语言、并且译文是「随回复一起」时，每句后面跟 [译文：…]，同一次回复里写，不另调接口；
+    /// 单独配了翻译接口的，模型不写译文，一轮说完逐句交给那个接口（网页版 inlineLang，4.633）
     static func prepare(chat: Chat, char: Character, video: Bool = false) throws -> Prepared {
         let s = AppSettings.load().forChat(chat)
-        let lang = transLang(chat)
+        let lang = transLang(chat, settings: s)
         let rule = Templates.render("skeleton.call", [
             "kind": video ? "a video call" : "a phone call",
             "camera": video ? "Images attached to their turns are frames from their camera." : "",
@@ -82,9 +99,14 @@ enum CallEngine {
         text.replacingOccurrences(of: actRe, with: "（$1）", options: .regularExpression)
     }
 
-    /// 随回复写译文的那一档才在通话里写 [译文：…]：这段对话设了翻译语言
-    static func transLang(_ chat: Chat) -> String {
-        chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+    /// 随回复写译文的那一档才在通话里写 [译文：…]：这段对话设了翻译语言，并且没有单独配翻译接口（网页版 inlineLang）
+    static func transLang(_ chat: Chat, settings: AppSettings = .load()) -> String {
+        settings.translateMode == "inline" ? targetLang(chat) : ""
+    }
+
+    /// 这段对话设的翻译语言，不论译文怎么来
+    static func targetLang(_ chat: Chat?) -> String {
+        chat?.row.string("translateTo").trimmingCharacters(in: .whitespaces) ?? ""
     }
 
     // 动作与译文（网页版 call.js 的 ACT、TR 与没写完的那半个）
@@ -97,9 +119,84 @@ enum CallEngine {
         s.replacingOccurrences(of: p, with: "", options: .regularExpression)
     }
 
-    /// 念出来的部分：动作、译文不念，没写完的那半个从开口处起不念
+    /// 念出来的部分：动作、译文不念，没写完的那半个从开口处起不念。
+    /// 行首或句末标点之后开始、整段括起来的那一截也不念，没收口的括号从开口处起全不念（网页版 call.js speakable，4.478）
     static func speakable(_ text: String) -> String {
-        drop(drop(drop(drop(text, transRe), transHalf), actRe), actHalf).trimmingCharacters(in: .whitespacesAndNewlines)
+        dropParens(drop(drop(drop(drop(text, transRe), transHalf), actRe), actHalf)).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    // 括起来的那一截从哪儿开始算（网页版 PAREN_AT）
+    private static let parenAt = try? NSRegularExpression(pattern: #"(^|[\n。！？!?…；;])(\s*)[（(]"#)
+
+    static func dropParens(_ text: String) -> String {
+        guard let re = parenAt else { return text }
+        var t = text
+        var out = ""
+        while true {
+            let ns = t as NSString
+            guard let m = re.firstMatch(in: t, range: NSRange(location: 0, length: ns.length)) else { out += t; break }
+            let start = m.range.location + m.range(at: 1).length + m.range(at: 2).length
+            out += ns.substring(to: start)
+            let after = ns.substring(from: start + 1)
+            guard let close = after.range(of: #"[)）]"#, options: .regularExpression) else { break }
+            t = String(after[close.upperBound...])
+        }
+        return out
+    }
+
+    // 末尾整段括起来的那一截（网页版 splitNote 的正则）
+    private static let noteAtEnd = try? NSRegularExpression(pattern: #"(^|[\n。！？!?…；;])\s*[（(]([^()（）]+)[)）]\s*$"#)
+
+    /// 末尾整段括起来的那几截：main 是前面的台词，note 是括号里的内容（网页版 call.js splitNote）
+    static func splitNote(_ text: String) -> (main: String, note: String) {
+        var main = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        var notes: [String] = []
+        guard let re = noteAtEnd else { return (main, "") }
+        while true {
+            let ns = main as NSString
+            guard let m = re.firstMatch(in: main, range: NSRange(location: 0, length: ns.length)) else { break }
+            notes.insert(ns.substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespacesAndNewlines), at: 0)
+            main = ns.substring(to: m.range.location + m.range(at: 1).length).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return (main, notes.joined(separator: "\n"))
+    }
+
+    private static func bare(_ s: String) -> String {
+        s.replacingOccurrences(of: #"[\s\p{P}\p{S}]"#, with: "", options: .regularExpression)
+    }
+
+    /// 去掉空白、标点、符号之后一字不差（网页版 sameWords）
+    static func sameWords(_ a: String, _ b: String) -> Bool { !bare(a).isEmpty && bare(a) == bare(b) }
+
+    /// 去掉空白之后一字不差（网页版 translate.sameText）
+    static func sameText(_ a: String, _ b: String) -> Bool {
+        a.filter { !$0.isWhitespace } == b.filter { !$0.isWhitespace }
+    }
+
+    /// 去掉译文（写完的与没写完的那半个）（网页版 dropTrans）
+    static func dropTrans(_ text: String) -> String {
+        drop(drop(text, transRe), transHalf)
+            .replacingOccurrences(of: #"[ \t]+\n"#, with: "\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 一轮说完：台词后面括起来的那一截和原话一样就扔掉；是这段对话要的译文就直接当译文，不再调翻译接口；
+    /// 其余留在字幕里，照样不念（网页版 call.js turn 的收尾，4.478）。
+    /// text 仍是带台本标记的原文（下一轮原样还给模型），trans 是括号里那句译文
+    static func settle(_ raw: String, chat: Chat?) -> (text: String, trans: String) {
+        let whole = dropTrans(VoiceScript.plain(raw))
+        let (main, note) = splitNote(whole)
+        guard !note.isEmpty, !main.isEmpty else { return (raw, "") }
+        let lang = targetLang(chat)
+        let dup = sameWords(note, main)
+        let isTrans = !dup && !lang.isEmpty && alreadyIn(note, lang) && !alreadyIn(main, lang)
+        guard dup || isTrans else { return (raw, "") }
+        let cut = splitNote(raw)
+        // 原文末尾还挂着别的（随回复写的 [译文：…]）切不出来时，用去掉标记的那一句
+        let text = cut.note.isEmpty ? main : (cut.main.isEmpty ? raw : cut.main)
+        // 随回复逐句写了译文的，以那份为准
+        let inline = raw.range(of: transRe, options: .regularExpression) != nil
+        return (text, isTrans && !inline ? note : "")
     }
 
     /// 字幕：动作换成（…），译文另起一行；流式时没写完的半个先不显示
@@ -107,6 +204,119 @@ enum CallEngine {
         let t = VoiceScript.plain(drop(drop(text, transHalf), actHalf))
         return prose(t).replacingOccurrences(of: transRe, with: "\n$1", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 一句的字幕：翻译接口逐句翻回来的，一句原文下面一句译文；括号里那句译文另起一行
+    static func subtitle(text: String, trans: String, segs: [Seg]) -> String {
+        if segs.contains(where: { !$0.tr.isEmpty }) {
+            return segs.map { s in
+                let t = subtitle(s.t)
+                return s.tr.isEmpty ? t : (t.isEmpty ? s.tr : t + "\n" + s.tr)
+            }.filter { !$0.isEmpty }.joined(separator: "\n")
+        }
+        let t = subtitle(text)
+        return trans.isEmpty ? t : t + "\n" + trans
+    }
+
+    static func subtitle(_ line: Line) -> String { subtitle(text: line.text, trans: line.trans, segs: line.segs) }
+
+    /// 通话记录里存的那一句（callLog 的一项）
+    static func subtitle(log: [String: JSONValue]) -> String {
+        let segs = (log["segs"]?.array ?? []).compactMap(\.object).map { Seg(t: $0["t"]?.string ?? "", tr: $0["tr"]?.string ?? "") }
+        return subtitle(text: log["text"]?.string ?? "", trans: log["trans"]?.string ?? "", segs: segs)
+    }
+
+    /// 说出口的那部分：动作去掉，前后各段以空格相接（网页版 sayOf）
+    static func sayOf(_ text: String) -> String {
+        guard let re = try? NSRegularExpression(pattern: actRe) else { return text }
+        let ns = text as NSString
+        var parts: [String] = []
+        var at = 0
+        for m in re.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
+            parts.append(ns.substring(with: NSRange(location: at, length: m.range.location - at)))
+            at = m.range.location + m.range.length
+        }
+        parts.append(drop(ns.substring(from: at), actHalf))
+        return parts.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: " ")
+    }
+
+    // MARK: - 逐句译文（网页版 call.js transLine，4.633）
+
+    /// 单独配了翻译接口时，一轮说完把每一句交给它翻，一句一个译文。随回复写译文那一档不翻（译文已在同一次回复里）。
+    /// 已经是目标语言的句子不送；整轮都是目标语言就不调接口。一轮一次请求，不重试；没翻出来回 nil
+    static func translateLine(chat: Chat, text: String) async throws -> [Seg]? {
+        let s = AppSettings.load()
+        let lang = targetLang(chat)
+        guard !lang.isEmpty, !text.isEmpty, s.translateMode == "api", let preset = s.translatePreset else { return nil }
+        // 按句末标点切成一句一句；[动作：…] 跟着它所在的那一句留在字幕上，但不送去翻（4.483）
+        let src = dropTrans(VoiceScript.plain(text))
+        var chunks: [String] = []
+        if let re = try? NSRegularExpression(pattern: #"(?:[\[【]\s*动作[^\]】]*[\]】]|[^。！？!?…；;\n])+[。！？!?…；;]*"#) {
+            let ns = src as NSString
+            chunks = re.matches(in: src, range: NSRange(location: 0, length: ns.length)).map { ns.substring(with: $0.range) }
+        }
+        if chunks.isEmpty { chunks = [src] }
+        chunks = chunks.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        let sents = chunks.map { (c: $0, say: sayOf($0)) }
+        var todo: [String] = []
+        for x in sents where !x.say.isEmpty && !alreadyIn(x.say, lang) && !todo.contains(x.say) { todo.append(x.say) }
+        // 已经是目标语言：不翻，不显示第二行（中译中）
+        guard !todo.isEmpty else { return nil }
+        let p = TranslateOne.payload(todo, lang: lang, extra: TranslateOne.rulesOf(chat, s), settings: s)
+        let r = try await AIService.shared.send(task: "translate.lines", preset: preset, system: p.system,
+                                                messages: [AIMessage(role: .user, content: p.user)],
+                                                maxTokens: max(600, todo.joined().count * 4))
+        let out = TranslateOne.rows(r.text, want: todo.count)
+        var map: [String: String] = [:]
+        for (i, x) in todo.enumerated() { map[x] = i < out.count ? out[i].trimmingCharacters(in: .whitespacesAndNewlines) : "" }
+        let segs = sents.map { x -> Seg in
+            let tr = map[x.say] ?? ""
+            return Seg(t: x.c, tr: tr.isEmpty || sameText(tr, x.say) ? "" : tr)
+        }
+        return segs.contains(where: { !$0.tr.isEmpty }) ? segs : nil
+    }
+
+    /// 翻得比挂断慢时，写回刚落下的那条通话记录（网页版：不补回去的话最后那一句在记录里永远没有译文）
+    static func storeSegs(messageId: String, index: Int, text: String, segs: [Seg]) throws {
+        guard var row = try Database.shared.get(Collections.messages, id: messageId),
+              var log = row["callLog"]?.array, log.indices.contains(index),
+              var o = log[index].object, o["text"]?.string == text else { return }
+        o["segs"] = segsJSON(segs)
+        log[index] = .object(o)
+        row["callLog"] = .array(log)
+        row.touch()
+        try Database.shared.put(Collections.messages, row)
+    }
+
+    // MARK: - 已经是那种语言了就不翻（网页版 translate.js 的 SAME 与 alreadyIn，4.570）
+
+    private static func hits(_ t: String, _ p: String) -> Int {
+        guard let re = try? NSRegularExpression(pattern: p) else { return 0 }
+        return re.numberOfMatches(in: t, range: NSRange(location: 0, length: (t as NSString).length))
+    }
+
+    private static func has(_ t: String, _ p: String) -> Bool { hits(t, p) > 0 }
+
+    private static func isZh(_ t: String) -> Bool {
+        let han = hits(t, #"[\u4e00-\u9fff]"#)
+        let letters = t.replacingOccurrences(of: #"[^\p{L}]"#, with: "", options: .regularExpression)
+        return han > 0 && !has(t, #"[\u3040-\u30ff\uac00-\ud7af]"#) && han * 2 >= hits(t, "[A-Za-z]")
+            && !has(t, #"[A-Za-z]+['’]?[A-Za-z]*[ \t]+['’]?[A-Za-z]"#)
+            && !has(t, #"[\u00c0-\u024f]"#)
+            && !has(letters, #"[^\p{Script=Han}\p{Script=Latin}]"#)
+    }
+
+    /// 这句话是不是已经是 lang 那种语言了。只认中文、日文、韩文、英文；看不出来一律当作不是
+    static func alreadyIn(_ text: String, _ lang: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let l = lang.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !l.isEmpty else { return false }
+        let langIs: (String) -> Bool = { l.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+        if langIs(#"中文|汉语|漢語|简体|简中|繁体|繁體|繁中|chinese|^zh"#) { return isZh(t) }
+        if langIs(#"日[语語文本]|japanese|^ja"#) { return has(t, #"[\u3040-\u30ff]"#) }
+        if langIs(#"韩|韓|朝鲜|korean|^ko"#) { return has(t, #"[\uac00-\ud7af]"#) }
+        if langIs(#"英|english|^en"#) { return has(t, "[A-Za-z]") && !has(t, #"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]"#) }
+        return false
     }
 
     /// 最近一个写完的动作（画面上叠着的那一行）

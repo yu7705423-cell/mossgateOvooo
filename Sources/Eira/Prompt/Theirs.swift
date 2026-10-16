@@ -666,15 +666,32 @@ enum Theirs {
         }
     }
 
-    /// 你用过的名字：生成的会话不能再有一条和你的
+    /// 你用过的名字：生成的会话不能再有一条和你的。
+    /// 同网页版 tasks/phone.js 的 userNamesOf：身份名（去首尾空白）在前，角色给你改的备注（remark.js theirsOf）在后，去重（4.371）
     static func userNames(_ charId: String) -> [String] {
         var out: [String] = []
-        for p in (try? Repo.personas()) ?? [] { let n = p.row.string("name"); if !n.isEmpty && !out.contains(n) { out.append(n) } }
+        for p in (try? Repo.personas()) ?? [] {
+            let n = p.row.string("name").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !n.isEmpty && !out.contains(n) { out.append(n) }
+        }
         for c in (try? Repo.chats()) ?? [] where c.characterIds.contains(charId) {
-            let r = c.row.string("charRemark").trimmingCharacters(in: .whitespaces)
+            let r = remarkClean(c.row.string("charRemark"))
             if !r.isEmpty && !out.contains(r) { out.append(r) }
         }
         return out
+    }
+
+    /// 填进提示词的「用户叫什么」：同网页版 `me.join('、') || '对方'`
+    static func userNamesText(_ charId: String) -> String {
+        let me = userNames(charId)
+        return me.isEmpty ? "对方" : me.joined(separator: "、")
+    }
+
+    /// 网页版 remark.js 的 clean：空白折成一个空格、去首尾、最多 20 字
+    static func remarkClean(_ s: String) -> String {
+        let one = s.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return String(one.prefix(20))
     }
 
     static func isUser(_ name: String, me: [String], known: [String]) -> Bool {
@@ -722,6 +739,7 @@ enum Theirs {
             "charName": c.name, "charPersona": personaOf(c), "other": row.name,
             "otherPersona": npc.map(personaOf) ?? "（没有更多设定，按上面的关系与最后一句推断）",
             "preview": row.preview.isEmpty ? "（没有记下最后一句）" : row.preview, "count": "\(n)",
+            "userNames": userNamesText(row.charId),
         ], settings: .load()), maxTokens: 300 + n * 60)
         let lines = j["lines"]?.array ?? []
         guard !lines.isEmpty else { throw StoreError(message: "这一次没有生成出内容，可以再试一次") }
@@ -740,6 +758,7 @@ enum Theirs {
             "charName": c.name, "charPersona": personaOf(c), "other": row.name,
             "otherPersona": npc.map(personaOf) ?? "（没有更多设定，按上面的对话推断）",
             "history": history.isEmpty ? "（还没有说过话）" : history,
+            "userNames": userNamesText(row.charId),
         ], settings: .load()), maxTokens: 400)
         let texts = (j["lines"]?.array ?? []).compactMap { $0["text"]?.string?.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
         guard !texts.isEmpty else { throw StoreError(message: "这一次没有回话，可以再试一次") }

@@ -149,4 +149,33 @@ final class DiaryTests: StoreTestCase {
         let e3 = try Diary.saveMine(id: e.id, date: "2026-10-15", title: "", text: "改字", visibility: "self", charId: "", imageIds: [])
         XCTAssertEqual(e3.imageIds, [])
     }
+
+    /// 交给模型的那一天带上当天的日程与身体状态；当天的对话按「上下文与记忆」里的历史窗口取，按轮数时也按轮数（网页版 dayContext、recentWindow）
+    func testDayContextScheduleBodyAndTurns() throws {
+        let c = try XCTUnwrap(Repo.character("char_a"))
+        let date = Diary.todayOf(c)
+        try DayPlan.save("char_a", date: date, [
+            "items": .array([
+                .object(["id": .string("it1"), "slot": .string("morning"), "text": .string("去图书馆"), "state": .string(DayPlan.plan)]),
+                .object(["id": .string("it2"), "slot": .string("noon"), "text": .string("取消的事"), "state": .string(DayPlan.drop)]),
+            ]),
+            "event": .object(["text": .string("捡到一把伞"), "slot": .string("morning")]),
+        ])
+        try Health.set("char_a", date, ["mood": .string("low"), "energy": .string("high"), "note": .string("有点累")])
+        for (role, text) in [(Message.Role.user, "第一轮问"), (.char, "第一轮答"), (.user, "第二轮问"), (.char, "第二轮答")] {
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: role, authorId: role == .user ? "me" : "char_a", content: text))
+        }
+        var ctx = try Diary.context(c, date: date, pid: "me_root")
+        XCTAssertTrue(ctx.contains("### 林's schedule today\n早上: 去图书馆\nEvent: 捡到一把伞"))
+        XCTAssertFalse(ctx.contains("取消的事"))
+        XCTAssertTrue(ctx.contains("### 林's body today\nmood: 低落\nenergy: 精神\n有点累"))
+        XCTAssertTrue(ctx.contains("第一轮问"))
+        XCTAssertTrue(ctx.contains("第二轮答"))
+        try setSettings(["historyMode": .string("turn"), "historyTurns": .number(1)])
+        ctx = try Diary.context(c, date: date, pid: "me_root")
+        XCTAssertFalse(ctx.contains("第一轮问"))
+        XCTAssertFalse(ctx.contains("第一轮答"))
+        XCTAssertTrue(ctx.contains("第二轮问"))
+        XCTAssertTrue(ctx.contains("第二轮答"))
+    }
 }

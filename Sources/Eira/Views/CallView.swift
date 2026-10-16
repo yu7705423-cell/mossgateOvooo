@@ -33,6 +33,8 @@ final class CallSession: ObservableObject {
     private let synth = AVSpeechSynthesizer()
     private var finished = false
     private var framedAt: Date?
+    /// 挂断时落下的那条通话记录：翻译比挂断慢一步时，译文写回这一条
+    private var savedId: String?
     let recorder = VoiceRecorder()
 
     init(chatId: String, char: Character, incoming: Bool = false, video: Bool = false) {
@@ -122,10 +124,10 @@ final class CallSession: ObservableObject {
         if phase == .active && video { Task { await openCamera() } }
     }
 
-    /// 这一轮要不要带一帧画面：两帧之间至少隔 callFrameGap 秒（默认 0，每轮都带）
+    /// 这一轮要不要带一帧画面：两帧之间至少隔 callFrameGap 秒（默认 8，与网页版 defaults.js 相同；存过的值照用，填 0 每轮都带）
     private func frame() -> AIImage? {
         guard charCanSee else { return nil }
-        let gap = max(0, AppSettings.load().raw["callFrameGap"]?.number ?? 0)
+        let gap = max(0, AppSettings.load().raw["callFrameGap"]?.number ?? 8)
         if let at = framedAt, Date().timeIntervalSince(at) < gap { return nil }
         guard let img = camera.grab() else { return nil }
         framedAt = Date()
@@ -139,7 +141,10 @@ final class CallSession: ObservableObject {
         hush()
         job?.cancel()
         let cut = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !cut.isEmpty { lines.append(.init(role: "char", text: cut)) }
+        if !cut.isEmpty {
+            lines.append(.init(role: "char", text: cut))
+            translate(at: lines.count - 1, text: cut)
+        }
         draft = ""
         lines.append(.init(role: "user", text: t))
         turn(opening: "")
@@ -165,14 +170,43 @@ final class CallSession: ObservableObject {
                 thinking = false
                 draft = ""
                 guard !text.isEmpty else { error = "对方那边没有声音"; return }
-                lines.append(.init(role: "char", text: text))
-                if speak { await voice(text, at: lines.count - 1) }
+                // 台词后面括起来的那一截：和原话一样的扔掉，是译文的直接当译文（4.478）
+                let settled = CallEngine.settle(text, chat: try? Repo.chat(chatId))
+                lines.append(.init(role: "char", text: settled.text, trans: settled.trans))
+                let at = lines.count - 1
+                // 随回复写了译文、或括号里已是译文的不再翻；单独配了翻译接口的逐句翻（4.633）
+                if settled.trans.isEmpty && settled.text.range(of: CallEngine.transRe, options: .regularExpression) == nil {
+                    translate(at: at, text: settled.text)
+                }
+                if speak { await voice(settled.text, at: at) }
             } catch is CancellationError {
             } catch let e as AIError where e.cancelled {
             } catch {
                 guard !Task.isCancelled else { return }
                 thinking = false
                 self.error = error.localizedDescription
+            }
+        }
+    }
+
+    /// 单独配了翻译接口时，这一句逐句交给它翻（一轮一次，不重试）；随回复写译文那一档、已经是目标语言的都不调。
+    /// 翻译挂了不连累通话：少一行译文，记进诊断
+    private func translate(at index: Int, text: String) {
+        guard let chat = try? Repo.chat(chatId), !CallEngine.targetLang(chat).isEmpty,
+              AppSettings.load().translateMode == "api" else { return }
+        Task {
+            let got: [CallEngine.Seg]?
+            do { got = try await CallEngine.translateLine(chat: chat, text: text) }
+            catch {
+                Diagnostics.shared.record("call-translate-failed", ["error": error.localizedDescription])
+                return
+            }
+            guard let segs = got else { return }
+            if phase != .ended, lines.indices.contains(index), lines[index].text == text {
+                lines[index].segs = segs
+            } else if let id = savedId {
+                do { try CallEngine.storeSegs(messageId: id, index: index, text: text, segs: segs) }
+                catch { Problems.report("通话译文未能保存：\(error.localizedDescription)") }
             }
         }
     }
@@ -273,6 +307,7 @@ final class CallSession: ObservableObject {
             let me = try chat.flatMap { c in try Repo.personas().first { $0.id == c.personaId } } ?? Repo.activePersona()
             let m = try CallEngine.finish(chatId: chatId, charId: char.id, direction: direction, outcome: outcome, seconds: secs,
                                           lines: all, userName: me?.name ?? "", charName: char.name, video: video)
+            savedId = m.id
             if CallEngine.autoSummary(outcome: outcome, lines: all) {
                 let id = m.id
                 Task.detached {
@@ -319,7 +354,7 @@ struct CallView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: Theme.gap) {
                         ForEach(Array(session.lines.enumerated()), id: \.offset) { _, l in
-                            line(l.role == "user" ? "我" : session.char.displayName, CallEngine.subtitle(l.text), mine: l.role == "user")
+                            line(l.role == "user" ? "我" : session.char.displayName, CallEngine.subtitle(l), mine: l.role == "user")
                         }
                         if !CallEngine.subtitle(session.draft).isEmpty { line(session.char.displayName, CallEngine.subtitle(session.draft), mine: false) }
                         if session.thinking { Text("对方正在说").font(.footnote).foregroundStyle(Theme.tertiaryText) }
@@ -543,7 +578,7 @@ struct CallLogLines: View {
                     let audio = (l["audio"]?.array ?? []).compactMap(\.string).first ?? ""
                     let key = "\(message.id)-\(i)"
                     HStack(alignment: .top, spacing: 6) {
-                        Text(CallEngine.subtitle(l["text"]?.string ?? ""))
+                        Text(CallEngine.subtitle(log: l))
                             .font(.footnote)
                             .foregroundStyle(l["role"]?.string == "user" ? Theme.secondaryText : Theme.bubbleTheirsText)
                         Spacer(minLength: 0)

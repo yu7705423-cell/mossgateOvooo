@@ -78,7 +78,8 @@ enum ReplyParser {
     private static func lineMark(_ words: String) -> NSRegularExpression {
         regex(#"^(?:\d+\s*[.、)）]\s*)?[\[【(（]\s*(?:"# + words + #")\s*(?:[:：][^\]】)）]*)?\s*[\]】)）]\s*[。．.!！~～]?$"#, [.caseInsensitive])
     }
-    private static let recallLine = lineMark("撤回|撤回消息|撤回上一条")
+    // 「撤回了一条消息」是历史里对方撤回时的写法，模型会照着写成自己的撤回，一并认下（网页版 4.647）
+    private static let recallLine = lineMark("撤回了一条消息|撤回上一条|撤回消息|撤回这一?条|撤回了|已撤回|撤回")
     // 「撤回动态」要先认：两个都以「撤回」开头
     private static let recallPostLine = lineMark("撤回动态|删除动态")
     // 原生版还没有的那几件事（来电、一起看、出行、情侣账户、群管理、千丝万缕）：标记认出来就不落气泡，
@@ -131,7 +132,7 @@ enum ReplyParser {
     /// autoSplitAt：整轮只有一条很长的纯文字时按句子再切的字数（网页版 settings.autoSplitAt，默认 40，0 为不切）
     static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
-        let (stamped, stamp) = stripStamps(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines))))
+        let (stamped, stamp) = stripStamps(MarkFold.splitTrailRecall(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines)))))
         let (text, cards) = liftCards(stamped)
         var state = State()
         state.cards = cards

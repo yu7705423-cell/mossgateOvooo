@@ -48,6 +48,8 @@ struct ConversationView: View {
     @State private var forwarding = false
     @State private var openedForward: Message?
     @State private var editingTrans: Message?
+    /// 「查看思考」打开的那一段（网页版 4.580）
+    @State private var viewingThink: ThinkText?
     @State private var dicing = false
     /// 加号面板的分享音乐、发文件
     @State private var songPicking = false
@@ -100,6 +102,10 @@ struct ConversationView: View {
     @Environment(\.dismiss) private var dismiss
 
     struct ViewingImage: Identifiable { let id: String }
+    struct ThinkText: Identifiable {
+        let id = UUID()
+        let text: String
+    }
     struct CallTarget: Identifiable {
         let char: Character
         let incoming: Bool
@@ -354,6 +360,20 @@ struct ConversationView: View {
                     }
                 }
             }
+        }
+        .sheet(item: $viewingThink) { t in
+            NavigationStack {
+                ScrollView {
+                    Text(t.text).font(.callout).foregroundStyle(Theme.text2)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Theme.sp4)
+                }
+                .navigationTitle("思考过程")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { viewingThink = nil } } }
+            }
+            .presentationDetents([.large])
         }
         .sheet(item: $editingTrans) { m in
             NavigationStack {
@@ -962,6 +982,8 @@ struct ConversationView: View {
         var meAvatar = ""
         /// 记忆总结的水位线停在哪一刻：这一刻及之前的消息算作总结过
         var memoryUpToAt: Double = 0
+        /// 存着思考过程的那几轮（长按给「查看思考」）
+        var thinkTurns: Set<String> = []
     }
 
     private func rowContext() -> RowContext {
@@ -980,7 +1002,8 @@ struct ConversationView: View {
             rejects: Ties.notes(messages, chat: chat),
             innerCard: chat.map { InnerVoice.style($0, settings: st) == "card" } ?? false,
             meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""),
-            memoryUpToAt: chat?.isGroup == false ? (chat?.row.number("memoryUpToAt") ?? 0) : 0)
+            memoryUpToAt: chat?.isGroup == false ? (chat?.row.number("memoryUpToAt") ?? 0) : 0,
+            thinkTurns: Set(messages.filter { !$0.turnId.isEmpty && !$0.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.turnId)))
     }
 
     /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
@@ -1032,6 +1055,7 @@ struct ConversationView: View {
                           speakerName: groupName(of: m),
                           innerCard: ctx.innerCard,
                           summarized: ctx.memoryUpToAt > 0 && m.createdAt <= ctx.memoryUpToAt,
+                          hasThink: m.role == .char && (ctx.thinkTurns.contains(m.turnId) || (m.turnId.isEmpty && !m.row.string("think").isEmpty)),
                           narrColor: look.narr,
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
@@ -1180,6 +1204,9 @@ struct ConversationView: View {
         case .example:
             do { notice = try MessageActions.addExample(m) ? "已收进说话示例，可在编辑资料中修改" : "说话示例中已有这一句" }
             catch { problem = error.localizedDescription }
+        case .think:
+            let t = (try? MessageActions.thinkText(m)) ?? ""
+            if t.isEmpty { notice = "这一轮没有记录思考过程" } else { viewingThink = ThinkText(text: t) }
         case .served:
             notice = (try? MessageActions.servedText(m)) ?? "这一条生成时尚未记录模型"
         case .select:
@@ -1207,7 +1234,8 @@ struct ConversationView: View {
             bindingSticker = m
         case .innerCard:
             // 这一轮里带心声的那一条；没有就从最新的那张开始翻
-            let hit = messages.last { $0.turnId == m.turnId && !m.turnId.isEmpty && !($0.row["inner"]?.string ?? "").isEmpty }
+            // 群聊里只认点的这一位成员的（网页版 4.636）
+            let hit = messages.last { $0.turnId == m.turnId && !m.turnId.isEmpty && $0.authorId == m.authorId && !($0.row["inner"]?.string ?? "").isEmpty }
             innerCardFor = (hit ?? m).id
         case .revoice:
             var pending = m
@@ -1632,10 +1660,10 @@ struct MessageRow: View, Equatable {
             && a.speakerName == b.speakerName && a.innerCard == b.innerCard && a.narrColor == b.narrColor
             && a.charFace == b.charFace && a.rejectNote == b.rejectNote && a.skin == b.skin
             && a.picking == b.picking && a.picked == b.picked && (a.onRetry == nil) == (b.onRetry == nil)
-            && a.summarized == b.summarized
+            && a.summarized == b.summarized && a.hasThink == b.hasThink
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
 
     let message: Message
     let char: Character?
@@ -1660,6 +1688,8 @@ struct MessageRow: View, Equatable {
     var innerCard = false
     /// 这一条已经算作总结过（长按菜单里给「从这条起重新总结」）
     var summarized = false
+    /// 这一轮存着模型的思考过程（长按给「查看思考」，网页版 4.580）
+    var hasThink = false
     /// 旁白的文字颜色（聊天背景里设的，空为默认的灰）
     var narrColor = ""
     /// 只在这段会话里用的角色头像（空为角色自己的那张）
@@ -1763,6 +1793,9 @@ struct MessageRow: View, Equatable {
         }
     }
 
+    /// 点头像展开心声时认的那一份：同一轮、同一个人
+    static func innerKey(_ m: Message) -> String { m.turnId + "#" + m.authorId }
+
     /// 按空行拆开（网页版 helpers.js 的 splitBubbles）
     static func paragraphs(_ s: String) -> [String] {
         let parts = s.components(separatedBy: "\n").reduce(into: [[String]]([[]])) { acc, line in
@@ -1837,6 +1870,9 @@ struct MessageRow: View, Equatable {
         if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {
             Button { onAction?(.example) } label: { Label("收进示例", systemImage: "text.quote") }
         }
+        if !mine && hasThink {
+            Button { onAction?(.think) } label: { Label("查看思考", systemImage: "text.bubble") }
+        }
         if !mine && !message.turnId.isEmpty {
             Button { onAction?(.served) } label: { Label("生成信息", systemImage: "info.circle") }
         }
@@ -1866,7 +1902,8 @@ struct MessageRow: View, Equatable {
             .onTapGesture {
                 guard !mine else { return }
                 if innerCard { onAction?(.innerCard); return }
-                NotificationCenter.default.post(name: .eiraInnerToggle, object: message.turnId.isEmpty ? message.id : message.turnId)
+                // 群聊里一轮有几位成员：只展开点的这一位的心声（网页版 4.636 的 innerOf 加 authorId）
+                NotificationCenter.default.post(name: .eiraInnerToggle, object: message.turnId.isEmpty ? message.id : Self.innerKey(message))
             }
             .accessibilityAddTraits(mine ? [] : .isButton)
             .accessibilityHint(mine ? "" : "展开或收起这一轮的心声")
@@ -1954,7 +1991,7 @@ struct MessageRow: View, Equatable {
         }
         .onReceive(NotificationCenter.default.publisher(for: .eiraInnerToggle)) { n in
             guard let key = n.object as? String, message.row["inner"]?.string?.isEmpty == false else { return }
-            if key == message.id || (!message.turnId.isEmpty && key == message.turnId) { innerOpen.toggle() }
+            if key == message.id || (!message.turnId.isEmpty && key == Self.innerKey(message)) { innerOpen.toggle() }
         }
     }
 

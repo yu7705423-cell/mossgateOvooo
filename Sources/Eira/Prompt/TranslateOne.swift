@@ -84,23 +84,59 @@ enum TranslateOne {
 
     // MARK: - 单独那套翻译接口（网页版 reply.js 的 startTranslate / applyTranslate）
 
-    /// 这一轮落下的几条里要翻的：文字、语音、旁白没有译文的，文字上的心声没有译文的。一批一次请求
-    static func items(_ created: [Message]) -> [(id: String, field: String, text: String)] {
+    /// 这一轮落下的几条里要翻的：文字、语音、旁白没有译文的，文字上的心声没有译文的。一批一次请求。
+    /// 已经是目标语言的不送去翻（网页版 reply.js 的 startTranslate 与 translate.alreadyIn，4.570）：中译中，还白花钱
+    static func items(_ created: [Message], lang: String = "") -> [(id: String, field: String, text: String)] {
         var out: [(id: String, field: String, text: String)] = []
+        func want(_ id: String, _ field: String, _ raw: String, _ have: String) {
+            let t = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !t.isEmpty && have.isEmpty && !alreadyIn(t, lang) { out.append((id, field, t)) }
+        }
         for m in created where m.role == .char && !m.isError {
             switch m.kind {
             case "text", "voice":
-                let t = source(m)
-                if !t.isEmpty && m.row.string("translation").isEmpty { out.append((m.id, "translation", t)) }
+                want(m.id, "translation", source(m), m.row.string("translation"))
             case "narration":
-                let t = m.row.string("narration").isEmpty ? m.content : m.row.string("narration")
-                if !t.isEmpty && m.row.string("translation").isEmpty { out.append((m.id, "translation", t)) }
+                want(m.id, "translation", m.row.string("narration").isEmpty ? m.content : m.row.string("narration"), m.row.string("translation"))
             default: break
             }
-            let inner = m.row.string("inner")
-            if m.kind == "text" && !inner.isEmpty && m.row.string("innerTrans").isEmpty { out.append((m.id, "innerTrans", inner)) }
+            if m.kind == "text" { want(m.id, "innerTrans", m.row.string("inner"), m.row.string("innerTrans")) }
         }
         return out
+    }
+
+    // MARK: - 已经是那种语言了就不翻（网页版 translate.js 的 SAME 与 alreadyIn，4.570）
+    //
+    // 只认几种能从字形上看出来的：中文、日文、韩文、英文。目标语言写的是别的，看不出来照旧翻。
+    // 中文那一条：除了单个的拉丁词，夹着外文短语、带变音符号的字母、或者别的文字的一律当作不是中文。
+
+    private static func count(_ t: String, _ p: String) -> Int {
+        guard let re = try? NSRegularExpression(pattern: p) else { return 0 }
+        return re.numberOfMatches(in: t, range: NSRange(location: 0, length: (t as NSString).length))
+    }
+
+    private static func has(_ t: String, _ p: String) -> Bool { count(t, p) > 0 }
+
+    private static func isZh(_ t: String) -> Bool {
+        let han = count(t, #"[\u4e00-\u9fff]"#)
+        let letters = t.replacingOccurrences(of: #"[^\p{L}]"#, with: "", options: .regularExpression)
+        return han > 0 && !has(t, #"[\u3040-\u30ff\uac00-\ud7af]"#) && han * 2 >= count(t, "[A-Za-z]")
+            && !has(t, #"[A-Za-z]+['’]?[A-Za-z]*[ \t]+['’]?[A-Za-z]"#)
+            && !has(t, #"[\u00c0-\u024f]"#)
+            && !has(letters, #"[^\p{Script=Han}\p{Script=Latin}]"#)
+    }
+
+    /// 这句话是不是已经是 lang 那种语言了。看不出来一律当作不是
+    static func alreadyIn(_ text: String, _ lang: String) -> Bool {
+        let t = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let l = lang.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, !l.isEmpty else { return false }
+        let langIs: (String) -> Bool = { l.range(of: $0, options: [.regularExpression, .caseInsensitive]) != nil }
+        if langIs(#"中文|汉语|漢語|简体|简中|繁体|繁體|繁中|chinese|^zh"#) { return isZh(t) }
+        if langIs(#"日[语語文本]|japanese|^ja"#) { return has(t, #"[\u3040-\u30ff]"#) }
+        if langIs(#"韩|韓|朝鲜|korean|^ko"#) { return has(t, #"[\uac00-\ud7af]"#) }
+        if langIs(#"英|english|^en"#) { return has(t, "[A-Za-z]") && !has(t, #"[\u3040-\u30ff\u4e00-\u9fff\uac00-\ud7af]"#) }
+        return false
     }
 
     /// 开了单独的翻译接口时，这一轮的译文由它来给。翻译挂了不连累这一轮：原文已经发出去，少一行译文而已
@@ -109,7 +145,8 @@ enum TranslateOne {
         let s = AppSettings.load()
         let lang = chat.row.string("translateTo").trimmingCharacters(in: .whitespaces)
         guard !lang.isEmpty, s.translateMode == "api", let preset = s.translatePreset else { return 0 }
-        let list = items(created)
+        // 全都已经是目标语言（或已有译文）：不调接口
+        let list = items(created, lang: lang)
         guard !list.isEmpty else { return 0 }
         let p = payload(list.map(\.text), lang: lang, extra: rulesOf(chat, s), settings: s)
         do {

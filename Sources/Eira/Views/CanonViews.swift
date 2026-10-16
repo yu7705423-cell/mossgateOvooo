@@ -196,7 +196,7 @@ struct PresetEditView: View {
                 } footer: {
                     HelpNote("从上到下即发给模型的顺序。点右上角「排序」后拖动调整位置；关闭的一条不发送。标为「必需」的关系到回复能否被正确拆分，不能关闭；标为「跟随开关」的由各自功能的开关决定，在这里只调整位置。原生版目前只发送线上聊天这一份，其余三份照样保存，供网页版使用。")
                 }
-                Section("条目") {
+                Section {
                     ForEach(items) { it in itemRow(it) }
                         .onMove(perform: move)
                     ForEach(Layout.fixedTail[mode] ?? [], id: \.self) { t in
@@ -209,7 +209,15 @@ struct PresetEditView: View {
                         }
                         .moveDisabled(true)
                     }
-                    Button("添加条目", action: addEntry)
+                    Button("添加条目") { addEntry() }
+                    // 思维链（网页版 4.580）：一套预设只有一条，有了就不再显示入口
+                    if !Layout.customs(v).contains(where: { $0.think }) {
+                        Button("添加思维链") { addEntry(think: true) }
+                    }
+                } header: {
+                    Text("条目")
+                } footer: {
+                    HelpNote("自己写思考的步骤。模型在回复前按这些步骤思考，思考内容不显示在聊天中，长按消息可查看。", title: "添加思维链")
                 }
                 params
                 legacy
@@ -277,7 +285,7 @@ struct PresetEditView: View {
             let c = Layout.customs(v).first { "custom:\($0.id)" == it.id }
             let text = (c?.text ?? "").replacingOccurrences(of: "\\s+", with: " ", options: .regularExpression)
             return Described(title: (c?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "未命名条目", tag: "自己加的",
-                             sub: text.isEmpty ? "尚未填写" : String(text.prefix(40)), follow: "", locked: false,
+                             sub: (c?.think == true ? "思维链 · " : "") + (text.isEmpty ? "尚未填写" : String(text.prefix(40))), follow: "", locked: false,
                              tap: c.map { .custom($0.id) })
         }
         let seg = Layout.segments[it.id] ?? Layout.Segment(label: it.id, desc: "")
@@ -344,12 +352,14 @@ struct PresetEditView: View {
         saveItems(items.map { $0.id == it.id ? Layout.Item(id: $0.id, on: on) : $0 })
     }
 
-    private func addEntry() {
+    private func addEntry(think: Bool = false) {
         let id = Ids.make("c")
         var list = items
         let h = list.firstIndex { $0.id == Layout.history } ?? list.count
         list.insert(Layout.Item(id: "custom:\(id)", on: true), at: h)
-        let customs = (v.raw["promptCustom"]?.array ?? []) + [.object(["id": .string(id), "name": .string("新条目"), "text": .string("")])]
+        var entry: [String: JSONValue] = ["id": .string(id), "name": .string(think ? "思维链" : "新条目"), "text": .string("")]
+        if think { entry["think"] = .bool(true) }
+        let customs = (v.raw["promptCustom"]?.array ?? []) + [.object(entry)]
         saveItems(list, extra: ["promptCustom": .array(customs)])
         if model.problem == nil { sheet = .custom(id) }
     }
@@ -542,13 +552,34 @@ struct CustomEntryEditor: View {
 
     var body: some View {
         Form {
-            Section("名称") { TextField("例：文风", text: $name) }
-            Section {
-                TextEditor(text: $text).frame(minHeight: 200)
-            } header: {
-                Text("内容")
-            } footer: {
-                HelpNote("按原文发送。{{charName}} 与 {{userName}} 填入角色名与用户名。")
+            Section("名称") { TextField(entry.think ? "思维链" : "例：文风", text: $name) }
+            if entry.think {
+                // 思维链（网页版 4.580）：内容是思考的步骤，由用户写；发送时前面加一行固定的格式说明
+                Section {
+                    ZStack(alignment: .topLeading) {
+                        if text.isEmpty {
+                            Text("每行一步，例如：\n1. 梳理对方这句话的意思\n2. 对照角色的人设与当前处境\n3. 决定这一轮要说什么")
+                                .foregroundStyle(Theme.tertiaryText).padding(.top, 8).padding(.leading, 5)
+                                .allowsHitTesting(false)
+                        }
+                        TextEditor(text: $text).frame(minHeight: 200)
+                    }
+                } header: {
+                    Text("思考的步骤")
+                } footer: {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("思考的文字同样计入回复长度，开启后每轮回复会变长、费用相应增加；不增加请求次数。内容为空时整条不发送。")
+                        HelpNote("按原文发送。发送时前面附上一行固定的格式说明：回复之前先在 <thinking></thinking> 中按这些步骤思考，这一段在显示前去除，不算作消息。思考的内容在长按消息后的「查看思考」中查看。{{charName}} 与 {{userName}} 填入角色名与用户名。", title: "思考的步骤")
+                    }
+                }
+            } else {
+                Section {
+                    TextEditor(text: $text).frame(minHeight: 200)
+                } header: {
+                    Text("内容")
+                } footer: {
+                    HelpNote("按原文发送。{{charName}} 与 {{userName}} 填入角色名与用户名。")
+                }
             }
             Section { Button("删除这个条目", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText) }
         }

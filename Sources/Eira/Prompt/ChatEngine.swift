@@ -33,6 +33,9 @@ enum ChatEngine {
     static func hasImages(_ t: Turn) -> Bool { t.rows.contains { $0.kind == "image" && $0.role == .char } }
 
     static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, onRow: @escaping OnRow) async throws {
+        // 回复在路上：主动消息与群里主动开口据此不插话（网页版 isReplying）
+        Replying.begin(chatId)
+        defer { Replying.end(chatId) }
         guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
         guard let charId = chat.characterIds.first, let char = try Repo.character(charId) else {
             throw StoreError(message: "这段会话的角色不存在")
@@ -88,7 +91,11 @@ enum ChatEngine {
 
         let result: AIService.Result
         do {
-            result = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages)
+            // 思考段留在正文里，由 plan 摘出来存在这一轮第一条的 think 上（网页版 4.580）
+            result = try await Provider.$keepThink.withValue(true) {
+                // 自动重试取 1 与用户的 retryMax 里小的那个（默认 0，网页版 streamReply 的 retries: 1）
+                try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+            }
         } catch {
             if old != nil { throw error }
             // 途中断开、已经收到一部分：照常落成气泡，最后一条标上「回复在此处中断」。那部分已经付过钱（网页版 keepPartial）
@@ -105,18 +112,18 @@ enum ChatEngine {
         }
 
         // 发了好友申请：这一轮没写通过就不送达，申请作废（照微信）
-        if rejected == "removed", !Ties.accepts(result.text, char: char, chat: chat) {
+        if rejected == "removed", !Ties.accepts(ReplyParser.stripThink(result.text).0, char: char, chat: chat) {
             try? Ties.clearRequest(chat.id)
             throw StoreError(message: "对方没有通过好友申请，这一轮回复未送达。")
         }
         try markRecalled(built.recalled)
-        // 交给模型看过的图标成看过，往后不再重传
-        for id in built.seenImages {
-            guard var row = try Database.shared.get(Collections.messages, id: id) else { continue }
-            row["vision"] = .string("done")
-            try Database.shared.put(Collections.messages, row)
+        // 交给聊天模型看过的图：回复之后各用一次请求写成描述存下，往后几轮只带描述、不再重传（网页版 describeCarried，
+        // 登记在 ExtraCalls 的 visionCarry）。不等它：这一轮模型已经看过原图了
+        if !built.seenImages.isEmpty {
+            let ids = built.seenImages
+            Task.detached { await ChatEngine.describeCarried(ids) }
         }
-        let served: JSONValue = .object(["id": .string(result.presetId), "name": .string(result.presetName)])
+        let served = servedEntry(result)
         var versions = Versions(swipes: [result.text], index: 0, served: [served])
         if let old {
             versions.swipes = old.versions.swipes + [result.text]
@@ -150,16 +157,93 @@ enum ChatEngine {
         for c in called.isEmpty ? speaking : called {
             guard let fresh = try Repo.chat(chat.id) else { return }
             let built = try ChatPrompt.buildGroup(chat: fresh, members: [c], settings: settings)
-            let r = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages)
+            let r = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
             let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if raw.isEmpty { continue }
             // 这一位的话只记在这一位名下：拆分时群里只有它
             var solo = fresh
             solo.row["characterIds"] = .array([.string(c.id)])
-            let served: JSONValue = .object(["id": .string(r.presetId), "name": .string(r.presetName)])
+            let served = servedEntry(r)
             _ = try await write(raw: raw, chat: solo, char: c, turnId: Ids.make("turn"),
                                 versions: Versions(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         }
+    }
+
+    /// 这一版是哪套接口、哪个模型、什么时候写的，存进这一轮第一条的 served（与 swipes 一一对应）。
+    /// 写法照网页版 `{ preset, name, model, at }`（4.561）。从前原生版写的是 `{ id, name }`：旧记录照样读得出名字，
+    /// 模型一栏显示「未知模型」（MessageActions.servedText 只读 name、model、at）
+    static func servedEntry(_ r: AIService.Result, at: Double = Date().millis) -> JSONValue {
+        .object(["preset": .string(r.presetId), "name": .string(r.presetName), "model": .string(r.model), "at": .number(at)])
+    }
+
+    /// 正在生成回复的会话（网页版 engine.js 的 isReplying）。同一段会话可能同时有两次（会话页与延迟回复），按次数记
+    enum Replying {
+        private static let lock = NSLock()
+        nonisolated(unsafe) private static var counts: [String: Int] = [:]
+
+        static func begin(_ id: String) { lock.lock(); defer { lock.unlock() }; counts[id, default: 0] += 1 }
+        static func end(_ id: String) {
+            lock.lock(); defer { lock.unlock() }
+            let n = (counts[id] ?? 0) - 1
+            counts[id] = n > 0 ? n : nil
+        }
+        static func has(_ id: String) -> Bool { lock.lock(); defer { lock.unlock() }; return counts[id] != nil }
+    }
+
+    static func isReplying(_ chatId: String) -> Bool { Replying.has(chatId) }
+
+    /// 识图交给聊天模型那一档：图给模型看过之后，再用一句话把它描述下来写回那条消息（网页版 engine.js 的 describeCarried）。
+    /// 从下一轮起这条就是 `[图片：描述]`，不再重传图片。走副用接口（网页版 runTextTask 的 chat.vision-describe）。
+    /// 每张图一次请求；**发之前先记「试过」**（visionCarry），失败标成 error，之后不再为这张自动描述（网页版第 15 条）
+    static func describeCarried(_ ids: [String]) async {
+        let s = AppSettings.load()
+        for id in ids {
+            guard var row = try? Database.shared.get(Collections.messages, id: id) else { continue }
+            let vision = row.string("vision")
+            if vision == "done" || vision == "error" || (row.number("visionCarry") ?? 0) > 0 { continue }
+            let m = Message(row: row)
+            guard !m.imageId.isEmpty, let url = MediaStore.url(.images, id: m.imageId),
+                  let data = try? Data(contentsOf: url) else { continue }
+            row["visionCarry"] = .number(Date().millis)
+            row.touch()
+            do { try Database.shared.put(Collections.messages, row) } catch {
+                Problems.report("图片描述未能保存：\(error.localizedDescription)")
+                continue
+            }
+            do {
+                let system = Templates.render("task.vision-describe", ["sample": Vision.sample(chatId: m.chatId)], settings: s)
+                let image = AIImage(mediaType: Images.mediaType(ext: url.pathExtension), base64: data.base64EncodedString())
+                let r = try await AIService.shared.send(
+                    task: "chat.vision-describe", system: system,
+                    messages: [AIMessage(role: .user, content: "Describe this image as instructed.", images: [image])],
+                    retries: 1)
+                let text = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !text.isEmpty else { throw StoreError(message: "模型没有返回描述") }
+                try carryUpdate(id) {
+                    $0["imageDesc"] = .string(text)
+                    $0["vision"] = .string("done")
+                    $0["content"] = .string("[图片：\(text)]")
+                }
+            } catch {
+                if let e = error as? AIError, e.cancelled { return }
+                Diagnostics.shared.record("vision-carry-failed", ["error": error.localizedDescription])
+                do {
+                    try carryUpdate(id) {
+                        $0["vision"] = .string("error")
+                        $0["visionError"] = .string(error.localizedDescription)
+                    }
+                } catch {
+                    Problems.report("图片描述未能保存：\(error.localizedDescription)")
+                }
+            }
+        }
+    }
+
+    private static func carryUpdate(_ id: String, _ change: (inout Row) -> Void) throws {
+        guard var row = try Database.shared.get(Collections.messages, id: id) else { return }
+        change(&row)
+        row.touch()
+        try Database.shared.put(Collections.messages, row)
     }
 
     /// 回复途中断开时收到的那一部分落成气泡。没有可留的回空数组，调用方照旧落一条失败提示

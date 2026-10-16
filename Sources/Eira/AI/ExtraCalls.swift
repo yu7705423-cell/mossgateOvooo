@@ -32,7 +32,7 @@ enum ExtraCalls {
                   }),
         // 挂在会话上，不是全局设置：有一段会话开了就算开着
         ExtraCall(id: "inner", label: "心声单独生成",
-                  isOn: { _ in ((try? Repo.chats()) ?? []).contains { $0.row.string("innerMode") == "apart" } },
+                  isOn: { _ in liveChats().contains { $0.row.string("innerMode") == "apart" } },
                   when: { _ in "开了这一档的对话，每一轮在整轮说完之后再一次" }),
         // 挂在生图接口上（那一套选了「生图前翻译」），不是全局设置
         ExtraCall(id: "imageTranslate", label: "生图提示词译成英文",
@@ -49,7 +49,7 @@ enum ExtraCalls {
                   when: { _ in "角色每写一个 [图片：…]，先多一次接口把它改写成完整描述（走副用接口）" }),
         // 挂在角色与身份上（有锁脸照片才有）：每组照片读一次，读失败的那一组不再自动读
         ExtraCall(id: "faceDesc", label: "锁脸照片读成外貌描述",
-                  isOn: { s in s.visionMode != "off" && (((try? Repo.characters()) ?? []).contains { !FaceLock.faces($0.row).isEmpty }
+                  isOn: { s in s.visionMode != "off" && (liveChars().contains { !FaceLock.faces($0.row).isEmpty }
                       || ((try? Repo.personas()) ?? []).contains { !FaceLock.faces($0.row).isEmpty }) },
                   when: { _ in "有锁脸照片、这一张用到锁脸且接口不收参考图时，每组照片读一次（走识图那一档），之后用缓存" }),
         // 默认开着：网页版用户明确要求的例外（每通接通过的电话挂断时一次）
@@ -58,21 +58,21 @@ enum ExtraCalls {
                   when: { _ in "每通接通过、有对白的电话挂断时一次（走副用接口）" }, allowOn: true),
         // 挂在角色身上（会话设置里），不是全局设置
         ExtraCall(id: "proactive", label: "角色主动发起对话",
-                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["proactive"]?.bool == true } },
+                  isOn: { _ in liveChars().contains { $0.row["proactive"]?.bool == true } },
                   when: { s in "每个开了的角色按设定的间隔一次" + (BgPush.isOn(s) ? "；应用不在前台时由后台消息服务器代发" : "；只在应用打开时发送") }),
         ExtraCall(id: "groupProactive", label: "群里主动开口",
-                  isOn: { _ in ((try? Repo.chats()) ?? []).contains { $0.isGroup && $0.row["groupProactive"]?["on"]?.bool == true } },
+                  isOn: { _ in liveChats().contains { $0.isGroup && $0.row["groupProactive"]?["on"]?.bool == true } },
                   when: { _ in "每个开了的群按设定的间隔一次；只在应用打开时发送。开关在群资料" }),
         ExtraCall(id: "emo", label: "深夜那一档",
-                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["proactive"]?.bool == true && $0.row["emo"]?.bool == true } },
+                  isOn: { _ in liveChars().contains { $0.row["proactive"]?.bool == true && $0.row["emo"]?.bool == true } },
                   when: { _ in "开了的角色在设定的深夜时段内，距上次满设定的天数时一次；只在应用打开时发送" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "diaryAuto", label: "角色每天写日记",
-                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["diaryAuto"]?.bool == true } },
+                  isOn: { _ in liveChars().contains { $0.row["diaryAuto"]?.bool == true } },
                   when: { _ in "每个开了的角色，每天到了设定时刻之后一次（走副用接口）；当天已经有一篇时不写，失败当天不再自动试" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "dayOn", label: "角色的当日日程",
-                  isOn: { _ in ((try? Repo.characters()) ?? []).contains { $0.row["dayOn"]?.bool == true } },
+                  isOn: { _ in liveChars().contains { $0.row["dayOn"]?.bool == true } },
                   when: { _ in "每个开了的角色，每天第一条消息之前一次（走副用接口）；失败当天不再自动排" }),
         // 通话里角色每说一句走一次语音合成接口（网页版 callVoice）。通话页的喇叭键就是这个开关，默认关
         ExtraCall(id: "callVoice", label: "通话时出声",
@@ -93,7 +93,21 @@ enum ExtraCalls {
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),
+        // 挂在识图方式上（「设置 - 识图」选了交给聊天模型），不是单独的开关；识图默认关（网页版 visionCarry）
+        ExtraCall(id: "visionCarry", label: "发给角色的图写成描述",
+                  isOn: { $0.visionMode == "chat" },
+                  when: { _ in "你每发一张图，角色回复之后一次，把图写成一句描述存下；之后几轮只带描述，不再重传图片。识图方式在「设置 - 识图」" }),
+        // 只有单独配了翻译接口才多调（网页版 4.633）。「随回复写译文」时角色在同一次回复里逐句写，不另调接口
+        ExtraCall(id: "callTranslate", label: "通话中翻译角色的话",
+                  isOn: { s in s.translateMode == "api" && liveChats().contains { !$0.row.string("translateTo").trimmingCharacters(in: .whitespaces).isEmpty } },
+                  when: { _ in "开了翻译的对话里打电话、并且单独配了翻译接口时，角色每说完一轮一次，逐句交给翻译接口；选「随回复写译文」时由角色在同一次回复里逐句写，不多调" }),
     ]
+
+    /// 没封存的角色（网页版 cost.js 的 liveChars，4.557）：封存的不再自动做任何事，账上也不算它
+    static func liveChars() -> [Character] { ((try? Repo.characters()) ?? []).filter { !$0.archived } }
+
+    /// 角色没有全都封存的会话（网页版 liveChats）
+    static func liveChats() -> [Chat] { ((try? Repo.chats()) ?? []).filter { !Archive.chatArchived($0) } }
 
     static func active(_ s: AppSettings) -> [ExtraCall] { all.filter { $0.isOn(s) } }
 

@@ -37,6 +37,7 @@ struct ChatSettingsView: View {
     @State private var summary = ""
     @State private var presets: [AppSettings.Preset] = []
     @State private var confirmClear = false
+    @State private var clearCounts = ClearHistory.Counts()
     @State private var confirmDelete = false
     @State private var problem: String?
     @State private var loaded = false
@@ -286,11 +287,13 @@ struct ChatSettingsView: View {
     }
 
     @ViewBuilder private var innerSection: some View {
+        // 群聊没有「单独生成」（网页版 4.636）：那一次调用只针对一个角色；存着的 apart 读成随回复一起
+        let grouped = chat?.isGroup == true
         Section {
             Picker("心声", selection: $innerMode) {
                 Text("关闭").tag("off")
                 Text("随回复一起").tag("inline")
-                Text("单独生成").tag("apart")
+                if !grouped { Text("单独生成").tag("apart") }
             }
             if innerMode != "off" {
                 Picker("显示方式", selection: $innerStyle) {
@@ -300,11 +303,15 @@ struct ChatSettingsView: View {
                 TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
             }
         } footer: {
-            if innerMode == "apart" { Text("每轮多调用一次接口。") }
-            HelpNote(innerMode == "apart"
-                 ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
-                 : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
-                 : "开启后显示角色每轮话语背后的想法。")
+            if innerMode == "apart" && !grouped { Text("每轮多调用一次接口。") }
+            if grouped {
+                HelpNote("每个开口的成员在自己那几句下面多写一行心声，不额外调用接口。点哪位成员的头像，看的是哪位成员的心声。群聊中没有「单独生成」：那一次调用只针对一个角色。", title: "群聊的心声")
+            } else {
+                HelpNote(innerMode == "apart"
+                     ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
+                     : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
+                     : "开启后显示角色每轮话语背后的想法。")
+            }
         }
     }
 
@@ -382,17 +389,41 @@ struct ChatSettingsView: View {
             Toggle("免打扰", isOn: $muted)
         }
         Section {
-            Button("清空聊天记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
+            Button("清空聊天记录", role: .destructive) {
+                if let c = chat, !c.isGroup, let cid = c.characterIds.first {
+                    clearCounts = (try? ClearHistory.counts(cid)) ?? ClearHistory.Counts()
+                }
+                confirmClear = true
+            }.foregroundStyle(Theme.dangerText)
             Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
             if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
         } footer: {
             Text("清空与删除均无法撤销。")
-            HelpNote("清空只删除消息，会话与角色保留；删除会话连同消息一并删除。均无法撤销。角色的记忆不受影响。")
+            HelpNote("清空聊天记录：清空这个角色名下全部单聊的消息，总结进度、前情摘要与未读一并归零；会话、角色与已提取的记忆保留。群聊只清这一段。删除会话连同消息一并删除。均无法撤销。", title: "更多：清空与删除")
         }
-        .confirmationDialog("清空后无法恢复。", isPresented: $confirmClear, titleVisibility: .visible) {
+        .confirmationDialog("清空聊天记录", isPresented: $confirmClear, titleVisibility: .visible) {
             Button("清空聊天记录", role: .destructive) {
-                do { try Database.shared.deleteAll(Collections.messages, where: chatId) }
-                catch { problem = "清空失败：\(error.localizedDescription)" }
+                do {
+                    if let c = chat, !c.isGroup, let cid = c.characterIds.first {
+                        try ClearHistory.run(charId: cid)
+                    } else {
+                        // 群聊只清这一段；消息没了，总结进度、前情与未读一并归零（网页版 clearHistory 同一处理）
+                        try Database.shared.deleteAll(Collections.messages, where: chatId)
+                        if var c = try Repo.chat(chatId) {
+                            for k in ["memoryUpTo", "memoryUpToBeat", "memoryTriedId"] { c.row[k] = .null }
+                            for k in ["memoryUpToAt", "memoryUpToBeatAt", "memoryTriedAt", "unread"] { c.row[k] = .number(0) }
+                            c.row["summary"] = .string("")
+                            c.row.touch()
+                            try Repo.save(c)
+                        }
+                    }
+                } catch { problem = "清空失败：\(error.localizedDescription)" }
+            }
+        } message: {
+            if chat?.isGroup ?? false {
+                Text("将删除这段群聊的全部消息。已提取的记忆保留。无法撤销。")
+            } else {
+                Text("将删除这个角色名下 \(clearCounts.chats) 段单聊共 \(clearCounts.messages) 条消息。已提取的记忆保留。无法撤销。")
             }
         }
         .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {

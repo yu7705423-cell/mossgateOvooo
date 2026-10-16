@@ -76,6 +76,31 @@ final class GroupTests: StoreTestCase {
         XCTAssertEqual(after.map(\.content), ["换一句"])
     }
 
+    /// 群聊的心声（网页版 4.636）：「单独生成」读成随回复一起，不多调接口；提示词用 inner-group；写在谁下面算谁的
+    func testGroupInnerVoiceInline() async throws {
+        var g = try XCTUnwrap(Repo.chat(group.id))
+        g.row["innerMode"] = .string("apart")
+        try Repo.save(g)
+        g = try XCTUnwrap(Repo.chat(group.id))
+        XCTAssertEqual(InnerVoice.mode(g), "inline")
+        let groupLine = "Each member who speaks this turn writes one line of their own"
+        XCTAssertTrue(InnerVoice.piece(g, settings: .load()).contains(groupLine))
+        _ = try ChatEngine.send(text: "大家好", chatId: group.id)
+        let b = try ChatPrompt.buildGroup(chat: XCTUnwrap(Repo.chat(group.id)), members: members(), settings: .load())
+        XCTAssertTrue(b.system.contains(groupLine) || b.messages.contains { $0.content.contains(groupLine) })
+
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("林：在\n[心声：LIN_INNER]\n小周：嗯\n[心声：ZHOU_INNER]")) }
+        try await ChatEngine.reply(chatId: group.id) { _ in }
+        XCTAssertEqual(MockNet.count, 1, "群聊不另调心声")
+        let list = try Repo.messages(chatId: group.id).filter { $0.role == .char }
+        XCTAssertEqual(list.first { $0.authorId == "char_a" }?.row.string("inner"), "LIN_INNER")
+        XCTAssertEqual(list.first { $0.authorId == zhou.id }?.row.string("inner"), "ZHOU_INNER")
+        // 单聊的 apart 不受影响
+        var solo = try XCTUnwrap(Repo.chat("chat_a"))
+        solo.row["innerMode"] = .string("apart")
+        XCTAssertEqual(InnerVoice.mode(solo), "apart")
+    }
+
     /// 被禁言的成员写的不落；全员都在禁言中时不调接口。
     func testMuted() async throws {
         var c = try XCTUnwrap(Repo.chat(group.id))

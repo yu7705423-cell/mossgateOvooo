@@ -215,6 +215,92 @@ enum MusicLibrary {
         return try? fromQQ(pick)
     }
 
+    // MARK: - 点歌：歌名加歌手，原唱放不了就放翻唱（网页版 music.playableSong，ARCHITECTURE 4.219）
+
+    /// 点歌的结果。notice 是要落在会话里的那一行提示（带方括号），没有就是空串：
+    /// 原唱放不了、没搜到原唱而换了别人唱的，或者一个能放的都没有，都写明，角色下一轮读得到
+    struct Playable {
+        var song: Song?
+        var notice: String
+    }
+
+    /// 比歌名用：括号里的去掉、空白去掉、小写（网页版 music.js 点歌那一段的 bare）
+    static func bareTitle(_ s: String) -> String {
+        s.replacingOccurrences(of: #"[(（\[【].*?[)）\]】]"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression).lowercased()
+    }
+
+    static func sameArtist(_ a: String, _ b: String) -> Bool { b.isEmpty || a.isEmpty || a.contains(b) || b.contains(a) }
+
+    /// 搜出来的一首：问得出播放地址才算放得出来；放得出来才收进曲库
+    private struct Candidate {
+        var key: String
+        var title: String
+        var artist: String
+        var plays: () async -> Bool
+        var keep: () throws -> Song
+    }
+
+    /// 角色点的那一首，找一个放得出来的版本。
+    /// 本机曲库里有就用它；否则去网易云（登录了 QQ 音乐再到那边）搜：歌名对得上、歌手也对得上的是原唱，
+    /// 歌名对得上、歌手不同的是别人唱的。原唱逐个问一次播放地址，放得出来就用；都放不了或没搜到原唱，依次试别人唱的版本。
+    /// 问播放地址是音乐服务的接口，不是模型，不算多调一次（第 15 条）
+    static func playableSong(_ query: String) async -> Playable {
+        let (title, artist) = splitQuery(query)
+        guard !title.isEmpty else { return Playable(song: nil, notice: "") }
+        let all = (try? songs()) ?? []
+        if let local = all.first(where: { bareTitle($0.title) == bareTitle(title) && sameArtist($0.artist, artist) })
+            ?? (artist.isEmpty ? findLocal(title) : nil) {
+            return Playable(song: local, notice: "")
+        }
+        let want = "\(artist.isEmpty ? "" : "\(artist)的")《\(title)》"
+
+        // 先问网易云，原唱、翻唱都放不了再问 QQ 音乐（登录了才问）。一家一家来：前一家有原唱放得出来，后一家不搜
+        var sources: [(String) async throws -> [Candidate]] = [{ q in
+            try await Netease.search(q, limit: 10).map { t in
+                Candidate(key: t.id, title: t.title, artist: t.artist,
+                          plays: { !(((try? await Netease.songUrl(t.id)) ?? "").isEmpty) },
+                          keep: { try MusicLibrary.fromNetease(t) })
+            }
+        }]
+        if QQMusic.loggedIn() {
+            sources.append { q in
+                try await QQMusic.search(q, limit: 10).map { t in
+                    Candidate(key: t.mid, title: t.title, artist: t.artist,
+                              plays: { !(((try? await QQMusic.songUrl(t.mid)) ?? "").isEmpty) },
+                              keep: { try MusicLibrary.fromQQ(t) })
+                }
+            }
+        }
+
+        var fallback: Playable?
+        for run in sources {
+            var rows: [Candidate] = []
+            if !artist.isEmpty { rows += (try? await run("\(title) \(artist)")) ?? [] }
+            rows += (try? await run(title)) ?? []
+            var seen = Set<String>()
+            rows = rows.filter { seen.insert($0.key).inserted }
+            let same = rows.filter { bareTitle($0.title) == bareTitle(title) }
+            // 没写歌手时，搜出来的第一个同名版本当原唱
+            let lead = artist.isEmpty ? Array(same.prefix(1)) : same.filter { sameArtist($0.artist, artist) }
+            let leadKeys = Set(lead.map(\.key))
+            let others = same.filter { !leadKeys.contains($0.key) }
+            for t in lead {
+                if await t.plays(), let song = try? t.keep() { return Playable(song: song, notice: "") }
+            }
+            guard fallback == nil else { continue }
+            for t in others {
+                guard await t.plays(), let song = try? t.keep() else { continue }
+                let who = song.artist.isEmpty ? "其他歌手" : song.artist
+                fallback = Playable(song: song, notice: lead.isEmpty
+                    ? "[没有找到\(want)，换成了\(who)演唱的版本]"
+                    : "[\(want)无法播放（需要会员或没有版权），换成了\(who)演唱的版本]")
+                break
+            }
+        }
+        return fallback ?? Playable(song: nil, notice: "[没有找到可以播放的\(want)]")
+    }
+
     // MARK: - 歌词
 
     struct Line: Equatable { var at: Double; var text: String; var trans: String = "" }

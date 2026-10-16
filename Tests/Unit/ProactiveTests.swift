@@ -187,3 +187,39 @@ final class ProactiveTests: StoreTestCase {
         XCTAssertFalse(String(decoding: MockNet.requests.last?.httpBodyStreamData() ?? Data(), as: UTF8.self).contains("during the night"))
     }
 }
+
+/// 当面时、回复正在生成时不主动发（网页版 proactive.js 的 chatFor：face.on、isReplying）
+extension ProactiveTests {
+    func testNotWhileFaceToFace() async throws {
+        try turnOn()
+        try quiet()
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["face"] = .object(["on": .bool(true)])
+        try Repo.save(chat)
+        XCTAssertNil(Proactive.chatReady("char_a"))
+        let now = Date().millis
+        Proactive.setNext("char_a", now - 1000)
+        let fired = await Proactive.tick(now: now)
+        XCTAssertTrue(fired.isEmpty)
+        XCTAssertEqual(MockNet.count, 0)
+
+        chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["face"] = .object(["on": .bool(false)])
+        try Repo.save(chat)
+        XCTAssertNotNil(Proactive.chatReady("char_a"))
+    }
+
+    func testNotWhileReplying() async throws {
+        try turnOn()
+        try quiet()
+        ChatEngine.Replying.begin("chat_a")
+        XCTAssertNil(Proactive.chatReady("char_a"))
+        let now = Date().millis
+        Proactive.setNext("char_a", now - 1000)
+        let fired = await Proactive.tick(now: now)
+        ChatEngine.Replying.end("chat_a")
+        XCTAssertTrue(fired.isEmpty)
+        XCTAssertEqual(MockNet.count, 0)
+        XCTAssertNotNil(Proactive.chatReady("char_a"))
+    }
+}

@@ -219,6 +219,8 @@ enum Layout {
         var name: String
         var text: String
         var json: [String: JSONValue]
+        /// 思维链条目（网页版 4.580）：发送时在步骤前接一行锁定的 skeleton.think-format。一套预设只有一条
+        var think: Bool { json["think"]?.bool == true }
     }
 
     static func customs(_ s: AppSettings) -> [Custom] {
@@ -281,9 +283,12 @@ enum Layout {
         for it in resolve(mode, s) {
             if it.id == history { below = true; continue }
             if !it.on && !isFixed(it.id) { continue }
-            let raw = byId[it.id].map { Templates.fill($0.text, names) } ?? pieces[it.id] ?? ""
-            let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            let custom = byId[it.id]
+            let raw = custom.map { Templates.fill($0.text, names) } ?? pieces[it.id] ?? ""
+            var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
             if text.isEmpty { continue }
+            // 思维链（网页版 4.580）：用户写的步骤前接上格式那一行。步骤空着整条不发
+            if custom?.think == true { text = Templates.get("skeleton.think-format", settings: s) + "\n" + text }
             if below && mode != "call" { tail.append(text) } else { sys.append(text) }
         }
         return (sys.joined(separator: "\n\n"), tail.joined(separator: "\n\n"))

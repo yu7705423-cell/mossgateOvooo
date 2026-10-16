@@ -14,7 +14,7 @@ final class TranslateApiTests: StoreTestCase {
         try super.tearDownWithError()
     }
 
-    private func configure(api: Bool) throws {
+    private func configure(api: Bool, lang: String = "English") throws {
         var services: [String: JSONValue] = ["chat": .object([
             "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
                                          "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])]),
@@ -25,7 +25,7 @@ final class TranslateApiTests: StoreTestCase {
         }
         try setSettings(["services": .object(services)])
         var c = try XCTUnwrap(Repo.chat("chat_a"))
-        c.row["translateTo"] = .string("English")
+        c.row["translateTo"] = .string(lang)
         try Repo.save(c)
     }
 
@@ -50,5 +50,45 @@ final class TranslateApiTests: StoreTestCase {
         XCTAssertEqual(MockNet.requests.filter { $0.url?.host == "tr.test" }.count, 1)
         let mine = try Repo.messages(chatId: "chat_a").filter { $0.role == .char && ["你好", "再见"].contains($0.content) }
         XCTAssertEqual(Set(mine.map { $0.row.string("translation") }), Set(["Hi", "Bye"]))
+    }
+
+    /// 网页版 4.570：已经是目标语言的句子不送去翻；整轮都是，就不调翻译接口
+    func testAlreadyInTargetSkipsRequest() async throws {
+        try configure(api: true, lang: "中文")
+        MockNet.reset { r, _ in
+            if r.url?.host == "tr.test" { return .init(status: 200, body: MockNet.anthropicStream(#"{"lines":["你好"]}"#)) }
+            return .init(status: 200, body: MockNet.anthropicStream("你好\n再见"))
+        }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.requests.filter { $0.url?.host == "tr.test" }.count, 0, "说中文、译成中文，不调翻译接口")
+        XCTAssertEqual(MockNet.requests.filter { $0.url?.host == "main.test" }.count, 1)
+    }
+
+    func testOnlyForeignLinesAreSent() async throws {
+        try configure(api: true)
+        MockNet.reset { r, _ in
+            if r.url?.host == "tr.test" { return .init(status: 200, body: MockNet.anthropicStream(#"{"lines":["Hello there"]}"#)) }
+            return .init(status: 200, body: MockNet.anthropicStream("Good morning\n你好呀"))
+        }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        let tr = MockNet.requests.filter { $0.url?.host == "tr.test" }
+        XCTAssertEqual(tr.count, 1)
+        let body = String(data: try XCTUnwrap(tr.first?.httpBodyStreamData()), encoding: .utf8) ?? ""
+        let sent = try JSONValue.parse(Data(body.utf8))["messages"]?.array?.first?["content"]?.string ?? ""
+        XCTAssertEqual(sent, "1. 你好呀", "已经是英文的那一句不送")
+        let rows = try Repo.messages(chatId: "chat_a").filter { $0.role == .char }
+        XCTAssertEqual(rows.first { $0.content == "你好呀" }?.row.string("translation"), "Hello there")
+        XCTAssertEqual(rows.first { $0.content == "Good morning" }?.row.string("translation"), "")
+    }
+
+    func testAlreadyIn() {
+        XCTAssertTrue(TranslateOne.alreadyIn("我好想你", "中文"))
+        XCTAssertTrue(TranslateOne.alreadyIn("去 Costco 吗", "中文"))
+        XCTAssertFalse(TranslateOne.alreadyIn("宝贝我好想你 my love", "中文"))
+        XCTAssertFalse(TranslateOne.alreadyIn("想你了，мой милый", "中文"))
+        XCTAssertTrue(TranslateOne.alreadyIn("See you", "English"))
+        XCTAssertFalse(TranslateOne.alreadyIn("你好", "English"))
+        XCTAssertTrue(TranslateOne.alreadyIn("おはよう", "日语"))
+        XCTAssertFalse(TranslateOne.alreadyIn("Bonjour", "法语"), "看不出来的照旧翻")
     }
 }

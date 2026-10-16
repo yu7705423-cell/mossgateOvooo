@@ -30,10 +30,10 @@ enum MusicListen {
             Task {
                 let ok: Bool = { lock.lock(); defer { lock.unlock() }; return chat == chatId || wanted == "\(chatId)|\(turnId)" }()
                 guard ok else { return }
-                guard let song = await MusicLibrary.resolve(q) else {
-                    notice(chatId: chatId, charId: charId, turnId: turnId, "[没有找到可以播放的《\(MusicLibrary.splitQuery(q).title)》]")
-                    return
-                }
+                // 先确认能播放，不能就换别的版本并写明（网页版 music.playableSong，4.219）
+                let got = await MusicLibrary.playableSong(q)
+                if !got.notice.isEmpty { notice(chatId: chatId, charId: charId, turnId: turnId, got.notice) }
+                guard let song = got.song else { return }
                 await MainActor.run {
                     if MusicPlayer.shared.listenChat == chatId { MusicPlayer.shared.pick(song) }
                     else { try? MusicPlayer.shared.startListen(chatId: chatId, song: song, autoplay: false) }

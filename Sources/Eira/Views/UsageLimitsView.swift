@@ -114,7 +114,7 @@ struct UsageLimitsView: View {
             Section {
                 Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
                 NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
-                NumberRow(title: "视频通话两帧画面的间隔", value: model.number("callFrameGap", 0), unit: "秒", placeholder: "每轮都带")
+                NumberRow(title: "视频通话两帧画面的间隔", value: model.number("callFrameGap", 8), unit: "秒", placeholder: "每轮都带")
             } header: {
                 Text("通话")
             } footer: {
@@ -198,6 +198,7 @@ struct UsageLimitsView: View {
     static func taskLabel(_ task: String) -> String {
         [
             "chat.reply": "对话回复",
+            "chat.vision-describe": "发给角色的图写成描述",
             "card.import": "读取角色卡",
             "card.core": "生成核心设定",
             "vision": "识图",

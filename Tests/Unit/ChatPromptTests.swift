@@ -145,4 +145,21 @@ final class ChatPromptTests: StoreTestCase {
         XCTAssertTrue(b.messages.contains { $0.role == .assistant && $0.content.contains("[译文：TR_TEXT]") })
         XCTAssertTrue(b.messages.contains { $0.content.contains("[译文提醒]") && $0.content.contains("English") })
     }
+
+    /// 撤回能力：角色有还挂着的动态时，写明可以撤回动态与那一条是什么（网页版 capabilities.js 的 postLine）
+    func testRecallMentionsLatestPost() throws {
+        _ = try build(["promptLean": .bool(false)])
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let char = try XCTUnwrap(Repo.character("char_a"))
+        for mo in Moments.by("char_a") where !mo.recalled { try Moments.update(mo.id, ["recalled": .number(Date().millis)]) }
+        let none = try ChatPrompt.build(chat: chat, char: char, settings: .load()).system
+        XCTAssertTrue(none.contains("[撤回]\n"), "撤回能力本身在")
+        XCTAssertFalse(none.contains("[撤回动态]"))
+        let mo = try Moments.create(authorId: "char_a", text: "去海边了\n  看日落")
+        let with = try ChatPrompt.build(chat: chat, char: char, settings: .load()).system
+        XCTAssertTrue(with.contains("[撤回动态]"))
+        XCTAssertTrue(with.contains("去海边了 看日落"))
+        try Moments.update(mo.id, ["recalled": .number(Date().millis)])
+        XCTAssertFalse(try ChatPrompt.build(chat: chat, char: char, settings: .load()).system.contains("[撤回动态]"))
+    }
 }

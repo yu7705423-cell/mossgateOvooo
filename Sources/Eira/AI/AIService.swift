@@ -21,6 +21,8 @@ actor AIService {
         var text: String
         var presetId: String
         var presetName: String
+        /// 这一次用的模型（生成信息里显示，网页版 served 的 model，4.561）
+        var model: String = ""
     }
 
     private var running = 0
@@ -73,7 +75,7 @@ actor AIService {
                         onDelta: onDelta)
                     log(200, nil)
                     await Trace.shared.finish(traceId, reply: text, started: started)
-                    return Result(text: text, presetId: preset.id, presetName: preset.name)
+                    return Result(text: text, presetId: preset.id, presetName: preset.name, model: preset.model)
                 } catch let e as AIError {
                     log(e.status, e.cancelled ? "已取消" : e.message + (e.partial.isEmpty ? "" : "（已收到部分回复）"))
                     await Trace.shared.finish(traceId, error: e.cancelled ? "已取消" : e.message, started: started)

@@ -59,7 +59,7 @@ enum ChatFiles {
 
     static func body(_ m: Message, _ s: AppSettings) -> String {
         let t = m.row.string("text")
-        let cap = max(0, Int((s.raw["fileTextMax"]?.number ?? 0).rounded()))
+        let cap = max(0, Int((s.raw["fileTextMax"]?.number ?? 6000).rounded()))   // 网页版默认 6000，0 = 全带（4.271）
         return cap > 0 && t.count > cap ? String(t.prefix(cap)) + "\n(truncated)" : t
     }
 }

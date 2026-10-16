@@ -180,4 +180,45 @@ final class LayoutTests: StoreTestCase {
         XCTAssertNil(list.last?.row["ban"])
         XCTAssertTrue(try build().system.contains("不易察觉"))
     }
+
+    /// 思维链条目（网页版 4.580）：写了步骤时前面接一行锁定的格式说明；步骤空着整条不发
+    func testThinkEntryGetsFormatLine() throws {
+        try importFixture("data.json")
+        var items = Layout.resolve("chat", .load()).map { ($0.id, $0.on) }
+        let h = items.firstIndex { $0.0 == "history" }!
+        items.insert(("custom:t1", true), at: h)
+        let format = try XCTUnwrap(Templates.defaults["skeleton.think-format"])
+        XCTAssertTrue(format.contains("<thinking></thinking>"))
+        try setSettings([
+            "promptLayout": layout(items),
+            "promptCustom": .array([.object(["id": .string("t1"), "name": .string("思维链"), "text": .string("1. STEP_FOR {{userName}}"),
+                                             "think": .bool(true)])]),
+        ])
+        XCTAssertTrue(try build().system.contains(format + "\n1. STEP_FOR 小于"))
+        try setSettings([
+            "promptCustom": .array([.object(["id": .string("t1"), "name": .string("思维链"), "text": .string("  "), "think": .bool(true)])]),
+        ])
+        XCTAssertFalse(try build().system.contains(format), "步骤空着整条不发")
+    }
+
+    /// 回复里的 <thinking> 不进气泡，存在这一轮第一条的 think 上；长按「查看思考」读的就是它（网页版 4.580）
+    func testThinkStoredOnFirstMessage() async throws {
+        try importFixture("data.json")
+        try setSettings(["services": .object(["chat": .object(["presets": .array([.object(["id": .string("p"), "provider": .string("anthropic"),
+            "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])])])])])
+        URLProtocol.registerClass(MockNet.self)
+        defer { URLProtocol.unregisterClass(MockNet.self) }
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("<thinking>THINK_STEP [撤回]</thinking>\n你好\n再见")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        let all = try Repo.messages(chatId: "chat_a")
+        let tid = try XCTUnwrap(all.last { $0.role == .char }?.turnId)
+        let turn = all.filter { $0.turnId == tid }
+        XCTAssertEqual(turn.map(\.content), ["你好", "再见"])
+        XCTAssertFalse(turn.contains { $0.isRecalled }, "思考里的标记不起作用")
+        XCTAssertEqual(turn.first?.row.string("think"), "THINK_STEP [撤回]")
+        XCTAssertEqual(try MessageActions.thinkText(turn[1]), "THINK_STEP [撤回]")
+        let mine = try XCTUnwrap(Repo.messages(chatId: "chat_a").first { $0.role == .user })
+        XCTAssertEqual(try MessageActions.thinkText(mine), "", "自己的消息没有这一项")
+    }
 }

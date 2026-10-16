@@ -569,9 +569,17 @@ enum ChatPrompt {
         cap("card", on: !cardHits.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.card", ["cards": HtmlCard.promptList(cardHits)], settings: s)
         }
+        // 撤回动态那一半（网页版 capabilities.js 的 postLine）：最近一条还挂着的动态是什么。没有就不提
+        let livePost = Moments.by(char.id).first(where: { !$0.recalled })
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
-            line: "Withdraw a message: write [撤回] on its own line directly after that message.") {
-            Templates.render("skeleton.recall", ["post": ""], settings: s)
+            line: "Withdraw a message: write [撤回] on its own line directly after that message."
+                + (livePost != nil ? " Take down your latest post: write [撤回动态] on its own line." : "")) {
+            let post = livePost.map { mo -> String in
+                let text = mo.text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+                return Templates.render("skeleton.recall-post", ["when": Moments.show(mo.createdAt),
+                                                                 "text": text.isEmpty ? "(no text)" : String(text.prefix(80))], settings: s)
+            } ?? ""
+            return Templates.render("skeleton.recall", ["post": post], settings: s)
         }
         // 旁白：这段会话打开了，或者正在见面（见面时旁白必开：那是线下的写法）
         cap("narration", on: chat.row.bool("narration") || Face.on(chat), hot: true, line: nil) {

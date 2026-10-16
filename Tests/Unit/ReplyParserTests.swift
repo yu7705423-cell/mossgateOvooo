@@ -62,6 +62,35 @@ final class ReplyParserTests: XCTestCase {
         XCTAssertFalse(p[1].recall)
     }
 
+    /// 网页版 4.647 的九种写法（测试 recallmark）：都撤回那一条，标记不露在气泡里
+    func testRecallMarkVariants() {
+        let cases: [(String, String)] = [
+            ("算了\n其实我有点想你\n[撤回]", "其实我有点想你"),
+            ("其实我有点想你\n【撤回】", "其实我有点想你"),
+            ("其实我有点想你[撤回]", "其实我有点想你"),
+            ("其实我有点想你 [撤回]", "其实我有点想你"),
+            ("其实我有点想你\n[撤回了一条消息]", "其实我有点想你"),
+            ("其实我有点想你\n[撤回：其实我有点想你]", "其实我有点想你"),
+            ("其实我有点想你\n（撤回）", "其实我有点想你"),
+            ("其實我有點想你\n[撤迴]", "其實我有點想你"),
+            ("其实我有点想你\n[撤回]\n没什么", "其实我有点想你"),
+            ("其实我有点想你\n[已撤回]", "其实我有点想你"),
+            ("其实我有点想你\n[撤回这条]", "其实我有点想你"),
+            ("其实我有点想你\n[撤回了]", "其实我有点想你"),
+        ]
+        for (raw, want) in cases {
+            let p = parts(raw)
+            XCTAssertEqual(p.filter(\.recall).map(\.text), [want], raw)
+            XCTAssertFalse(p.contains { $0.text.contains("撤") && $0.text != want }, raw)
+        }
+        // 夹在一行中间的不是标记，不拆
+        XCTAssertEqual(parts("我[撤回]了一句话").map(\.text), ["我[撤回]了一句话"])
+        XCTAssertFalse(parts("我[撤回]了一句话")[0].recall)
+        // 撤回动态不跟着哪一条，不拆
+        XCTAssertEqual(MarkFold.splitTrailRecall("好的[撤回动态]"), "好的[撤回动态]")
+        XCTAssertEqual(MarkFold.splitTrailRecall("好的[撤回]。"), "好的\n[撤回]")
+    }
+
     func testSilence() {
         XCTAssertEqual(types("[不回复]"), [.silence])
         XCTAssertEqual(types("[已读不回]。"), [.silence])

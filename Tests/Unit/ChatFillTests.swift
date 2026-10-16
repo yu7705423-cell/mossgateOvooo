@@ -79,4 +79,17 @@ final class ChatFillTests: StoreTestCase {
         XCTAssertTrue(all.contains("[文件：旧.txt]"))
         XCTAssertThrowsError(try ChatFiles.send(dir.appendingPathComponent("x.pdf"), chatId: "chat_a"))
     }
+
+    /// 文件正文默认最多带 6000 字（网页版 defaults.js fileTextMax，4.271）；存过的值照用，0 表示全带
+    func testFileTextDefaultCap() throws {
+        var m = Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "[文件：长.txt]", kind: "file")
+        m.row["text"] = .string(String(repeating: "字", count: 7000))
+        let capped = ChatFiles.body(m, AppSettings.load())
+        XCTAssertTrue(capped.hasPrefix(String(repeating: "字", count: 6000) + "\n(truncated)"))
+        XCTAssertEqual(capped.filter { $0 == "字" }.count, 6000)
+        try setSettings(["fileTextMax": .number(0)])
+        XCTAssertEqual(ChatFiles.body(m, AppSettings.load()).count, 7000)
+        try setSettings(["fileTextMax": .number(100)])
+        XCTAssertEqual(ChatFiles.body(m, AppSettings.load()).filter { $0 == "字" }.count, 100)
+    }
 }

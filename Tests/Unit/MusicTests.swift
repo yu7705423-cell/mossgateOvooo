@@ -148,4 +148,53 @@ final class MusicTests: StoreTestCase {
         XCTAssertNil(try Database.shared.get("playlists", id: l.id))
         XCTAssertNotNil(MusicLibrary.song(s.id))
     }
+
+    /// 点歌先确认放得出来（网页版 music.playableSong，4.219）：原唱问不到播放地址就换别人唱的版本并写明；
+    /// 没搜到原唱也换并写明；一个能放的都没有就写明找不到。全程不调模型
+    func testPlayableSongFallsBackWithNotice() async throws {
+        func track(_ id: Int, _ title: String, _ artist: String) -> String {
+            #"{"id":\#(id),"name":"\#(title)","ar":[{"name":"\#(artist)"}],"al":{"name":"","picUrl":""},"dt":200000}"#
+        }
+        func serve(_ songs: [String], playableAfter: Int) {
+            MockNet.reset { r, _ in
+                let path = r.url?.path ?? ""
+                if path.contains("cloudsearch") {
+                    return .init(status: 200, body: #"{"code":200,"result":{"songs":["# + songs.joined(separator: ",") + "]}}")
+                }
+                if path.contains("player/url") {
+                    let n = MockNet.requests.filter { $0.url?.path.contains("player/url") == true }.count
+                    return .init(status: 200, body: n > playableAfter ? #"{"code":200,"data":[{"url":"http://m.test/a.mp3"}]}"# : #"{"code":200,"data":[{"url":null}]}"#)
+                }
+                return .init(status: 200, body: "{}")
+            }
+        }
+
+        // 原唱放不了（v1 与老接口各问一次都没有地址），换成翻唱
+        serve([track(1, "晴天", "周杰伦"), track(2, "晴天", "某翻唱")], playableAfter: 2)
+        let a = await MusicLibrary.playableSong("晴天 - 周杰伦")
+        XCTAssertEqual(a.song?.neteaseId, "2")
+        XCTAssertEqual(a.notice, "[周杰伦的《晴天》无法播放（需要会员或没有版权），换成了某翻唱演唱的版本]")
+        // 只收放得出来的那一首
+        XCTAssertEqual(try MusicLibrary.songs().filter { $0.source == "netease" }.map(\.neteaseId), ["2"])
+
+        // 没搜到原唱：换成别人唱的，写明
+        serve([track(3, "七里香", "别人")], playableAfter: 0)
+        let b = await MusicLibrary.playableSong("七里香 - 周杰伦")
+        XCTAssertEqual(b.song?.neteaseId, "3")
+        XCTAssertEqual(b.notice, "[没有找到周杰伦的《七里香》，换成了别人演唱的版本]")
+
+        // 原唱放得出来：不落提示
+        serve([track(4, "稻香", "周杰伦")], playableAfter: 0)
+        let c = await MusicLibrary.playableSong("稻香 - 周杰伦")
+        XCTAssertEqual(c.song?.neteaseId, "4")
+        XCTAssertEqual(c.notice, "")
+
+        // 一个都放不了
+        serve([track(5, "夜曲", "周杰伦"), track(6, "夜曲", "某翻唱")], playableAfter: 100)
+        let d = await MusicLibrary.playableSong("夜曲 - 周杰伦")
+        XCTAssertNil(d.song)
+        XCTAssertEqual(d.notice, "[没有找到可以播放的周杰伦的《夜曲》]")
+        XCTAssertFalse(try MusicLibrary.songs().contains { $0.neteaseId == "5" || $0.neteaseId == "6" })
+        XCTAssertFalse(MockNet.requests.contains { $0.url?.host == "main.test" })
+    }
 }

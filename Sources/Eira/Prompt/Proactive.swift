@@ -125,12 +125,15 @@ enum Proactive {
         return cap > 0 ? max(0, cap - chat.unread) : 0
     }
 
-    /// 这个角色现在能不能被发：有单人会话、未读没堆满、没在生成。
+    /// 这个角色现在能不能被发：有单人会话、没在当面、未读没堆满、没在生成（网页版 proactive.js 的 chatFor）。
     static func chatReady(_ charId: String, _ s: AppSettings = .load()) -> Chat? {
         guard let chat = soloChat(charId) else { return nil }
+        // 会话切到线下时不主动发消息：两个人正在一处
+        if Face.on(chat) { return nil }
         let cap = Int(s.raw["proactiveMaxUnread"]?.number ?? 3)
         if cap > 0 && chat.unread >= cap { return nil }
-        if Running.has(chat.id) { return nil }
+        // 回复正在生成（isReplying），或主动消息正在生成（isOpening）
+        if ChatEngine.isReplying(chat.id) || Running.has(chat.id) { return nil }
         return chat
     }
 
@@ -221,10 +224,11 @@ enum Proactive {
     private static func speak(chat: Chat, char: Character, mood: Bool = false, onRow: @escaping ChatEngine.OnRow) async throws -> [Message] {
         let chatId = chat.id
         let p = try payload(chat: chat, char: char, mood: mood)
-        let r = try await AIService.shared.send(task: "chat.proactive", system: p.system, messages: p.messages, maxTokens: p.maxTokens)
+        // 自动重试取 1 与用户的 retryMax 里小的那个（默认 0，网页版 runTextTask 的 retries: 1）
+        let r = try await AIService.shared.send(task: "chat.proactive", system: p.system, messages: p.messages, maxTokens: p.maxTokens, retries: 1)
         let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { throw StoreError(message: "模型返回了空内容") }
-        let served: JSONValue = .object(["id": .string(r.presetId), "name": .string(r.presetName)])
+        let served = ChatEngine.servedEntry(r)
         let made = try await ChatEngine.write(raw: raw, chat: chat, char: char, turnId: "p-\(Int(Date().millis))",
                                               versions: .init(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         try bumpUnread(chatId, made.count)

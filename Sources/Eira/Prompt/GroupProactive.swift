@@ -3,7 +3,8 @@ import Foundation
 /// 群里主动开口（网页版 proactive.js 的 sendGroupProactive / tickGroups，设置在 group.js 的 proactiveOf）。
 ///
 /// 开关存在群上（chat.groupProactive），默认关：这个群冷了一段时间之后，有人先说话。
-/// 一次触发一次调用，模型一次写出开口的那几个人（和平常一轮同一条路）。只在应用打开时发，后台消息服务器不代发。
+/// 一次触发一次调用，模型一次写出开口的那几个人（和平常一轮同一条路：主用接口、计一次 chat.reply，网页版 sendGroupProactive
+/// 经 streamGroupReply 走 runWith('chat.reply')；「任务用哪套接口」里的「角色主动发消息」管不到群）。只在应用打开时发，后台消息服务器不代发。
 /// 落点和角色的存在同一张表里，键是 g:群 id。先排下一次再发，失败也要再等一个完整的间隔。
 enum GroupProactive {
     static func key(_ chatId: String) -> String { "g:\(chatId)" }
@@ -44,11 +45,12 @@ enum GroupProactive {
         ], settings: s)
         await MainActor.run { Typing.shared.begin(chatId) }
         defer { Task { @MainActor in Typing.shared.end(chatId) } }
-        let r = try await AIService.shared.send(task: "chat.proactive", system: built.system,
-                                                messages: CallEngine.mergeAdjacent(built.messages + [AIMessage(role: .user, content: opening)]))
+        let r = try await AIService.shared.send(task: "chat.reply", system: built.system,
+                                                messages: CallEngine.mergeAdjacent(built.messages + [AIMessage(role: .user, content: opening)]),
+                                                retries: 1)
         let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !raw.isEmpty else { throw StoreError(message: "模型返回了空内容") }
-        let served: JSONValue = .object(["id": .string(r.presetId), "name": .string(r.presetName)])
+        let served = ChatEngine.servedEntry(r)
         let made = try await ChatEngine.write(raw: raw, chat: chat, char: lead, turnId: "gp-\(Int(Date().millis))",
                                               versions: .init(swipes: [raw], index: 0, served: [served]), onRow: onRow)
         try Proactive.bumpUnread(chatId, made.count)
@@ -61,7 +63,7 @@ enum GroupProactive {
     static func tick(now: Double = Date().millis, holds: Bool = false) async -> [String] {
         guard !holds else { return [] }
         let s = AppSettings.load()
-        guard !AIService.chain(task: "chat.proactive", group: RouteGroup.of(task: "chat.proactive"), settings: s).isEmpty else { return [] }
+        guard !AIService.chain(task: "chat.reply", group: RouteGroup.of(task: "chat.reply"), settings: s).isEmpty else { return [] }
         var fired: [String] = []
         for chat in (try? Repo.chats()) ?? [] where chat.isGroup {
             let k = key(chat.id)
@@ -78,7 +80,8 @@ enum GroupProactive {
             Proactive.setNext(k, now + Proactive.roll(c.minutes))
             // 能说话的都封存或禁言了、未读堆满了：不调接口
             let cap = Int(s.raw["proactiveMaxUnread"]?.number ?? 3)
-            guard !GroupChat.speaking(chat, members: GroupChat.members(chat)).isEmpty, cap <= 0 || chat.unread < cap, !Running.has(chat.id) else { continue }
+            guard !GroupChat.speaking(chat, members: GroupChat.members(chat)).isEmpty, cap <= 0 || chat.unread < cap,
+                  !Running.has(chat.id), !ChatEngine.isReplying(chat.id) else { continue }
             fired.append(chat.id)
             do { try await send(chatId: chat.id) }
             catch {

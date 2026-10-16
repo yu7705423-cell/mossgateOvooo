@@ -173,6 +173,19 @@ enum MessageActions {
         return true
     }
 
+    /// 这一轮模型写在 <thinking> 里的思考（网页版 4.580 的 thinkOf）：存在这一轮第一条的 think 上。没有为空
+    static func thinkText(_ m: Message) throws -> String {
+        guard m.role == .char else { return "" }
+        if !m.turnId.isEmpty {
+            let rows = try Repo.messages(chatId: m.chatId).filter { $0.turnId == m.turnId }
+            if let head = rows.first(where: { !$0.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+                return head.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return ""
+        }
+        return m.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// 生成信息：这一轮当前那一版由哪套接口、哪个模型、什么时候写的（记在这一轮第一条的 served 上）
     static func servedText(_ m: Message) throws -> String {
         guard !m.turnId.isEmpty else { return "这一条生成时尚未记录模型" }

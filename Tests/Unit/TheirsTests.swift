@@ -120,6 +120,26 @@ final class TheirsTests: StoreTestCase {
         XCTAssertEqual(Theirs.lock("char_a")?.src, "ai")
     }
 
+    /// 点开一段会话生成、代发后对方回话：「对方不是用户」那句填上用户的名字（网页版 tasks/phone.js userNamesOf，4.605）。
+    /// 身份名在前，角色给你改的备注在后（空白折成一个空格）
+    func testPhoneChatAndReplyNameTheUser() async throws {
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["charRemark"] = .string("  老\n婆  ")
+        try Repo.save(chat)
+        XCTAssertEqual(Theirs.userNames("char_a"), ["小于", "老 婆"])
+        let c = try Theirs.startChat("char_a", npcId: "", name: "同事")
+        func lastBody() -> String { String(decoding: MockNet.requests.last?.httpBodyStreamData() ?? Data(), as: UTF8.self) }
+        do { _ = try await Theirs.makeChat(c.id); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertTrue(lastBody().contains("(小于、老 婆)"), lastBody())
+        XCTAssertFalse(lastBody().contains("{{userNames}}"))
+        _ = try Theirs.sendOther(c.id, "明天见", mode: Theirs.proxyAware)
+        do { _ = try await Theirs.reply(c.id); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 2)
+        XCTAssertTrue(lastBody().contains("(小于、老 婆)"), lastBody())
+        XCTAssertFalse(lastBody().contains("{{userNames}}"))
+    }
+
     func testLockcodeMarkerCooldownAndUndo() async throws {
         Theirs.open("char_a")
         MockNet.reset { _, _ in self.reply("好\n[改密码：0520｜纪念日]") }

@@ -240,24 +240,88 @@ enum DayPlan {
 
     // MARK: - 日程（模型）
 
-    /// 交给模型的「现在是什么情况」：剧情摘要、最近的记忆、最近的对话。
+    /// 硬约束（网页版 constraintsOf）：这段单人会话的纪念日当天或三天之内、还没完成的约定。没有单人会话就是空的
+    static func constraints(_ char: Character, now: Date = Date()) -> String {
+        guard let chat = Diary.chatWith(char.id) else { return "" }
+        var lines: [String] = []
+        for x in Space.upcoming(chat.id, now: now) {
+            let title = x.item.string("title")
+            if x.left == 0 { lines.append("- Today is \(title); the day must be planned around it") }
+            else if x.left > 0 && x.left <= 3 { lines.append("- \(title) is \(x.left) days away; preparation may begin") }
+        }
+        for m in Space.pacts(chat.id) where m.row.string("pact") == Space.pactOpen {
+            lines.append("- An unfulfilled promise is outstanding: \(m.row.string("title"))")
+        }
+        return lines.joined(separator: "\n")
+    }
+
+    private static func clip(_ t: String, _ n: Int) -> String {
+        String(t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines).prefix(n))
+    }
+
+    /// 没收场的那一场（网页版 liveSceneOf，4.401）：最近动过、还没收场、写过正文的那一场
+    static func liveScene(_ chatId: String) -> (scene: Row, body: [Row])? {
+        for sc in Scenes.ofChat(chatId) where (sc.number("endedAt") ?? 0) <= 0 {
+            let body = Scenes.beatsOf(sc.id).filter {
+                $0.string("role") != Scenes.DIRECTOR && !$0.string("text").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            if !body.isEmpty { return (sc, body) }
+        }
+        return nil
+    }
+
+    /// 那一场单独一段：地点、最近写到的时刻、最近几段全文（段数 dayPlanSceneBeats，默认 4，0 为全带）
+    private static func liveSceneBlock(_ live: (scene: Row, body: [Row]), char: Character, settings s: AppSettings) -> (text: String, ids: Set<String>) {
+        let raw = s.raw["dayPlanSceneBeats"]?.number ?? 4
+        let cap = raw >= 0 ? Int(raw.rounded()) : 4
+        let shown = cap > 0 ? Array(live.body.suffix(cap)) : live.body
+        var lines = ["An in-person scene with the user is in progress and has not ended. It is the most recent account of where the character is and what is happening."]
+        let title = live.scene.string("title"), place = live.scene.string("place")
+        if !title.isEmpty { lines.append("Title: \(title)") }
+        if !place.isEmpty { lines.append("Place: \(place)") }
+        let at = Scenes.timeOf(live.scene.id)
+        if !at.isEmpty { lines.append("Latest time written in the scene: \(at)") }
+        let name = char.name.isEmpty ? "Character" : char.name
+        lines.append("Most recent passages of the scene (oldest first):\n" + shown.map {
+            "\($0.string("role") == Scenes.ME ? "User" : name): \($0.string("text").trimmingCharacters(in: .whitespacesAndNewlines))"
+        }.joined(separator: "\n\n"))
+        return (lines.joined(separator: "\n"), Set(shown.map(\.id)))
+    }
+
+    /// 交给模型的「现在是什么情况」（网页版 situationOf，4.318、4.401）：剧情摘要、最近的记忆、最近的对话与线下正文、
+    /// 没收场的那一场（单独一段、全文，它的那几段不再出现在截过的对话里）、你今天的日程。
     static func situation(_ char: Character, settings s: AppSettings) throws -> String {
         var parts: [String] = []
         let chat = Diary.chatWith(char.id)
-        if let chat, !chat.summary.isEmpty { parts.append("Story so far:\n" + String(chat.summary.prefix(1500))) }
+        if let chat, !chat.summary.isEmpty { parts.append("Story so far:\n" + clip(chat.summary, 1500)) }
         let mems = try Repo.memories(charId: char.id).sorted { ($0.row.number("createdAt") ?? 0) > ($1.row.number("createdAt") ?? 0) }
             .filter { $0.row["supersededBy"] == nil || $0.row["supersededBy"]?.isNull == true }.prefix(8)
-        if !mems.isEmpty { parts.append("Recent memories:\n" + mems.map { "- " + String($0.content.prefix(160)) }.joined(separator: "\n")) }
+        if !mems.isEmpty { parts.append("Recent memories:\n" + mems.map { "- " + clip($0.content, 160) }.joined(separator: "\n")) }
         if let chat {
-            let n = Int(s.raw["dayPlanRecent"]?.number ?? 12)
-            let msgs = try Repo.messages(chatId: chat.id).filter { !$0.isError && !$0.content.isEmpty }
-            let rows = n > 0 ? Array(msgs.suffix(n)) : msgs
-            let me = (try? Repo.activePersona())?.name ?? "User"
-            if !rows.isEmpty {
-                parts.append("Most recent conversation (oldest first):\n" + rows.map {
-                    "\($0.role == .user ? me : char.name): \(String($0.content.prefix(200)))"
-                }.joined(separator: "\n"))
+            let name = char.name.isEmpty ? "Character" : char.name
+            let live = liveScene(chat.id)
+            let liveBlock = live.map { liveSceneBlock($0, char: char, settings: s) }
+            let raw = s.raw["dayPlanRecent"]?.number ?? 12
+            let n = raw >= 0 ? Int(raw.rounded()) : 12
+            var talk: [(at: Double, who: String, text: String)] = try Repo.messages(chatId: chat.id)
+                .filter { !$0.isError && !$0.content.isEmpty && $0.kind != "typing" }
+                .map { (at: $0.createdAt, who: $0.role == .user ? "User" : name, text: $0.content) }
+            for sc in Scenes.ofChat(chat.id) {
+                for b in Scenes.beatsOf(sc.id) where b.string("role") != Scenes.DIRECTOR
+                    && !b.string("text").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    && !(liveBlock?.ids.contains(b.id) ?? false) {
+                    talk.append((at: b.created ?? 0, who: b.string("role") == Scenes.ME ? "User" : name, text: b.string("text")))
+                }
             }
+            talk = talk.enumerated().sorted { a, b in
+                a.element.at != b.element.at ? a.element.at < b.element.at : a.offset < b.offset
+            }.map(\.element)
+            let rows = n > 0 ? Array(talk.suffix(n)) : talk
+            if !rows.isEmpty {
+                parts.append("Most recent conversation (oldest first):\n" + rows.map { "\($0.who): \(clip($0.text, 200))" }.joined(separator: "\n"))
+            }
+            if let liveBlock { parts.append(liveBlock.text) }
         }
         // 你今天的日程（网页版 4.321）：开关在「我的日程」页，默认关；不给这个角色看的不带
         let mine = UserSched.forDayPlan(char, personaId: chat?.personaId ?? "", settings: s)
@@ -268,11 +332,15 @@ enum DayPlan {
     /// 排今天的日程（一次请求）。返回事项与睡着时的自动回复。
     static func generatePlan(_ char: Character, date: String, settings s: AppSettings,
                              weather: Weather.Forecast? = nil) async throws -> (items: [JSONValue], sleep: String) {
+        // 纪念日、还没完成的约定是硬约束（网页版 constraintsOf）
+        let cons = constraints(char)
         let system = Templates.render("task.day-plan", [
             "charName": char.name.isEmpty ? "该角色" : char.name,
             "charPersona": char.persona.isEmpty ? "(no character card was written)" : char.persona,
-            "date": date, "weekday": weekday(char), "zone": zone(char).identifier,
-            "weather": weather.map { "## Weather\n" + Weather.promptLine($0) } ?? "", "constraints": "", "situation": try situation(char, settings: s),
+            "date": date, "weekday": weekday(char), "zone": Clock.label(Clock.charZone(char, s)),
+            "weather": weather.map { "## Weather\n" + Weather.promptLine($0) } ?? "",
+            "constraints": cons.isEmpty ? "" : "## Fixed commitments today\n" + cons,
+            "situation": try situation(char, settings: s),
             "slots": slots.map { "\($0.id) = \($0.label) (\($0.from):00 to \($0.to):00)" }.joined(separator: "\n"),
         ], settings: s)
         let r = try await AIService.shared.send(task: "day.plan", system: system,

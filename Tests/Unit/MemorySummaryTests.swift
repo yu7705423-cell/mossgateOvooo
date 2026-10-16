@@ -116,6 +116,69 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertTrue(lines[3].range(of: #"^\[\d{2}:\d{2}\] 小于：我回来了$"#, options: .regularExpression) != nil)
     }
 
+    /// 时间线按用户的时区与虚拟时间写（网页版 clock.toWorld），线上 / 线下切换写成「[以下当面]」「[以下在手机上]」
+    func testTimelineZoneVirtualAndFace() {
+        var s = AppSettings.load()
+        let base = Date(timeIntervalSince1970: 1_760_000_000).millis  // 2025-10-09 08:53:20 UTC，周四
+        s.raw["timeZoneUser"] = .string("Asia/Tokyo")
+        s.raw["timeMode"] = .string("virtual")
+        s.raw["timeSetAt"] = .number(base)
+        s.raw["timeVirtualAt"] = .number(base + 86_400_000)  // 虚拟时间快一天
+        var a = Message.new(chatId: "c", role: .user, authorId: "me", content: "早")
+        a.row["createdAt"] = .number(base)
+        var mark = Message.new(chatId: "c", role: .user, authorId: "me", content: "[线下]", kind: "side")
+        mark.row["side"] = .string(Face.FACE)
+        mark.row["createdAt"] = .number(base + 30_000)
+        var b = Message.new(chatId: "c", role: .char, authorId: "x", content: "到了")
+        b.row["createdAt"] = .number(base + 60_000)
+        var back = Message.new(chatId: "c", role: .user, authorId: "me", content: "[回到线上]", kind: "side")
+        back.row["side"] = .string(Face.PHONE)
+        back.row["createdAt"] = .number(base + 90_000)
+        var c = Message.new(chatId: "c", role: .user, authorId: "me", content: "我回来了")
+        c.row["createdAt"] = .number(base + 3 * 3_600_000)
+        let lines = MemorySummary.timeline([a, mark, b, back, c], settings: s) { $0.role == .user ? "小于" : "林" }
+            .components(separatedBy: "\n")
+        XCTAssertEqual(lines, ["[2025-10-10 周五]", "小于：早", "[以下当面]", "林：到了", "[以下在手机上]", "[20:53] 小于：我回来了"])
+        // 今天是哪天：同样按虚拟时间与用户时区
+        XCTAssertEqual(MemorySummary.todayText(Date(millis: base), settings: s), "2025-10-10 (周五), 17:53")
+    }
+
+    /// 用途为「记忆总结」的世界书（4.395）：命中的与常驻的接在总结的提示词后面；没命中的、聊天用的书不进
+    func testMemoryLoreInSummary() async throws {
+        func entry(_ id: String, _ content: String, keys: [String] = [], constant: Bool = false) -> JSONValue {
+            .object(["id": .string(id), "content": .string(content), "keys": .array(keys.map { .string($0) }),
+                     "constant": .bool(constant), "enabled": .bool(true)])
+        }
+        try Database.shared.put(Collections.lorebooks, Row.new(prefix: "lb", [
+            "name": .string("总结用"), "global": .bool(true), "forMemory": .bool(true),
+            "entries": .array([entry("e1", "LORE-HIT", keys: ["你好"]), entry("e2", "LORE-MISS", keys: ["不会出现的词"]),
+                               entry("e3", "LORE-CONST", constant: true)]),
+        ]))
+        try Database.shared.put(Collections.lorebooks, Row.new(prefix: "lb", [
+            "name": .string("聊天用"), "global": .bool(true), "entries": .array([entry("e4", "LORE-CHAT", constant: true)]),
+        ]))
+        reply(#"{"events":[],"facts":[],"ended":[],"open":[],"closed":[]}"#)
+        _ = try await MemorySummary.extract(chatId: "chat_a")
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("Reference for this summary"))
+        XCTAssertTrue(body.contains("LORE-HIT"))
+        XCTAssertTrue(body.contains("LORE-CONST"))
+        XCTAssertFalse(body.contains("LORE-MISS"))
+        XCTAssertFalse(body.contains("LORE-CHAT"))
+    }
+
+    /// 总结的重试次数取 1 与用户的「自动重试」中较小的那个（网页版 runJSONTask 默认 retries 1）：默认 0 次，设成 3 也只重试 1 次
+    func testExtractRetriesCappedAtOne() async throws {
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        do { _ = try await MemorySummary.extract(chatId: "chat_a"); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+        try setSettings(["retryMax": .number(3)])
+        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"down"}}"#) }
+        do { _ = try await MemorySummary.extract(chatId: "chat_a"); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(MockNet.count, 2)
+    }
+
     /// 现状：手写一块就锁住，模型总结时锁住的那块不改；解锁之后照改
     func testStateManualLock() throws {
         let key = try MemorySummary.stateKey("me_root")

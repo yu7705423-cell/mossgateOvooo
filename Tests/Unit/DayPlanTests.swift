@@ -112,4 +112,57 @@ final class DayPlanTests: StoreTestCase {
         XCTAssertEqual(meals.first?["name"]?.string, "豆浆油条")
         XCTAssertEqual(try Database.shared.all("meals", where: "char_a").count, 1)
     }
+
+    /// 硬约束（网页版 constraintsOf）：当天与三天之内的纪念日、还没完成的约定；时区写成名字（网页版 zoneLabel）
+    func testPlanConstraintsAndZone() async throws {
+        let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd"
+        let today = f.string(from: Date())
+        let in2 = f.string(from: Date().addingTimeInterval(2 * 86400))
+        let in10 = f.string(from: Date().addingTimeInterval(10 * 86400))
+        try Space.addDay(chatId: "chat_a", title: "纪念日甲", date: today, yearly: false)
+        try Space.addDay(chatId: "chat_a", title: "纪念日乙", date: in2, yearly: false)
+        try Space.addDay(chatId: "chat_a", title: "纪念日丙", date: in10, yearly: false)
+        _ = try Repo.append(Space.makePact(chatId: "chat_a", role: .char, authorId: "char_a", title: "一起看海"))
+        let c = try XCTUnwrap(Repo.character("char_a"))
+        let cons = DayPlan.constraints(c)
+        XCTAssertTrue(cons.contains("- Today is 纪念日甲; the day must be planned around it"))
+        XCTAssertTrue(cons.contains("- 纪念日乙 is 2 days away; preparation may begin"))
+        XCTAssertFalse(cons.contains("纪念日丙"))
+        XCTAssertTrue(cons.contains("- An unfulfilled promise is outstanding: 一起看海"))
+
+        try Diary.patchChar("char_a", ["timezone": .string("Asia/Tokyo")])
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(#"{"items":[{"slot":"morning","text":"准备"}],"sleep":""}"#)) }
+        _ = try await DayPlan.generatePlan(try XCTUnwrap(Repo.character("char_a")), date: today, settings: .load())
+        XCTAssertEqual(MockNet.count, 1)
+        let body = String(data: MockNet.requests[0].httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("Fixed commitments today"))
+        XCTAssertTrue(body.contains("一起看海"))
+        XCTAssertTrue(body.contains("日本 · 东京"))
+    }
+
+    /// 没收场的线下那一场单独一段、全文，段数 dayPlanSceneBeats（默认 4）；收了场的不算（网页版 4.318、4.401）
+    func testSituationLiveScene() throws {
+        let sc = try Scenes.create(chatId: "chat_a", Scenes.Draft(title: "海边", place: "酒店大堂"))
+        for i in 1...6 { try Scenes.addBeat(sceneId: sc.id, role: Scenes.CHAR, authorId: "char_a", text: "第\(i)段正文") }
+        let c = try XCTUnwrap(Repo.character("char_a"))
+        var text = try DayPlan.situation(c, settings: .load())
+        XCTAssertTrue(text.contains("An in-person scene with the user is in progress"))
+        XCTAssertTrue(text.contains("Place: 酒店大堂"))
+        for i in 3...6 { XCTAssertTrue(text.contains("林: 第\(i)段正文")) }
+        // 全文那几段不在截过的对话里重复
+        XCTAssertEqual(text.components(separatedBy: "第6段正文").count - 1, 1)
+        // 前两段落进最近的对话
+        XCTAssertTrue(text.contains("Most recent conversation (oldest first):"))
+        XCTAssertTrue(text.contains("第1段正文"))
+        try setSettings(["dayPlanSceneBeats": .number(0)])
+        text = try DayPlan.situation(c, settings: .load())
+        XCTAssertEqual(text.components(separatedBy: "第1段正文").count - 1, 1)
+        try Scenes.end(sc.id)
+        text = try DayPlan.situation(c, settings: .load())
+        XCTAssertFalse(text.contains("An in-person scene with the user is in progress"))
+        XCTAssertTrue(text.contains("第6段正文"))
+    }
 }

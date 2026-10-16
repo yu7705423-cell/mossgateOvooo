@@ -101,6 +101,120 @@ final class CallTests: StoreTestCase {
         try setSettings(["callSummary": .bool(false)])
         XCTAssertFalse(CallEngine.autoSummary(outcome: "done", lines: lines))
     }
+    /// 括起来的那一截（网页版 call.js speakable / splitNote，4.478）：行首或句末标点之后开始的不念；
+    /// 收尾时和原话一样的扔掉，是这段对话要的译文就当译文，其余留在字幕里
+    func testParenNotes() throws {
+        XCTAssertEqual(CallEngine.speakable("（叹气）好吧。（小声）算了"), "好吧。算了")
+        XCTAssertEqual(CallEngine.speakable("你好（笑）"), "你好（笑）")
+        XCTAssertEqual(CallEngine.speakable("好的。（没说完"), "好的。")
+        XCTAssertEqual(CallEngine.speakable("[动作：挥手]你好。\n（I'm here.）"), "你好。")
+
+        XCTAssertEqual(CallEngine.splitNote("我在。（I'm here.）").main, "我在。")
+        XCTAssertEqual(CallEngine.splitNote("我在。（I'm here.）").note, "I'm here.")
+        XCTAssertEqual(CallEngine.splitNote("你好（笑）").note, "")
+
+        var chat = try XCTUnwrap(Repo.chat("chat_a"))
+        chat.row["translateTo"] = .string("English")
+        // 是译文：从台词里拿掉，当译文
+        let a = CallEngine.settle("我在。（I'm here.）", chat: chat)
+        XCTAssertEqual(a.text, "我在。")
+        XCTAssertEqual(a.trans, "I'm here.")
+        XCTAssertEqual(CallEngine.subtitle(CallEngine.Line(role: "char", text: a.text, trans: a.trans)), "我在。\nI'm here.")
+        // 重复原话：扔掉
+        let b = CallEngine.settle("好的。（好的！）", chat: chat)
+        XCTAssertEqual(b.text, "好的。")
+        XCTAssertEqual(b.trans, "")
+        // 其余的留在字幕里，照样不念
+        let c = CallEngine.settle("好的。（叹气）", chat: chat)
+        XCTAssertEqual(c.text, "好的。（叹气）")
+        XCTAssertEqual(c.trans, "")
+        XCTAssertEqual(CallEngine.speakable(c.text), "好的。")
+        // 没设翻译语言：英文那一截不算译文，留着
+        chat.row["translateTo"] = .string("")
+        XCTAssertEqual(CallEngine.settle("我在。（I'm here.）", chat: chat).text, "我在。（I'm here.）")
+    }
+
+    /// 已经是目标语言的不送去翻（网页版 translate.alreadyIn，4.570）
+    func testAlreadyIn() {
+        XCTAssertTrue(CallEngine.alreadyIn("你好，今天怎么样", "中文"))
+        XCTAssertTrue(CallEngine.alreadyIn("好的 ok", "简体中文"))
+        XCTAssertFalse(CallEngine.alreadyIn("宝贝我好想你 my love", "中文"))
+        XCTAssertFalse(CallEngine.alreadyIn("想你了，мой милый", "中文"))
+        XCTAssertTrue(CallEngine.alreadyIn("See you!", "English"))
+        XCTAssertFalse(CallEngine.alreadyIn("See 你", "en"))
+        XCTAssertTrue(CallEngine.alreadyIn("こんにちは", "日语"))
+        XCTAssertTrue(CallEngine.alreadyIn("안녕", "韩语"))
+        XCTAssertFalse(CallEngine.alreadyIn("Bonjour", "法语"))
+    }
+
+    private func translateApi(_ on: Bool, lang: String) throws {
+        var services: [String: JSONValue] = ["chat": .object([
+            "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
+                                         "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])]),
+            "activeId": .string("svc_main")])]
+        if on {
+            services["translate"] = .object(["mode": .string("api"), "provider": .string("anthropic"),
+                                             "baseUrl": .string("https://tr.test"), "apiKey": .string("k"), "model": .string("t")])
+        }
+        try setSettings(["services": .object(services)])
+        var c = try XCTUnwrap(Repo.chat("chat_a"))
+        c.row["translateTo"] = .string(lang)
+        try Repo.save(c)
+    }
+
+    /// 单独配了翻译接口：通话提示词里不让模型写译文，一轮说完逐句交给翻译接口，一轮一次；
+    /// 已经是目标语言的句子不送，整轮都是就不调；随回复写译文那一档一次都不调（网页版 transLine，4.633）
+    func testCallTranslateApi() async throws {
+        try translateApi(true, lang: "中文")
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let p = try CallEngine.prepare(chat: chat, char: XCTUnwrap(Repo.character("char_a")))
+        XCTAssertFalse(p.system.contains("[译文："))
+        XCTAssertTrue(p.system.contains("Do not repeat your line or add a translation"))
+
+        MockNet.reset { r, _ in
+            if r.url?.host == "tr.test" { return .init(status: 200, body: MockNet.anthropicStream(#"{"lines":["你好啊！","再见！"]}"#)) }
+            return .init(status: 500, body: "{}")
+        }
+        let text = "Hello there! 你好。[动作：挥手]See you!"
+        let segs = try await CallEngine.translateLine(chat: chat, text: text)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(MockNet.requests.first?.url?.host, "tr.test")
+        let body = String(decoding: MockNet.requests.first?.httpBodyStreamData() ?? Data(), as: UTF8.self)
+        XCTAssertTrue(body.contains("2. See you!"))
+        XCTAssertFalse(body.contains("挥手"))
+        XCTAssertEqual(segs ?? [], [CallEngine.Seg(t: "Hello there!", tr: "你好啊！"), CallEngine.Seg(t: "你好。", tr: ""),
+                                    CallEngine.Seg(t: "[动作：挥手]See you!", tr: "再见！")])
+        XCTAssertEqual(CallEngine.subtitle(CallEngine.Line(role: "char", text: text, segs: segs ?? [])),
+                       "Hello there!\n你好啊！\n你好。\n（挥手）See you!\n再见！")
+
+        // 整轮都已是目标语言：不调
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let none = try await CallEngine.translateLine(chat: chat, text: "你好。今天怎么样？")
+        XCTAssertNil(none)
+        XCTAssertEqual(MockNet.count, 0)
+
+        // 翻译接口一直失败：一轮只打一次，不重试
+        try setSettings(["retryMax": .number(3)])
+        do { _ = try await CallEngine.translateLine(chat: chat, text: "Hello!"); XCTFail("应当报错") } catch {}
+        XCTAssertEqual(MockNet.count, 1)
+
+        // 晚到的译文写回通话记录
+        let m = try CallEngine.finish(chatId: "chat_a", charId: "char_a", direction: "out", outcome: "done", seconds: 5,
+                                      lines: [.init(role: "char", text: "Hello!")], userName: "小于", charName: "林")
+        try CallEngine.storeSegs(messageId: m.id, index: 0, text: "Hello!", segs: [CallEngine.Seg(t: "Hello!", tr: "你好！")])
+        let log = try XCTUnwrap(Database.shared.get(Collections.messages, id: m.id)?["callLog"]?.array?.first?.object)
+        XCTAssertEqual(CallEngine.subtitle(log: log), "Hello!\n你好！")
+
+        // 随回复写译文那一档：提示词里让模型写 [译文：…]，不另调接口
+        try translateApi(false, lang: "中文")
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        let inline = try XCTUnwrap(Repo.chat("chat_a"))
+        XCTAssertTrue(try CallEngine.prepare(chat: inline, char: XCTUnwrap(Repo.character("char_a"))).system.contains("[译文："))
+        let skipped = try await CallEngine.translateLine(chat: inline, text: "Hello!")
+        XCTAssertNil(skipped)
+        XCTAssertEqual(MockNet.count, 0)
+    }
+
     /// 角色写了 [去电] 而人不在这段对话里：不响铃，记一条未接来电，不调接口
     func testRingWhenAwayIsMissed() async throws {
         MockNet.reset { _, _ in .init(status: 500, body: "{}") }

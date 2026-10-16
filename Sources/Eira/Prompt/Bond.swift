@@ -54,7 +54,7 @@ enum Bond {
         do {
             text = try await AIService.shared.send(task: "memory.bond", system: system,
                                                   messages: [AIMessage(role: .user, content: "Produce the output as instructed.")],
-                                                  maxTokens: 400).text.trimmingCharacters(in: .whitespacesAndNewlines)
+                                                  maxTokens: 400, retries: 1).text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             try? write(charId: charId, key: key, ["failed": .string(error.localizedDescription)])
             throw error

@@ -183,43 +183,79 @@ enum MemorySummary {
 
     // MARK: - 时间线
 
-    private static func dayKey(_ t: Double) -> String { TimeText.day(Date(timeIntervalSince1970: t / 1000)) }
-
-    private static func weekday(_ t: Double) -> String {
+    /// 真实时刻在用户时区里的年月日、星期、时刻（网页版 dayAt / weekdayAt / clockAt）：
+    /// 跟着「时间感知」的虚拟时间走（clock.toWorld），按「我在哪个时区」读，和历史里的时刻一致
+    private static func parts(_ t: Double, _ s: AppSettings) -> (day: String, weekday: String, clock: String) {
+        let d = Clock.toWorld(t, s)
+        let z = Clock.zone(Clock.userZone(s))
         let f = DateFormatter()
+        f.calendar = Calendar(identifier: .gregorian)
         f.locale = Locale(identifier: "en_US_POSIX")
-        f.dateFormat = "EEE"
-        return f.string(from: Date(timeIntervalSince1970: t / 1000))
-    }
-
-    private static func clock(_ t: Double) -> String {
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = z
+        f.dateFormat = "yyyy-MM-dd"
+        let day = f.string(from: d)
         f.dateFormat = "HH:mm"
-        return f.string(from: Date(timeIntervalSince1970: t / 1000))
+        let clock = f.string(from: d)
+        // 网页版用 zh-CN 的短星期（周三）
+        let w = DateFormatter()
+        w.calendar = Calendar(identifier: .gregorian)
+        w.locale = Locale(identifier: "zh_CN")
+        w.timeZone = z
+        w.dateFormat = "EEE"
+        return (day, w.string(from: d), clock)
     }
 
-    static func todayText(_ now: Date = Date()) -> String {
-        let t = now.millis
-        return "\(dayKey(t)) (\(weekday(t))), \(clock(t))"
+    static func todayText(_ now: Date = Date(), settings s: AppSettings = .load()) -> String {
+        let p = parts(now.millis, s)
+        return "\(p.day) (\(p.weekday)), \(p.clock)"
     }
 
-    /// 对话摆成带时间线的文字：换一天插一行日期，隔半小时以上插时刻。
-    static func timeline(_ list: [Message], who: (Message) -> String) -> String {
+    /// 对话摆成带时间线的文字：换一天插一行日期，隔半小时以上插时刻（网页版 timeline）。
+    /// 线上 / 线下切换的分隔线写成「[以下当面]」「[以下在手机上]」
+    static func timeline(_ list: [Message], settings s: AppSettings = .load(), who: (Message) -> String) -> String {
         var out: [String] = []
         var day = ""
         var last: Double = 0
         for m in list {
+            if AutoReply.localOnly(m) { continue }
+            if Face.isMark(m) { out.append(Face.sideOf(m) == Face.FACE ? "[以下当面]" : "[以下在手机上]"); continue }
             let t = m.createdAt
+            var p: (day: String, weekday: String, clock: String)?
             if t > 0 {
-                let d = dayKey(t)
-                if d != day { out.append("[\(d) \(weekday(t))]"); day = d; last = 0 }
+                let q = parts(t, s)
+                p = q
+                if q.day != day { out.append("[\(q.day) \(q.weekday)]"); day = q.day; last = 0 }
             }
-            let stamp = t > 0 && last > 0 && t - last >= 30 * 60_000 ? "[\(clock(t))] " : ""
+            let stamp = t > 0 && last > 0 && t - last >= 30 * 60_000 ? "[\(p?.clock ?? "")] " : ""
             out.append("\(stamp)\(who(m))：\(m.content)")
             if t > 0 { last = t }
         }
         return out.joined(separator: "\n")
+    }
+
+    /// 拿去扫世界书、挑相关记忆的那段纯文字：分隔线与只在本机显示的不算（网页版 dialogueText）
+    static func dialogueText(_ list: [Message]) -> String {
+        list.filter { !Face.isMark($0) && !AutoReply.localOnly($0) }.map(\.content).filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
+    /// 记忆总结用的那几本世界书（网页版 memoryLore / activateMemory，4.395）：用途为「记忆总结」、挂在这几位角色上的或全局的，
+    /// 拿这一批对话去扫，命中的与常驻的交给总结的模型。群里各成员的书取并集，同一条只算一次。不设预算。聊天不注入
+    static func memoryLore(owners: [Character], text: String, settings s: AppSettings = .load()) -> String {
+        var seen = Set<String>()
+        var items: [LoreEntry] = []
+        for c in owners {
+            for e in ChatPrompt.pickPurpose(char: c, scanText: text, purpose: "memory") where seen.insert("\(e.id)\u{1F}\(e.content)").inserted {
+                items.append(e)
+            }
+        }
+        items.sort { a, b in
+            if a.part != b.part { return a.part == "before" }
+            if a.depth != b.depth { return a.depth > b.depth }
+            if a.priority != b.priority { return a.priority > b.priority }
+            return a.order < b.order
+        }
+        let texts = items.map { $0.content.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        return texts.isEmpty ? "" : Templates.render("task.memory-lore", ["text": texts.joined(separator: "\n\n")], settings: s)
     }
 
     // MARK: - 现状（网页版 mind.js）
@@ -342,7 +378,8 @@ enum MemorySummary {
         return existing.filter { pick.contains($0.id) }
     }
 
-    private static func dayOf(_ t: Double) -> String { t > 0 ? dayKey(t) : "" }
+    /// 已有记忆的日期按设备本地时区（网页版 context/memory.js 的 dayOf）
+    private static func dayOf(_ t: Double) -> String { t > 0 ? TimeText.day(Date(timeIntervalSince1970: t / 1000)) : "" }
 
     /// 模型给的 YYYY-MM-DD 读成当天正午（本地时区）。认不出回 0。
     static func dateAt(_ v: JSONValue?) -> Double {
@@ -398,7 +435,7 @@ enum MemorySummary {
         let userLabel = !pname.isEmpty && pname.count <= 24 && !isPronoun ? pname : "User"
         let who = Templates.render("task.memory-who", ["user": userLabel, "chars": owners.map { "\"\($0.name)\"" }.joined(separator: ", ")], settings: s)
         // 线下正文前面标一下是见面时的事；群戏里别的角色写的那段署它自己的名字
-        let dialogue = timeline(batch) { m in
+        let dialogue = timeline(batch, settings: s) { m in
             let name = m.role == .user ? userLabel
                 : (m.authorId == char.id || m.authorId.isEmpty ? char.name : (((try? Repo.character(m.authorId)) ?? nil)?.name ?? char.name))
             return m.kind == "beat" ? "\(name)（线下）" : name
@@ -410,7 +447,7 @@ enum MemorySummary {
             return "(id:\(m.id)) [since \(dayOf(m.at).isEmpty ? "?" : dayOf(m.at))\(due.isEmpty ? "" : ", due \(due)")] \(m.content)"
         }.joined(separator: "\n")
         let others = sent(existing.filter { m in !opens.contains { $0.id == m.id } },
-                          text: batch.map(\.content).joined(separator: "\n"), settings: s)
+                          text: dialogueText(batch), settings: s)
         let existingText = others.isEmpty ? "(no other memories)" : others.map { m in
             let day = dayOf(m.at)
             let tag: String
@@ -426,10 +463,12 @@ enum MemorySummary {
 
         // 自定义互动标识里「模型判断」的那几个搭在这一次上（网页版 4.320），不多调接口
         let badgeSent = BadgeDefs.inSummary(s) ? BadgeDefs.judgeFor(chat) : []
+        // 用途为「记忆总结」的世界书（4.395）：拿这一批对话去扫，接在任务说明后面
+        let lore = memoryLore(owners: owners, text: dialogueText(batch), settings: s)
         let system = Templates.render("task.memory-extract", [
-            "today": todayText(), "who": who, "state": chat.isGroup ? "(not kept for group chats)" : stateText(char: char, key: key),
+            "today": todayText(settings: s), "who": who, "state": chat.isGroup ? "(not kept for group chats)" : stateText(char: char, key: key),
             "open": openText, "existing": existingText, "dialogue": dialogue,
-        ], settings: s) + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
+        ], settings: s) + (lore.isEmpty ? "" : "\n\n" + lore) + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
 
         // 先记「试过到哪一条」再发：失败也算试过，自动那一档要再攒够一个间隔才重试
         var tried = chat
@@ -441,7 +480,7 @@ enum MemorySummary {
         let cap2 = int(s, "memoryExtractMaxTokens")
         let r = try await AIService.shared.send(task: "memory.extract", system: system,
                                                 messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.")],
-                                                maxTokens: cap2)
+                                                maxTokens: cap2, retries: 1)
         guard let result = JSONReply.parse(r.text)?.object else { throw StoreError(message: JSONReply.failure(r.text)) }
 
         let at = batch.last?.createdAt ?? Date().millis

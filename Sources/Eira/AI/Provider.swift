@@ -179,8 +179,13 @@ enum Provider {
         } catch {
             throw AIError(status: nil, message: "连接失败：\(error.localizedDescription)", partial: text)
         }
-        return stripThink(text)
+        // 回复那一路要留着思考段（网页版 4.580：存在这一轮第一条的 think 上，长按「查看思考」）。
+        // 由回复解析（ReplyParser.stripThink）摘掉；其余任务照旧在这里剥掉
+        return keepThink ? text.trimmingCharacters(in: .whitespacesAndNewlines) : stripThink(text)
     }
+
+    /// 为真时 send 回来的正文保留 <thinking> 段。只在对话回复那一处设（ChatEngine），经 AIService 一路传下来
+    @TaskLocal static var keepThink: Bool = false
 
     private enum Event { case text(String), stop, none }
 

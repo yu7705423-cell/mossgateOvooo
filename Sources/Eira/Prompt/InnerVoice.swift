@@ -5,8 +5,10 @@ import Foundation
 /// - inline：随回复一起写在最后一行 [心声：…]，不多调接口；
 /// - apart：整轮说完之后另调一次，只问刚才那几句话背后在想什么。每轮多一次，默认关。
 enum InnerVoice {
+    /// 群聊只有「随回复一起」（网页版 4.636 的 extras.innerMode）：单独生成那一次调用只问一个人，存着的 apart 读成 inline
     static func mode(_ chat: Chat) -> String {
         let m = chat.row.string("innerMode")
+        if m == "apart" && chat.isGroup { return "inline" }
         return m == "inline" || m == "apart" ? m : "off"
     }
 
@@ -25,9 +27,10 @@ enum InnerVoice {
     }
 
     /// inline 那一档在提示词里的那一段（预设条目「心声」，默认排在聊天记录之后）。
+    /// 群聊换成 skeleton.inner-group：每个开口的成员在自己那几句下面各写一行，写在谁下面算谁的（网页版 4.636）
     static func piece(_ chat: Chat, settings s: AppSettings) -> String {
         guard mode(chat) == "inline" else { return "" }
-        return Templates.render("skeleton.inner", ["what": what(chat, settings: s)], settings: s)
+        return Templates.render(chat.isGroup ? "skeleton.inner-group" : "skeleton.inner", ["what": what(chat, settings: s)], settings: s)
     }
 
     /// apart 那一档：挂在这一轮角色最后说的那一条文字上。失败不抛（这一轮已经发出去的话不受影响），在屏幕上说。

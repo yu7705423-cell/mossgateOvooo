@@ -373,8 +373,28 @@ enum Diary {
         return h >= hour(char) || h < 6
     }
 
-    /// 交给模型的那一天：人设、记忆、当天的对话、你给它看的日记、它上一篇。
+    /// 历史窗口（网页版 window.js 的 recentWindow）：按轮数时从尾往前数 historyTurns 个起点，按条数时取最近 historyLimit 条；0 为全部。
+    /// 一轮从「前一条不是用户」的那条用户消息开始（与聊天的历史同一把尺子）
+    static func recentWindow(_ msgs: [Message], _ s: AppSettings) -> [Message] {
+        if s.raw["historyMode"]?.string == "turn" {
+            let n = max(0, Int((s.raw["historyTurns"]?.number ?? 10).rounded()))
+            guard n > 0 else { return msgs }
+            var seen = 0
+            for i in stride(from: msgs.count - 1, through: 0, by: -1)
+                where msgs[i].role == .user && (i == 0 || msgs[i - 1].role != .user) {
+                seen += 1
+                if seen >= n { return Array(msgs[i...]) }
+            }
+            return msgs
+        }
+        let n = max(0, Int((s.raw["historyLimit"]?.number ?? 20).rounded()))
+        return n > 0 ? Array(msgs.suffix(n)) : msgs
+    }
+
+    /// 交给模型的那一天（网页版 tasks/diary.js 的 dayContext）：人设、记忆、当天的日程与撞上的事、身体状态、当天的对话、
+    /// 你给它看的日记、它上一篇。
     static func context(_ char: Character, date: String, pid: String) throws -> String {
+        let s = AppSettings.load()
         let personas = try Repo.personas()
         let userName = personas.first { $0.id == pid }?.name ?? "the user"
         var out: [String] = []
@@ -384,13 +404,36 @@ enum Diary {
             (m.rank == "S" || m.rank == "A") && (root.isEmpty || m.personaId.isEmpty || Repo.rootId(of: m.personaId, in: personas) == root)
         }.prefix(12).map { "- \($0.content)" }
         if !mems.isEmpty { out.append("### What \(char.name) remembers\n\(mems.joined(separator: "\n"))") }
-        if let chat = chatWith(char.id, pid) {
-            let today = try Repo.messages(chatId: chat.id).filter { m in
-                !m.isError && !m.content.trimmingCharacters(in: .whitespaces).isEmpty
-                    && todayOf(char, Date(millis: m.row.number("createdAt") ?? 0)) == date
+
+        // 当天的日程（日常）与撞上的事
+        if let plan = try DayPlan.day(char.id, date: date) {
+            let items = plan["items"]?.array ?? []
+            var lines: [String] = DayPlan.slots.compactMap { sl -> String? in
+                let list = items.filter { $0["slot"]?.string == sl.id && $0["state"]?.string != DayPlan.drop }
+                return list.isEmpty ? nil : "\(sl.label): " + list.map { $0["text"]?.string ?? "" }.joined(separator: "；")
             }
-            let limit = Int(AppSettings.load().raw["historyLimit"]?.number ?? 20)
-            let rows = limit > 0 ? Array(today.suffix(limit)) : today
+            let ev = plan["event"]?["text"]?.string ?? ""
+            if !ev.isEmpty { lines.append("Event: \(ev)") }
+            if !lines.isEmpty { out.append("### \(char.name)'s schedule today\n" + lines.joined(separator: "\n")) }
+        }
+
+        // 当天的身体状态（健康）
+        let h = Health.day(char.id, date)
+        if !h.mood.isEmpty || !h.energy.isEmpty || !h.note.isEmpty {
+            let mood = Health.label(Health.moods, h.mood), energy = Health.label(Health.energy, h.energy)
+            let lines = [h.mood.isEmpty ? "" : "mood: \(mood.isEmpty ? h.mood : mood)",
+                         h.energy.isEmpty ? "" : "energy: \(energy.isEmpty ? h.energy : energy)",
+                         h.note].filter { !$0.isEmpty }
+            out.append("### \(char.name)'s body today\n" + lines.joined(separator: "\n"))
+        }
+
+        if let chat = chatWith(char.id, pid) {
+            // 按世界时间（虚拟时间平移）归到角色那边的哪一天；分隔线不算对话
+            let off = Clock.offset(s)
+            let today = try Ties.keepDelivered(chat, Repo.messages(chatId: chat.id).filter { m in
+                !m.isError && !m.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && m.kind != "side"
+            }).filter { todayOf(char, Date(millis: $0.createdAt + off)) == date }
+            let rows = recentWindow(today, s)
             if !rows.isEmpty {
                 out.append("### Conversation with \(userName) today\n" + rows.map { "\($0.role == .user ? userName : char.name)：\($0.content)" }.joined(separator: "\n"))
             }

@@ -167,7 +167,7 @@ final class CostTests: StoreTestCase {
 }
 
 extension CostTests {
-    /// 发图再请回复：仍然只打一次；识图交给聊天模型时图随这一次带上，不另调接口。
+    /// 发图再请回复：回复本身只打一次，图随这一次带上；回复之后再一次把图写成描述存下（visionCarry），之后几轮只带描述。
     func testImageWithVisionIsStillOneRequest() async throws {
         try setSettings(["services": .object(["chat": .object([
             "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
@@ -178,10 +178,13 @@ extension CostTests {
         _ = try ChatEngine.sendImage(imageId: try Images.save(png), chatId: "chat_a")
         MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("看到了")) }
         try await ChatEngine.reply(chatId: "chat_a") { _ in }
-        XCTAssertEqual(MockNet.count, 1)
         let body = String(data: MockNet.requests.first?.httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
         XCTAssertTrue(body.contains("\"type\":\"image\""))
-        XCTAssertEqual(try Repo.messages(chatId: "chat_a").first { $0.kind == "image" && $0.role == .user }?.row.string("vision"), "done")
+        try await waitUntil { try self.userImage()?.row.string("vision") == "done" }
+        XCTAssertEqual(MockNet.count, 2)
+        let img = try XCTUnwrap(userImage())
+        XCTAssertEqual(img.content, "[图片：看到了]")
+        XCTAssertEqual(img.row.string("imageDesc"), "看到了")
     }
 }
 
@@ -249,5 +252,121 @@ extension CostTests {
         XCTAssertEqual(links.rows.map(\.label), ["去充值"])
         XCTAssertEqual(links.rows.first?.url.absoluteString, "https://main.example.com")
         XCTAssertNil(ChatPreset.link("javascript:alert(1)"))
+    }
+}
+
+/// 与网页版最新写法对齐的几处花钱次数（docs/web-sync-audit.md 第 8、9、11、18 项）
+extension CostTests {
+    /// 等后台那一次（不等它的那几件）落下。最多等 5 秒
+    func waitUntil(_ cond: () throws -> Bool) async throws {
+        for _ in 0..<100 {
+            if try cond() { return }
+            try await Task.sleep(nanoseconds: 50_000_000)
+        }
+        XCTFail("等待超时")
+    }
+
+    func userImage() throws -> Message? {
+        try Repo.messages(chatId: "chat_a").first { $0.kind == "image" && $0.role == .user }
+    }
+
+    private func sendPng() throws {
+        let png = UIGraphicsImageRenderer(size: CGSize(width: 10, height: 10)).pngData { _ in }
+        _ = try ChatEngine.sendImage(imageId: try Images.save(png), chatId: "chat_a")
+    }
+
+    /// visionCarry 挂在识图方式上：默认识图关着，它也关着；选了交给聊天模型才算开着
+    func testVisionCarryFollowsVisionMode() throws {
+        XCTAssertFalse(ExtraCalls.active(.load()).contains { $0.id == "visionCarry" })
+        var s = AppSettings.load()
+        s.raw["services"] = .object(["vision": .object(["mode": .string("chat")])])
+        XCTAssertTrue(ExtraCalls.active(s).contains { $0.id == "visionCarry" })
+    }
+
+    /// 描述那一次一直失败：每张图只试一次（先记试过），标成 error；同一轮重新生成时图照样随请求发出，但不再为它描述
+    func testVisionCarryFailsOncePerImage() async throws {
+        try setSettings(["services": .object(["chat": .object([
+            "presets": .array([.object(["id": .string("svc_main"), "provider": .string("anthropic"),
+                                         "baseUrl": .string("https://main.test"), "apiKey": .string("k"), "model": .string("m")])]),
+            "activeId": .string("svc_main")]),
+            "vision": .object(["mode": .string("chat")])])])
+        try sendPng()
+        // 第一次是回复，第二次是描述（回复落下之后才发）
+        MockNet.reset { _, n in
+            n == 2 ? .init(status: 500, body: #"{"error":{"message":"down"}}"#) : .init(status: 200, body: MockNet.anthropicStream("看到了"))
+        }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        try await waitUntil { try self.userImage()?.row.string("vision") == "error" }
+        XCTAssertEqual(MockNet.count, 2)
+        XCTAssertGreaterThan(try XCTUnwrap(userImage()).row.number("visionCarry") ?? 0, 0)
+        XCTAssertEqual(try XCTUnwrap(userImage()).content, "[图片]")
+
+        try await ChatEngine.reply(chatId: "chat_a", regenerate: true) { _ in }
+        try await Task.sleep(nanoseconds: 400_000_000)
+        XCTAssertEqual(MockNet.count, 3)
+        let body = String(data: MockNet.requests.last?.httpBodyStreamData() ?? Data(), encoding: .utf8) ?? ""
+        XCTAssertTrue(body.contains("\"type\":\"image\""))
+    }
+
+    /// 识图关着：回复之后不描述
+    func testNoVisionNoCarry() async throws {
+        try sendPng()
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("好")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        try await Task.sleep(nanoseconds: 300_000_000)
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(try XCTUnwrap(userImage()).row.string("vision"), "off")
+    }
+
+    /// 回复、主动消息、群里主动开口、关系底色：自动重试取 1 与 retryMax 里小的那个。默认 0 时失败只打一次，填 1 时两次，填 3 也只两次
+    func testAutoRetryFollowsRetryMax() async throws {
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        try Database.shared.put(Collections.memories, Row.new(prefix: "mem", [
+            "charId": .string("char_a"), "personaId": .string(chat.personaId), "rank": .string("S"),
+            "content": .string("两人确认了关系"), "kind": .string("event")]))
+        let z = try People.createCharacter(name: "小周")
+        let g = try GroupChat.create(memberIds: ["char_a", z.id], title: "", personaId: "me_root")
+
+        let runs: [(String, () async throws -> Void)] = [
+            ("reply", { try await ChatEngine.reply(chatId: "chat_a") { _ in } }),
+            ("proactive", { _ = try await Proactive.send(chatId: "chat_a", charId: "char_a") }),
+            ("groupProactive", { _ = try await GroupProactive.send(chatId: g.id) }),
+            ("bond", { try await Bond.refresh(charId: "char_a", personaId: chat.personaId) }),
+        ]
+        for (retryMax, expected) in [(0, 1), (1, 2), (3, 2)] {
+            try setSettings(["retryMax": .number(Double(retryMax))])
+            for (name, run) in runs {
+                MockNet.reset { _, _ in .init(status: 503, body: #"{"error":{"message":"busy"}}"#) }
+                do { try await run(); XCTFail("\(name) 应当失败") } catch {}
+                XCTAssertEqual(MockNet.count, expected, "\(name) retryMax=\(retryMax)")
+            }
+        }
+    }
+
+    /// 群里主动开口与群聊回复同一条路：主用接口、记在 chat.reply 名下；「任务用哪套接口」里的主动消息那一组管不到它
+    func testGroupProactiveUsesMainRoute() async throws {
+        try setSettings(["taskRoutes": .object(["proactive": .string("fallback")])])
+        let z = try People.createCharacter(name: "小周")
+        let g = try GroupChat.create(memberIds: ["char_a", z.id], title: "", personaId: "me_root")
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        do { _ = try await GroupProactive.send(chatId: g.id); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(hosts(), ["main.test"])
+        // 单人的主动消息照旧按那一组走
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        do { _ = try await Proactive.send(chatId: "chat_a", charId: "char_a"); XCTFail("应当失败") } catch {}
+        XCTAssertEqual(hosts(), ["spare.test"])
+    }
+
+    /// 生成记录照网页版写 { preset, name, model, at }，「生成信息」读得出模型
+    func testServedRecordsModel() async throws {
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("在的")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        let head = try XCTUnwrap(Repo.messages(chatId: "chat_a").last)
+        let served = try XCTUnwrap(head.row["served"]?.array?.first)
+        XCTAssertEqual(served["preset"]?.string, "svc_main")
+        XCTAssertEqual(served["name"]?.string, "主")
+        XCTAssertEqual(served["model"]?.string, "m")
+        XCTAssertGreaterThan(served["at"]?.number ?? 0, 0)
+        XCTAssertTrue(try MessageActions.servedText(head).hasPrefix("由「主」的 m 生成"))
     }
 }
