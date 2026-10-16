@@ -456,7 +456,7 @@ struct ConversationView: View {
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
             tieBar
-            paceBar
+            // 延迟回复不再在输入栏上方写「约多久后回复」（网页版 4.319，用户要求）：还要等多久在「节奏」页看，到点了消息自己来
             mentionBar
             narrTabs
             // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
@@ -526,23 +526,6 @@ struct ConversationView: View {
         case (_, "blocked"): return "你已拉黑该角色。角色仍可发来消息，每一条都标为被拒收。"
         case (_, "removed"): return "你已删除该角色。角色仍可发来消息，每一条都标为未送达。"
         default: return nil
-        }
-    }
-
-    /// 延迟回复在等着时，输入栏上方一行：对方在做什么、约多久后回复；可以立即回复或取消
-    @ViewBuilder private var paceBar: some View {
-        if let c = chat, Pace.pending(c) != nil, !isBusy {
-            TimelineView(.periodic(from: .now, by: 1)) { ctx in
-                HStack(spacing: Theme.sp3) {
-                    Text(Pace.pendingText(c, now: ctx.date)).font(.system(size: 12)).foregroundStyle(Theme.text2).lineLimit(1)
-                    Spacer()
-                    Button("立即回复") { generate() }.font(.system(size: 12))
-                    Button("取消") { try? Pace.clear(chatId); chat = try? Repo.chat(chatId) }
-                        .font(.system(size: 12)).foregroundStyle(Theme.text3)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, Theme.sp4).padding(.top, Theme.sp2)
-            }
         }
     }
 
@@ -1236,6 +1219,13 @@ struct ConversationView: View {
                 catch { await MainActor.run { problem = "重新合成失败：\(error.localizedDescription)" } }
                 await MainActor.run { reload() }
             }
+        case .recognize:
+            // 用户点的，手动的一次：改回识别中，再调一次识图接口（网页版 MsgMenu 的 redoVision）
+            do {
+                guard let pending = try Vision.markPending(messageId: m.id) else { return }
+                replace(pending)
+                describe(m.id)
+            } catch { problem = "未能保存：\(error.localizedDescription)" }
         case .redraw:
             // 用户点的，手动的一次：改回生成中再画
             var pending = m
@@ -1384,7 +1374,11 @@ struct ConversationView: View {
                 guard let m = try await Vision.describe(messageId: messageId) else { return }
                 await MainActor.run { if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } }
             } catch {
-                await MainActor.run { problem = "识图失败，角色看不到这张图的内容：\(error.localizedDescription)" }
+                await MainActor.run {
+                    // 图下那一行跟着换成失败的原因
+                    if let row = try? Database.shared.get(Collections.messages, id: messageId) { replace(Message(row: row)) }
+                    problem = "识图失败，角色看不到这张图的内容：\(error.localizedDescription)"
+                }
             }
         }
     }
@@ -1641,7 +1635,7 @@ struct MessageRow: View, Equatable {
             && a.summarized == b.summarized
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
 
     let message: Message
     let char: Character?
@@ -1699,6 +1693,8 @@ struct MessageRow: View, Equatable {
     @State private var transOpen: Bool?
     /// 左右滑一下引用这一条：跟着手指走，松手弹回
     @State private var swipeX: CGFloat = 0
+    /// 我发的图下面那段识图描述：默认两行，点一下展开
+    @State private var descOpen = false
 
     private var mine: Bool { message.role == .user }
 
@@ -1816,6 +1812,12 @@ struct MessageRow: View, Equatable {
         }
         if !mine && message.kind == "image" && SettingsModel.shared.s.imageReady && !message.row.string("prompt").isEmpty {
             Button { onAction?(.redraw) } label: { Label("重画图片", systemImage: "arrow.clockwise") }
+        }
+        // 识别图片 / 重新识别（网页版 4.594）：我发的图在单独的识图接口那一档可以再识一次，一次识图调用
+        if Vision.canRedo(message, settings: SettingsModel.shared.s) {
+            Button { onAction?(.recognize) } label: {
+                Label(message.row.string("vision") == "done" ? "重新识别" : "识别图片", systemImage: "eye")
+            }
         }
         // 存相册（网页版 MsgMenu 的 keep）：存的是同一张图，不另压一份
         if (message.kind == "image" && !message.imageId.isEmpty) || (message.kind == "sticker" && !message.row.string("stickerId").isEmpty) {
@@ -1969,12 +1971,15 @@ struct MessageRow: View, Equatable {
         case "sticker":
             StickerView(id: message.row.string("stickerId"), name: message.row.string("stickerName"))
         case "image" where !message.imageId.isEmpty:
-            LocalImage(id: message.imageId, maxPixel: 800, fit: true)
-                .frame(maxWidth: 220, maxHeight: 280)
-                .clipShape(RoundedRectangle(cornerRadius: Theme.bubbleRadius))
-                .onTapGesture { onOpenImage?(message.imageId) }
-                .accessibilityLabel("图片")
-                .accessibilityAddTraits(.isButton)
+            VStack(alignment: mine ? .trailing : .leading, spacing: 4) {
+                LocalImage(id: message.imageId, maxPixel: 800, fit: true)
+                    .frame(maxWidth: 220, maxHeight: 280)
+                    .clipShape(RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+                    .onTapGesture { onOpenImage?(message.imageId) }
+                    .accessibilityLabel("图片")
+                    .accessibilityAddTraits(.isButton)
+                visionLines
+            }
         case "image":
             imageCard
         case "clip":
@@ -2008,6 +2013,34 @@ struct MessageRow: View, Equatable {
             let paras = Self.paragraphs(shown)
             VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
                 ForEach(paras.indices, id: \.self) { i in bubble(paras[i]) }
+            }
+        }
+    }
+
+    /// 我发的图下面：识图的状态，识别完的描述（网页版 MediaBubble 的 media-note 与 media-desc，4.594）。
+    /// 描述默认两行，点一下展开。交给聊天模型那一档不写：图会跟着这一轮的请求直接发过去
+    @ViewBuilder private var visionLines: some View {
+        if mine {
+            let vision = message.row.string("vision")
+            let err = message.row.string("visionError")
+            let note = vision == "pending" ? "正在识别"
+                : vision == "off" ? "识图未开启，角色看不到这张图"
+                : vision == "error" ? "识图失败：\(err.isEmpty ? "未知原因" : err)"
+                : ""
+            let desc = vision == "done" ? message.row.string("imageDesc").trimmingCharacters(in: .whitespacesAndNewlines) : ""
+            if !note.isEmpty {
+                Text(note).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                    .frame(maxWidth: 220, alignment: mine ? .trailing : .leading)
+            }
+            if !desc.isEmpty {
+                Text(desc).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                    .lineLimit(descOpen ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: 220, alignment: .leading)
+                    .contentShape(Rectangle())
+                    .onTapGesture { descOpen.toggle() }
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityHint(descOpen ? "收起描述" : "展开描述")
             }
         }
     }

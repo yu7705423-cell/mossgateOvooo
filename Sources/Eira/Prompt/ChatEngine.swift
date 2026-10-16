@@ -66,6 +66,9 @@ enum ChatEngine {
             let cid = char.id, pid = chat.personaId
             Task.detached { await Bond.autoRun(charId: cid, personaId: pid) }
         }
+        // 这一轮你发的图还在识别（单独的识图接口那一档，网页版 4.594）：等描述写回再拼上下文，content 已经从「[图片]」
+        // 换成了「[图片：描述]」。最多等 90 秒，超了照发。等的时候点了停止：不再调接口
+        if await Vision.settle(chatId: chat.id, excludeTurn: old?.id) { try Task.checkCancellation() }
         // 群聊「每个角色单独调用」那一档（默认关，登记在 ExtraCalls）：开口的成员各一次请求，后说的看得见先说的。
         // 重新生成那一轮仍走一次调用写整轮
         if chat.isGroup && old == nil && settings.raw["groupPerChar"]?.bool == true {

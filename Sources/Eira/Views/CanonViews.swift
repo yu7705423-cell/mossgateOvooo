@@ -51,6 +51,53 @@ struct MemoryCharsView: View {
     @ObservedObject private var model = SettingsModel.shared
     @State private var chars: [Character] = []
     @State private var problem: String?
+    /// 开启「每 N 轮」时发现积压，先问（网页版 4.606）
+    @State private var asking: (n: Int, list: [MemorySummary.Backlog])?
+    @State private var catching = false
+
+    private func setInterval(_ v: Double) {
+        let old = model.s.raw["autoSummarizeInterval"]?.number ?? 0
+        let n = Int(v.rounded())
+        if old <= 0 && n > 0 {
+            let list = MemorySummary.backlog(every: n)
+            if !list.isEmpty { asking = (n, list); return }
+        }
+        model.set("autoSummarizeInterval", .number(Double(max(0, n))))
+    }
+
+    private var askText: String {
+        guard let a = asking else { return "" }
+        let msgs = a.list.reduce(0) { $0 + $1.msgs }
+        let runs = a.list.reduce(0) { $0 + $1.runs }
+        return "\(a.list.count) 段对话共有 \(msgs) 条消息早于最近 \(a.n) 轮、尚未总结。先总结积压：每 \(a.n) 轮调用一次接口，共 \(runs) 次，完成后再按轮数自动总结。跳过积压：这 \(msgs) 条标为已总结，不调用接口，也不生成记忆。"
+    }
+
+    /// 选好了：先总结积压的按每 N 轮一次接着调（用户当场同意的次数），或者把积压标为已总结；然后开启
+    private func start(_ a: (n: Int, list: [MemorySummary.Backlog]), summarize: Bool) {
+        asking = nil
+        if summarize {
+            catching = true
+            let list = a.list
+            // 先开启，每次总结按「最早的 N 轮」取，正好留下最近 N 轮
+            model.set("autoSummarizeInterval", .number(Double(a.n)))
+            Task {
+                var failed = ""
+                for b in list {
+                    for _ in 0..<b.runs {
+                        do { _ = try await MemorySummary.extract(chatId: b.chatId) } catch { failed = error.localizedDescription; break }
+                    }
+                }
+                await MainActor.run {
+                    catching = false
+                    if !failed.isEmpty { problem = "总结积压时出错：\(failed)" }
+                }
+            }
+        } else {
+            do { for b in a.list { try MemorySummary.skipBacklog(chatId: b.chatId, keep: a.n) } }
+            catch { problem = "未能标记：\(error.localizedDescription)"; return }
+            model.set("autoSummarizeInterval", .number(Double(a.n)))
+        }
+    }
 
     var body: some View {
         List {
@@ -60,7 +107,8 @@ struct MemoryCharsView: View {
                 HelpNote("关闭后记忆不写进提示词，也不自动总结。手动「立即总结」不受影响。")
             }
             Section {
-                NumberRow(title: "每累计几轮角色回复", value: model.number("autoSummarizeInterval", 0), unit: "轮", placeholder: "不看")
+                NumberRow(title: "每累计几轮角色回复", value: Binding(get: { model.s.raw["autoSummarizeInterval"]?.number ?? 0 }, set: setInterval),
+                          unit: "轮", placeholder: "不看")
                 NumberRow(title: "未总结消息达到", value: model.number("autoSummarizeMessages", 0), unit: "条", placeholder: "不看")
                 NumberRow(title: "未总结文字达到", value: model.number("autoSummarizeChars", 0), unit: "字", placeholder: "不看")
             } header: {
@@ -77,6 +125,7 @@ struct MemoryCharsView: View {
                 HelpNote("一次总结最多拿最早的这么多条消息去拼请求，填 0 表示一次全拿；剩下的下次接着总结。输出上限偏小时会在半路截断，那一次照样计费。")
             }
             ProblemSection(text: model.problem)
+            if catching { Text("正在总结积压的消息。").font(.footnote).foregroundStyle(Theme.text2) }
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             ForEach(chars) { c in
                 NavigationLink { MemoryListView(charId: c.id) } label: {
@@ -87,6 +136,18 @@ struct MemoryCharsView: View {
                 }
             }
             if chars.isEmpty && problem == nil { Text("暂无角色。").foregroundStyle(Theme.secondaryText) }
+        }
+        .confirmationDialog("已有未总结的消息", isPresented: Binding(get: { asking != nil }, set: { if !$0 { asking = nil } }),
+                            titleVisibility: .visible) {
+            if let a = asking {
+                let msgs = a.list.reduce(0) { $0 + $1.msgs }
+                let runs = a.list.reduce(0) { $0 + $1.runs }
+                Button("先总结积压（调用 \(runs) 次接口）") { start(a, summarize: true) }
+                Button("跳过积压（\(msgs) 条不生成记忆）") { start(a, summarize: false) }
+                Button("暂不开启", role: .cancel) { asking = nil }
+            }
+        } message: {
+            Text(askText)
         }
         .navigationTitle("记忆")
         .onAppear {

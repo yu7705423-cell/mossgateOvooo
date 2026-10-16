@@ -6,6 +6,12 @@ import Foundation
 /// 只送这一句和这段会话的翻译要求，人设、记忆、历史一个字都不送。
 /// 用户点了才调，一次一条（手动的不算自动多调）。
 enum TranslateOne {
+    /// 翻译要求：设置里对所有对话生效的那一栏，加上这段对话自己的（网页版 4.588），两处同时生效
+    static func rulesOf(_ chat: Chat, _ s: AppSettings) -> String {
+        [s.raw["translateRules"]?.string ?? "", chat.row.string("translateRules")]
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }.joined(separator: "\n")
+    }
+
     /// 要翻的那一段：语音取说的话，文字取正文，其余没有
     static func source(_ m: Message) -> String {
         switch m.kind {
@@ -65,7 +71,7 @@ enum TranslateOne {
         let lang = chat.row.string("translateTo")
         guard can(m, lang: lang) else { throw StoreError(message: "这一条不能翻译") }
         let s = AppSettings.load()
-        let p = payload([src], lang: lang, extra: chat.row.string("translateRules"), settings: s)
+        let p = payload([src], lang: lang, extra: rulesOf(chat, s), settings: s)
         let r = try await AIService.shared.send(task: "translate.lines", preset: s.translatePreset, system: p.system,
                                                 messages: [AIMessage(role: .user, content: p.user)],
                                                 maxTokens: max(600, src.count * 4), retries: 1)
@@ -105,7 +111,7 @@ enum TranslateOne {
         guard !lang.isEmpty, s.translateMode == "api", let preset = s.translatePreset else { return 0 }
         let list = items(created)
         guard !list.isEmpty else { return 0 }
-        let p = payload(list.map(\.text), lang: lang, extra: chat.row.string("translateRules"), settings: s)
+        let p = payload(list.map(\.text), lang: lang, extra: rulesOf(chat, s), settings: s)
         do {
             let r = try await AIService.shared.send(task: "translate.lines", preset: preset, system: p.system,
                                                     messages: [AIMessage(role: .user, content: p.user)],

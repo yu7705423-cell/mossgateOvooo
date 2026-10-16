@@ -106,7 +106,7 @@ extension ChatPrompt {
         var lore = activateLore(char: char0, scanText: scan, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0, books: sceneBooks(scene))
         // 线下的历史里没有插深度的地方：按深度插的那几条并进角色后
         lore.after += lore.deep.map(\.1)
-        let online = try Repo.messages(chatId: chat.id).filter { !$0.isError }
+        let online = try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) }.map(AutoReply.forPrompt)
         let memories = try visibleMemories(char: char0, chat: chat, rootId: rootId, personas: personas)
         let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
         let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
@@ -173,7 +173,7 @@ extension ChatPrompt {
             members.append(one.text)
             recalledIds += one.recalled
         }
-        let online = try Repo.messages(chatId: chat.id).filter { !$0.isError }
+        let online = try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) }.map(AutoReply.forPrompt)
         let blocks: [String: String] = [
             "lorebook": loreBlock(before), "loreAfter": loreBlock(after),
             "user": userBlock(me: me, char: lead0),

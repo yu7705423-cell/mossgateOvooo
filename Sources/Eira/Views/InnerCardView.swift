@@ -20,6 +20,23 @@ struct InnerCardView: View {
             .sorted { $0.createdAt > $1.createdAt }
     }
 
+    /// 卡上的字：心声、心声的译文、那一句说出口的话
+    @MainActor @ViewBuilder private func cardText(_ cur: Message) -> some View {
+        VStack(spacing: Theme.sp3) {
+            Text(cur.row.string("inner")).font(.system(size: 17)).foregroundStyle(Theme.text)
+                .multilineTextAlignment(.center).lineSpacing(5)
+            let trans = cur.row.string("innerTrans")
+            if !trans.isEmpty {
+                Text(trans).font(.system(size: 13)).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
+            }
+            // 那一句有译文写译文（只看原文那一档除外），写全、换行，不截断（网页版 4.521、4.570）
+            let said = SettingsModel.shared.s.raw["translateShow"]?.string == "orig" ? "" : cur.row.string("translation")
+            Text(said.isEmpty ? cur.content : said).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     var body: some View {
         let name = char?.displayName ?? "角色"
         let cur = all.indices.contains(i) ? all[i] : nil
@@ -53,17 +70,11 @@ struct InnerCardView: View {
                     }
                 }
             } else if let cur {
-                VStack(spacing: Theme.sp3) {
-                    Text(cur.row.string("inner")).font(.system(size: 17)).foregroundStyle(Theme.text)
-                        .multilineTextAlignment(.center).lineSpacing(5)
-                    let trans = cur.row.string("innerTrans")
-                    if !trans.isEmpty {
-                        Text(trans).font(.system(size: 13)).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
-                    }
-                    Text(String(cur.content.prefix(60))).font(.system(size: 12)).foregroundStyle(Theme.text3)
-                        .multilineTextAlignment(.center)
+                // 写全之后可能超出一屏：放得下就居中，放不下从顶上开始滚动（网页版 4.570）
+                ViewThatFits(in: .vertical) {
+                    cardText(cur).frame(maxWidth: .infinity, maxHeight: .infinity)
+                    ScrollView { cardText(cur).frame(maxWidth: .infinity).padding(.vertical, Theme.sp2) }
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 Text("这段会话里还没有心声").font(.footnote).foregroundStyle(Theme.text3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)

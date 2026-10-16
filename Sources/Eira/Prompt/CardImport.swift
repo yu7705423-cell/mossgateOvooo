@@ -26,7 +26,7 @@ enum CardImport {
         let system = Templates.render("task.card-import", ["raw": text], settings: s)
         let r = try await AIService.shared.send(task: "card.import", system: system,
                                                 messages: [AIMessage(role: .user, content: "Produce the JSON as instructed.")],
-                                                maxTokens: 3000, retries: 1)
+                                                retries: 1)
         guard let json = JSONReply.parse(r.text)?.object else { throw StoreError(message: JSONReply.failure(r.text)) }
         func str(_ k: String) -> String {
             switch json[k] {
@@ -60,12 +60,12 @@ enum CardImport {
         let text = persona.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return "" }
         let s = AppSettings.load()
-        let system = Templates.render("task.core", ["persona": String(text.prefix(6000))], settings: s)
+        let system = Templates.render("task.core", ["persona": text], settings: s)
         do {
             let r = try await AIService.shared.send(task: "card.core", system: system,
-                                                    messages: [AIMessage(role: .user, content: "Produce the output as instructed.")],
-                                                    maxTokens: 400)
-            return String(r.text.trimmingCharacters(in: .whitespacesAndNewlines).prefix(400))
+                                                    messages: [AIMessage(role: .user, content: "Produce the output as instructed.")])
+            // 不截字数、不另设输出上限，只按用户设的 taskMaxTokens（网页版 4.571）
+            return r.text.trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
             Diagnostics.shared.record("card-core-failed", ["error": error.localizedDescription])
             return ""

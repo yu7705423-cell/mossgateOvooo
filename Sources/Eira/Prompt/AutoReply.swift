@@ -88,6 +88,28 @@ enum AutoReply {
         return text.isEmpty ? nil : (text, key)
     }
 
+    // MARK: - 自动回复的标记（网页版 4.586）：自动回的那一条带 [自动回复]，停止的提示只给你看
+
+    static let tag = "[自动回复] "
+    private static let tagged = try! NSRegularExpression(pattern: #"^\s*[\[【]\s*自动回复\s*[\]】]"#)
+    private static let stopped = try! NSRegularExpression(pattern: #"^\[[^\]]*自动回复已停止："#)
+    private static func matches(_ re: NSRegularExpression, _ s: String) -> Bool {
+        re.firstMatch(in: s, range: NSRange(s.startIndex..., in: s)) != nil
+    }
+
+    /// 只给你看、不进提示词与记忆的那几行
+    static func localOnly(_ m: Message) -> Bool {
+        m.row.bool("local") || (m.kind == "notice" && matches(stopped, m.content))
+    }
+
+    /// 进提示词与记忆时的写法：从前没带标记的自动回复补上
+    static func forPrompt(_ m: Message) -> Message {
+        guard m.row.bool("auto"), !matches(tagged, m.content) else { return m }
+        var out = m
+        out.row["content"] = .string(tag + m.content)
+        return out
+    }
+
     /// 到期或者用完了就关掉，并落一行提示说清楚为什么停
     private static func stop(_ chatId: String, _ side: String, _ why: String) throws -> Message? {
         guard let chat = try Repo.chat(chatId) else { return nil }
@@ -95,6 +117,8 @@ enum AutoReply {
         let charName = (try? chat.characterIds.first.flatMap { try Repo.character($0) })?.name ?? "对方"
         let who = side == mine ? "你的" : "\(charName)的"
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[\(who)自动回复已停止：\(why)]", kind: "notice")
+        // 只给你看，不进提示词（网页版 4.586）
+        m.row["local"] = .bool(true)
         m = try Repo.append(m)
         return m
     }
@@ -106,7 +130,7 @@ enum AutoReply {
         let char = try chat.characterIds.first.flatMap { try Repo.character($0) }
         if side == hers {
             guard let r = stateReply(chat, at: real) else { return [] }
-            var m = Message.new(chatId: chatId, role: .char, authorId: char?.id ?? "", content: r.text)
+            var m = Message.new(chatId: chatId, role: .char, authorId: char?.id ?? "", content: tag + r.text)
             m.row["auto"] = .bool(true)
             m = try Repo.append(m)
             try write(chatId, hers) { $0["window"] = .string(r.key) }
@@ -116,7 +140,7 @@ enum AutoReply {
         let c = config(chat, mine)
         if c.until > 0 && real.millis >= c.until { return try stop(chatId, mine, "已到设定的结束时间").map { [$0] } ?? [] }
         if c.max > 0 && c.used >= c.max { return try stop(chatId, mine, "已达设定的条数上限").map { [$0] } ?? [] }
-        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: c.text)
+        var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: tag + c.text)
         m.row["auto"] = .bool(true)
         m = try Repo.append(m)
         var out = [m]

@@ -190,6 +190,23 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertEqual(MockNet.count, 1)
     }
 
+    /// 开启「每 N 轮」时的积压（网页版 4.606）：算出条数与要调几次；跳过时只标最近 N 轮之前的，不调接口
+    func testBacklogAndSkip() throws {
+        for i in 0..<5 {
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "问\(i)"))
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "答\(i)", turnId: "b\(i)"))
+        }
+        let p = try MemorySummary.pending(chatId: "chat_a")
+        let keep = MemorySummary.lastRounds(p, 2).count
+        let b = try XCTUnwrap(MemorySummary.backlog(every: 2).first(where: { $0.chatId == "chat_a" }))
+        XCTAssertEqual(b.msgs, p.count - keep)
+        XCTAssertEqual(b.runs, Int((Double(MemorySummary.roundsIn(p) - 2) / 2).rounded(.up)))
+        XCTAssertEqual(try MemorySummary.skipBacklog(chatId: "chat_a", keep: 2), p.count - keep)
+        XCTAssertEqual(try MemorySummary.pending(chatId: "chat_a").count, keep)
+        XCTAssertEqual(MockNet.count, 0)
+        XCTAssertTrue(MemorySummary.backlog(every: 2).isEmpty)
+    }
+
     /// 自定义标识里「模型判断」的那几个随这一次顺带判断：只多几行清单，不多调接口；模型编出来的 id 不算数
     func testJudgedBadgesRideAlong() async throws {
         let def = try BadgeDefs.save(id: nil, ["name": .string("一起看过日出"), "how": .string("judge"), "cond": .string("两人一起看了日出"),

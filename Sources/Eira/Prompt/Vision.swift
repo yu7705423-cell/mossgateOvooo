@@ -37,6 +37,48 @@ enum Vision {
         }
     }
 
+    /// 回复最多等识图多久（网页版 engine.js 的 VISION_WAIT_MS，4.594）。超了照发，那一张留着 pending，识别回来之后下一轮读得到
+    static let waitMs = 90_000
+
+    /// 当前这一轮（最后一条角色消息之后、用户连着发的那几条）里还在识别的图（网页版 settleVision 的 ids）
+    static func pendingInTurn(_ msgs: [Message]) -> [String] {
+        var i = msgs.count
+        while i > 0 && msgs[i - 1].role == .user { i -= 1 }
+        return msgs[i...].filter { $0.kind == "image" && $0.role == .user && $0.row.string("vision") == "pending" }.map(\.id)
+    }
+
+    /// 这一轮用户发的图还在识别（单独的识图接口那一档，网页版 4.594）：每 150 毫秒重读一次，等描述写回再拼上下文。
+    /// 从前不等：发完图紧接着发文字，请求先出去，模型收到的只有「[图片]」。最多等 timeoutMs，超了或任务被取消就不再等。
+    /// 有要等的图时返回 true（调用方据此重新读消息）
+    static func settle(chatId: String, excludeTurn: String? = nil, timeoutMs: Int = waitMs) async -> Bool {
+        let msgs = ((try? Repo.messages(chatId: chatId)) ?? []).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
+        let ids = pendingInTurn(msgs)
+        guard !ids.isEmpty else { return false }
+        let until = Date().addingTimeInterval(Double(timeoutMs) / 1000)
+        while Date() < until && !Task.isCancelled {
+            let waiting = ids.contains { id in
+                (try? Database.shared.get(Collections.messages, id: id))?.string("vision") == "pending"
+            }
+            if !waiting { break }
+            try? await Task.sleep(nanoseconds: 150_000_000)
+        }
+        return true
+    }
+
+    /// 长按「识别图片 / 重新识别」（网页版 MsgMenu 的 redoVision）：先改回识别中，再由 describe 读一次。用户点的，一次识图调用
+    static func markPending(messageId: String) throws -> Message? {
+        try update(messageId) {
+            $0["vision"] = .string("pending")
+            $0["visionError"] = .string("")
+        }
+    }
+
+    /// 长按菜单里给不给「识别图片」：我发的图、不在识别中、选了单独的识图接口且填全了
+    static func canRedo(_ m: Message, settings s: AppSettings) -> Bool {
+        m.role == .user && m.kind == "image" && !m.imageId.isEmpty && m.row.string("vision") != "pending"
+            && s.visionMode == "api" && s.visionPreset != nil
+    }
+
     /// 一小段原文，告诉模型这段对话是什么语言：先拿最近说的话，没有就拿角色卡（网页版 engine.js 的 langSampleOf）。
     static func sample(chatId: String) -> String {
         let list = ((try? Repo.messages(chatId: chatId)) ?? []).filter { $0.kind == "text" && !$0.content.isEmpty }

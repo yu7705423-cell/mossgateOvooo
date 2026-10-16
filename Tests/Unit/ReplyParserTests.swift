@@ -87,6 +87,10 @@ final class ReplyParserTests: XCTestCase {
         let same = parts("Hello [译文：你好]")
         XCTAssertEqual(same.first?.text, "Hello")
         XCTAssertEqual(same.first?.translation, "你好")
+        // 拿语言名当标签（网页版 4.521）
+        let lang = parts("おはよう [中文：早上好]")
+        XCTAssertEqual(lang.first?.text, "おはよう")
+        XCTAssertEqual(lang.first?.translation, "早上好")
     }
 
     /// 认得但原生版还没有对应功能的标记：吞掉，不留成文字。

@@ -382,6 +382,15 @@ struct TranslateSettingsView: View {
                     HelpNote("角色在同一次回复里给每条消息附上译文，不另调用接口。每段会话的翻译语言在会话设置的「翻译」里设置。", title: "随回复一起翻译")
                 }
             }
+            Section {
+                TextField("例如：保留原文中的称呼，不要替换为译文语言的习惯称呼", text: model.textBinding("translateRules"), axis: .vertical)
+                    .lineLimit(2...6)
+            } header: {
+                Text("翻译要求")
+            } footer: {
+                Text("只影响译文的内容，不改变译文的格式。留空则只按通用规则翻译。")
+                HelpNote("写明译文需要遵循的用语习惯与语气，例如地区用语、称呼的处理方式、专有名词是否保留原文。对所有对话生效，两种译文来源都会带上；某段对话自己的要求在那段对话的「翻译」中填写，两处同时生效。", title: "翻译要求")
+            }
             if model.s.service("translate")["mode"]?.string == "api" {
                 ServiceConnSection(name: "translate", modelHint: "任意能对话的模型。") { model.s.translatePreset }
                 Section {

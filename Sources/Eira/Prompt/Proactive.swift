@@ -137,6 +137,8 @@ enum Proactive {
     /// 正在聊的时候不插话：最后一条消息离现在不到平均间隔的一半，落点从那条消息起重新掷。
     static func holdUntil(_ chat: Chat?, _ minutes: Double, now: Double) -> Double {
         guard let chat else { return 0 }
+        // 还有一条延迟回复没落下（网页版 4.533）：等它落下之后再从那一刻起重新掷
+        if let due = Pace.pending(chat)?.dueAt { return max(due, now) + roll(minutes) }
         let last = max(chat.row.number("lastMessageAt") ?? 0, ((try? Repo.messages(chatId: chat.id, limit: 1)) ?? []).last?.row.number("createdAt") ?? 0)
         if last > 0 && now - last < max(1, minutes) * 60000 * 0.5 { return last + roll(minutes) }
         return 0

@@ -10,9 +10,9 @@ final class AutoReplyTests: StoreTestCase {
 
     func testMineStopsAtMax() throws {
         try AutoReply.set("chat_a", AutoReply.mine, ["text": .string("在忙"), "max": .number(2), "on": .bool(true)])
-        XCTAssertEqual(try AutoReply.fire("chat_a", AutoReply.mine).map(\.content), ["在忙"])
+        XCTAssertEqual(try AutoReply.fire("chat_a", AutoReply.mine).map(\.content), ["[自动回复] 在忙"])
         let second = try AutoReply.fire("chat_a", AutoReply.mine)
-        XCTAssertEqual(second.first?.content, "在忙")
+        XCTAssertEqual(second.first?.content, "[自动回复] 在忙")
         XCTAssertEqual(second.last?.kind, "notice")
         XCTAssertTrue(second.last?.content.contains("已达设定的条数上限") == true)
         XCTAssertFalse(AutoReply.isOn(try XCTUnwrap(Repo.chat("chat_a")), AutoReply.mine))
@@ -34,7 +34,23 @@ final class AutoReplyTests: StoreTestCase {
         char.row["proactiveQuietTo"] = .number(Double((h + 2) % 24))
         try Database.shared.put(Collections.characters, char.row)
         try AutoReply.set("chat_a", AutoReply.hers, ["on": .bool(true), "text": .string("睡了")])
-        XCTAssertEqual(try AutoReply.fire("chat_a", AutoReply.hers).map(\.content), ["睡了"])
+        XCTAssertEqual(try AutoReply.fire("chat_a", AutoReply.hers).map(\.content), ["[自动回复] 睡了"])
         XCTAssertTrue(try AutoReply.fire("chat_a", AutoReply.hers).isEmpty)
+    }
+
+    /// 停止的提示只给你看、不进提示词；从前没带标记的自动回复进提示词时补上 [自动回复]
+    func testPromptTagsAndLocalNotice() throws {
+        try AutoReply.set("chat_a", AutoReply.mine, ["text": .string("在忙"), "max": .number(1), "on": .bool(true)])
+        let out = try AutoReply.fire("chat_a", AutoReply.mine)
+        XCTAssertEqual(out.last?.row.bool("local"), true)
+        var old = Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "旧的自动回复")
+        old.row["auto"] = .bool(true)
+        _ = try Repo.append(old)
+        let chat = try XCTUnwrap(Repo.chat("chat_a"))
+        let b = try ChatPrompt.build(chat: chat, char: try XCTUnwrap(Repo.character("char_a")), settings: .load())
+        let text = b.messages.map(\.content).joined(separator: "\n")
+        XCTAssertTrue(text.contains("[自动回复] 在忙"))
+        XCTAssertTrue(text.contains("[自动回复] 旧的自动回复"))
+        XCTAssertFalse(text.contains("自动回复已停止"))
     }
 }

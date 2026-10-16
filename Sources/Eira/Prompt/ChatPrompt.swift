@@ -25,7 +25,9 @@ enum ChatPrompt {
         // 通话里不让模型在台词后面夹译文：拼提示词时把这段对话的翻译摘掉（网页版 call.js 的 plain）
         if call != nil { chat.row["translateTo"] = .string("") }
         // 我发的被角色拒收的不进历史（网页版 ties.keepDelivered）
-        let all = Ties.keepDelivered(chat, try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) })
+        // 自动回复停止的提示只给你看；自动回的那几条带 [自动回复]（网页版 4.586）
+        let all = Ties.keepDelivered(chat, try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) && (excludeTurn == nil || $0.turnId != excludeTurn) })
+            .map(AutoReply.forPrompt)
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let charName = char.name.isEmpty ? "对方" : char.name
@@ -591,7 +593,10 @@ enum ChatPrompt {
             let marked = [voiceOn ? Templates.get("skeleton.translate-voice", settings: s) : "",
                           list.isEmpty ? "" : Templates.render("skeleton.translate-marked", ["list": list], settings: s)]
                 .filter { !$0.isEmpty }.joined(separator: " ")
-            return Templates.render("skeleton.translate", ["lang": lang, "marked": marked.isEmpty ? "" : " " + marked], settings: s)
+            let base = Templates.render("skeleton.translate", ["lang": lang, "marked": marked.isEmpty ? "" : " " + marked], settings: s)
+            // 用户写的翻译要求（设置里对所有对话生效的与这段对话的，网页版 4.588）
+            let rules = TranslateOne.rulesOf(chat, s)
+            return rules.isEmpty ? base : base + "\n\nAdditional requirements for the translations, written by the user:\n" + rules
         }
 
         var out = ""
@@ -831,14 +836,92 @@ enum ChatPrompt {
 
     /// 不用向量的召回：关键词命中，或者字的两两组合在最近几条里出现得够多；再按近期、用过几次、权重加分。
     /// 网页版 context/memory.js 的 recall 的简化版：没有同一时段、最早几条、疲劳这几项，也不做去重换位。
+    // MARK: 关键词命中（网页版 context/memory.js 的 keywordHit，4.574、4.575）
+    // 关键词整个出现在话里算命中；不然取关键词里连着的两个字以上、出现在话里的最长一段。
+    // 带虚字的那一段、日常词、这个角色很多条记忆里都有的那一段不算。英文按整词比。
+
+    private static let funcChars = Set("的了是在和与及或我你他她它们这那个一不也都就又把被给着过吗呢吧啊呀哦嗯很太还要会能想说有没".unicodeScalars)
+    private static let everyday: Set<String> = ["喜欢", "今天", "明天", "昨天", "时候", "现在", "什么", "怎么", "因为", "所以", "但是", "可以", "知道",
+        "觉得", "感觉", "东西", "事情", "自己", "已经", "一直", "就是", "真的", "有点", "地方", "时间", "问题", "开心", "晚上", "早上"]
+
+    private static func isHan(_ u: Unicode.Scalar) -> Bool { (0x3400...0x9FFF).contains(u.value) }
+
+    /// 关键词与这段话（已转小写）对上的那一段，对不上回空串
+    static func keywordHit(_ kws: [String], _ text: String, common: (String) -> Bool = { _ in false }) -> String {
+        for k in kws {
+            let kl = k.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            if !kl.isEmpty && text.contains(kl) { return k.trimmingCharacters(in: .whitespacesAndNewlines) }
+        }
+        var best = ""
+        for k in kws {
+            let kl = k.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+            // 英文这类：整词
+            if let re = try? NSRegularExpression(pattern: "[a-z0-9]{3,}") {
+                for m in re.matches(in: kl, range: NSRange(kl.startIndex..., in: kl)) {
+                    guard let r = Range(m.range, in: kl) else { continue }
+                    let w = String(kl[r])
+                    guard w.count > best.count, !common(w) else { continue }
+                    if text.range(of: "(^|[^a-z0-9])\(NSRegularExpression.escapedPattern(for: w))($|[^a-z0-9])", options: .regularExpression) != nil { best = w }
+                }
+            }
+            // 中文：连着的两个字以上，最长的那一段（两个字的关键词整个对不上就是没提到）
+            var runs: [[Unicode.Scalar]] = []
+            var cur: [Unicode.Scalar] = []
+            for u in kl.unicodeScalars {
+                if isHan(u) { cur.append(u) } else { if cur.count >= 2 { runs.append(cur) }; cur = [] }
+            }
+            if cur.count >= 2 { runs.append(cur) }
+            for run in runs where run.count >= 3 {
+                var len = run.count - 1
+                while len >= 2 && len > best.count {
+                    var i = 0
+                    while i + len <= run.count {
+                        let slice = run[i..<(i + len)]
+                        var view = String.UnicodeScalarView()
+                        view.append(contentsOf: slice)
+                        let piece = String(view)
+                        if !slice.contains(where: { funcChars.contains($0) }) && !everyday.contains(piece) && text.contains(piece) && !common(piece) {
+                            best = piece
+                            break
+                        }
+                        i += 1
+                    }
+                    if best.count >= len { break }
+                    len -= 1
+                }
+            }
+        }
+        return best
+    }
+
+    /// 这一段在这些记忆里出现得太多，说明不了是哪一条（一成以上，至少三条）
+    static func commonIn(_ list: [Memory]) -> (String) -> Bool {
+        let cap = max(3, Int((Double(list.count) * 0.1).rounded(.up)))
+        let texts = list.map { ($0.content.lowercased(), $0.keywords.map { $0.lowercased() }) }
+        var cache: [String: Bool] = [:]
+        return { piece in
+            if let c = cache[piece] { return c }
+            var df = 0
+            for (c, ks) in texts where c.contains(piece) || ks.contains(where: { $0.contains(piece) }) {
+                df += 1
+                if df > cap { break }
+            }
+            let out = df > cap
+            cache[piece] = out
+            return out
+        }
+    }
+
     static func recall(_ all: [Memory], scanText: String, skip: Set<String>, topK: Int, now: Date, openDays: Int = 3) -> [Memory] {
         let scan = scanText.lowercased()
         let scanGrams = bigrams(scan)
         let pool = all.filter { m in
             m.rank != "S" && m.supersededBy.isEmpty && !m.pinned && !m.taboo && !isLive(m, now: now, days: openDays) && !skip.contains(m.id)
         }
-        let scored: [(Memory, Double)] = pool.compactMap { m in
-            let kw = m.keywords.contains { !$0.isEmpty && scan.contains($0.lowercased()) } ? 1.0 : 0
+        let common = commonIn(pool)
+        let scored: [(Memory, Double, Bool)] = pool.compactMap { m in
+            let hit = !keywordHit(m.keywords.filter { !$0.isEmpty }, scan, common: common).isEmpty
+            let kw = hit ? 1.0 : 0
             let grams = bigrams(m.content.lowercased())
             let cover = grams.isEmpty ? 0 : Double(grams.intersection(scanGrams).count) / Double(grams.count)
             let cue = max(kw, cover)
@@ -851,9 +934,10 @@ enum ChatPrompt {
             let weight = (m.row.number("weight") ?? 1) / 2
             let score = cue + 0.35 * recentScore + 0.25 * strength + 0.3 * weight + (settled ? 0.5 : 0)
                 + (m.row.string("source") == "manual" ? 0.2 : 0)
-            return (m, score)
+            return (m, score, hit)
         }
-        return scored.sorted { $0.1 > $1.1 }.prefix(max(0, topK)).map(\.0)
+        // 关键词对上的排在前面，同一档里再按总分：字面命中是对方当场提到了它
+        return scored.sorted { $0.2 != $1.2 ? $0.2 : $0.1 > $1.1 }.prefix(max(0, topK)).map(\.0)
     }
 
     private static func bigrams(_ s: String) -> Set<String> {
@@ -998,7 +1082,8 @@ extension ChatPrompt {
     static func buildGroup(chat: Chat, members: [Character], settings s: AppSettings, now: Date = Date(),
                            excludeTurn: String? = nil) throws -> Built {
         guard let lead = members.first else { throw StoreError(message: "群里没有成员") }
-        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && (excludeTurn == nil || $0.turnId != excludeTurn) }
+        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) && (excludeTurn == nil || $0.turnId != excludeTurn) }
+            .map(AutoReply.forPrompt)
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let userName = (me?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "对方"

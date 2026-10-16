@@ -69,6 +69,8 @@ enum ReplyParser {
     private static let voiceTrans = regex(#"\s*[\[【(（]?\s*(?:译文|翻译|译|translation)\s*[:：]"#, [.caseInsensitive])
     private static let sameLineTrans = regex(#"^(.*?\S)\s*[\[【]\s*(?:译文|翻译|译|translation)\s*[:：]\s*([^\]】]*?)\s*[\]】]\s*$"#, [.caseInsensitive])
     private static let sameLineParen = regex(#"^(.*?\S)\s*[(（]\s*(?:译文|翻译|译|translation)\s*[:：]\s*([^)）]*?)\s*[)）]\s*$"#, [.caseInsensitive])
+    /// 「原文 [英文：…]」这种拿语言名当标签的写法（网页版 4.521）
+    private static let sameLineLang = regex(#"^(.*?\S)\s*[\[【]\s*(?:中文|汉语|简体中文|英文|英语|english|chinese|日文|日语|japanese|韩文|韩语|korean)\s*[:：]\s*([^\]】]*?)\s*[\]】]\s*$"#, [.caseInsensitive])
     private static let transHead = regex(#"^(?:\d+\s*[.、)）]\s*)?([\[【(（]?)\s*(?:译文|翻译|译|translation)\s*([:：]?)\s*([\s\S]*)$"#, [.caseInsensitive])
     private static let innerLine = regex(#"^[\[【(（]?\s*(?:心声|内心|inner)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive])
     private static let quoteOpen = regex(#"^(?:\d+\s*[.、)）]\s*)?([\[【(（])\s*(?:引用|回复|quote|reply(?:ing)?(?:\s+to)?|in\s+reply\s+to)\s*[:：]\s*(.+?)\s*[\]】)）]\s*(.*)$"#, [.caseInsensitive])
@@ -389,7 +391,7 @@ enum ReplyParser {
             if transNext { transNext = false; attachTrans(t); return }
 
             // 同一行带译文
-            for re in [ReplyParser.sameLineTrans, ReplyParser.sameLineParen] {
+            for re in [ReplyParser.sameLineTrans, ReplyParser.sameLineParen, ReplyParser.sameLineLang] {
                 if let m = ReplyParser.match(re, t), m[1].range(of: #"^\d+\s*[.、)）]?$"#, options: .regularExpression) == nil {
                     var p = Part(type: .text, text: m[1].trimmingCharacters(in: .whitespaces))
                     p.translation = m[2]

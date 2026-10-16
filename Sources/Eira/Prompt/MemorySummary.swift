@@ -24,7 +24,7 @@ enum MemorySummary {
 
     /// 线上的消息，加上线下各场的正文（按时间排在一起，网页版 4.375）：见面发生的事也要进记忆
     private static func usable(_ chatId: String) throws -> [Message] {
-        let online = try Repo.messages(chatId: chatId).filter { !$0.isError && !$0.content.isEmpty }
+        let online = try Repo.messages(chatId: chatId).filter { !$0.isError && !$0.content.isEmpty && !AutoReply.localOnly($0) }.map(AutoReply.forPrompt)
         let beats = Scenes.beatsAsMessages(chatId: chatId)
         guard !beats.isEmpty else { return online }
         return (online + beats).enumerated().sorted { a, b in
@@ -134,6 +134,34 @@ enum MemorySummary {
 
     /// 不调接口，直接把积压标成已总结。迁进来一大堆历史、又不想为它们付钱时用。
     @discardableResult
+    /// 开启「每 N 轮」时已经积压的（网页版 4.606）：每段对话早于最近 N 轮、尚未总结的消息条数，与按 N 轮一次要调用几次
+    struct Backlog { var chatId: String; var msgs: Int; var runs: Int }
+    static func backlog(every n: Int) -> [Backlog] {
+        guard n > 0 else { return [] }
+        return ((try? Repo.chats()) ?? []).compactMap { chat in
+            guard let p = try? pending(chatId: chat.id) else { return nil }
+            let rounds = roundsIn(p)
+            guard rounds > n else { return nil }
+            let msgs = p.count - lastRounds(p, n).count
+            guard msgs > 0 else { return nil }
+            return Backlog(chatId: chat.id, msgs: msgs, runs: Int((Double(rounds - n) / Double(n)).rounded(.up)))
+        }
+    }
+
+    /// 跳过积压：最近 N 轮之前的标为已总结，不调用接口，也不生成记忆
+    @discardableResult
+    static func skipBacklog(chatId: String, keep n: Int) throws -> Int {
+        let p = try pending(chatId: chatId)
+        let cut = p.count - lastRounds(p, n).count
+        guard cut > 0, var chat = try Repo.chat(chatId) else { return 0 }
+        let last = p[cut - 1]
+        chat.row["memoryUpTo"] = .string(last.id)
+        chat.row["memoryUpToAt"] = .number(last.createdAt)
+        chat.row.touch()
+        try Repo.save(chat)
+        return cut
+    }
+
     static func markCaughtUp(chatId: String) throws -> Int {
         let all = try pending(chatId: chatId)
         guard let last = all.last, var chat = try Repo.chat(chatId) else { return 0 }
@@ -295,8 +323,11 @@ enum MemorySummary {
         let n = int(s, "memoryDedupeRelevant", 30)
         let m = int(s, "memoryDedupeRecent", 10)
         let grams = bigrams(text)
+        let lower = text.lowercased()
+        let common = ChatPrompt.commonIn(existing)
+        // 关键词对上（整个或其中两个字以上的一段，网页版 keywordHit）记 3 分
         func score(_ x: Memory) -> Int {
-            x.keywords.filter { !$0.isEmpty && text.contains($0) }.count * 3 + bigrams(x.content).intersection(grams).count
+            (ChatPrompt.keywordHit(x.keywords.filter { !$0.isEmpty }, lower, common: common).isEmpty ? 0 : 3) + bigrams(x.content).intersection(grams).count
         }
         let scored = existing.map { ($0, score($0)) }.filter { $0.1 > 0 }.sorted { $0.1 > $1.1 }
         var pick = Set((n > 0 ? Array(scored.prefix(n)) : scored).map { $0.0.id })
@@ -529,7 +560,8 @@ enum MemorySummary {
                 let r = try await extract(chatId: chatId)
                 runs += 1
                 sum.added += r.added; sum.updated += r.updated; sum.closed += r.closed; sum.state += r.state
-                if int(s, "memoryBatch", 200) == 0 || int(s, "autoSummarizeInterval") > 0 { break }
+                // 一次全拿（批量 0 且不按轮数）时一次就够；按轮数或分批时接着补，最多 catchUp 次（网页版 4.606）
+                if int(s, "memoryBatch", 200) == 0 && int(s, "autoSummarizeInterval") == 0 { break }
             }
         } catch {
             Diagnostics.shared.record("memory-extract-failed", ["error": error.localizedDescription])
