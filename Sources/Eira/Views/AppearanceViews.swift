@@ -425,7 +425,7 @@ struct FontSection: View {
         } header: {
             Text("字体")
         } footer: {
-            HelpNote("正文与标题宋体可以各换一款。字体从本机的 ttf 或 otf 文件添加，或填写字体文件的网址下载一份到本机；样式表网址（例如 Google Fonts 的链接）原生版读不了。主屏立即换上，已打开的应用在下次打开时换上。左滑删除。", title: "字体")
+            HelpNote("正文与标题宋体可以各换一款。从本机的 ttf 或 otf 文件添加的存在应用里。按网址添加的只存网址，字体文件放在系统缓存中，不占应用的存储，也不进备份；系统清理缓存后，用到时按网址重新获取，断网时先用默认字体。需要离线使用时点「存到本机」。样式表网址（例如 Google Fonts 的链接）原生版读不了。主屏立即换上，已打开的应用在下次打开时换上。左滑删除。", title: "字体")
         }
         .fileImporter(isPresented: $importing, allowedContentTypes: [.font], allowsMultipleSelection: false) { result in
             guard case .success(let urls) = result, let url = urls.first else { return }
@@ -455,13 +455,13 @@ struct FontSection: View {
     private func slot(_ title: String, key: String) -> some View {
         Picker(title, selection: Binding(get: { model.s.raw[key]?.string ?? "" }, set: { model.set(key, $0.isEmpty ? .null : .string($0)) })) {
             Text("系统默认").tag("")
-            ForEach(fonts.filter { !$0.fileId.isEmpty }) { f in Text(f.name).tag(f.id) }
+            ForEach(fonts.filter { $0.css.isEmpty && (!$0.fileId.isEmpty || !$0.url.isEmpty) }) { f in Text(f.name).tag(f.id) }
         }
     }
 
     private func status(_ f: Fonts.Rec) -> String {
         if !f.css.isEmpty { return "样式表网址，原生版不显示" }
-        if f.fileId.isEmpty { return "只有网址，存到本机后可用" }
+        if f.fileId.isEmpty { return "只存网址，不占应用的存储" }
         return f.bytes > 0 ? ByteCountFormatter.string(fromByteCount: Int64(f.bytes), countStyle: .file) : "本机"
     }
 
