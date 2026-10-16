@@ -123,7 +123,9 @@ enum CustomWidget {
         return out.joined(separator: ";")
     }
 
-    static func bridge(id: String, cols: Int, rows: Int, fit: String, state: JSONValue, vars: String, scheme: String) -> String {
+    /// data：占位符的值（widget.data，见 CustomWidgetData.swift）。没写占位符时为空对象
+    static func bridge(id: String, cols: Int, rows: Int, fit: String, state: JSONValue, vars: String, scheme: String,
+                       data: JSONValue? = nil) -> String {
         let fitting = fit != "cell"
         let s: JSONValue = state.object != nil ? state : .object([:])
         var out = "(function(){\n"
@@ -138,7 +140,7 @@ enum CustomWidget {
         out += "addEventListener('contextmenu',function(e){e.preventDefault()},true);\n"
         out += "function copy(v){return v===undefined?null:JSON.parse(JSON.stringify(v))}\n"
         out += "function flush(){if(timer){clearTimeout(timer);timer=0;send({t:'state',data:JSON.stringify(S)})}}\n"
-        out += "window.widget={cols:\(cols),rows:\(rows),\n"
+        out += "window.widget={cols:\(cols),rows:\(rows),data:\(js(data ?? .object([:]), fallback: "{}")),\n"
         out += "get:function(k){return k===undefined?copy(S):copy(S[k])},\n"
         out += "set:function(k,v){var n=copy(S);if(v===undefined||v===null)delete n[k];else n[k]=copy(v);\n"
         out += "if(JSON.stringify(n).length>MAX)throw new Error('widget storage is full (limit '+MAX+' bytes)');\n"
@@ -158,10 +160,20 @@ enum CustomWidget {
         return out
     }
 
-    /// 一格组件的整页：盒子 + 桥 + 它自己的代码。外部 https 图片与字体放开（网页版 images: true）
-    static func document(_ html: String, cell: Shell.Cell, fit: String, vars: String, scheme: String) -> String {
-        let b = bridge(id: cell.id, cols: cell.w, rows: cell.h, fit: fit, state: cell.config["state"] ?? .object([:]), vars: vars, scheme: scheme)
-        return wrap(html, bridge: b, images: true)
+    /// 一格组件的整页：盒子 + 桥 + 它自己的代码。外部 https 图片与字体放开（网页版 images: true）；
+    /// 写了占位符时先填值，并关掉外部图片与字体（免得填进去的内容经图片地址发出去），这一格开了 allowRemote 才照旧放开。
+    /// filled 为 nil 时占位符一律填空串
+    static func document(_ html: String, cell: Shell.Cell, fit: String, vars: String, scheme: String, filled: Filled? = nil) -> String {
+        let used = tokens(html)
+        let state = cell.config["state"] ?? .object([:])
+        if used.isEmpty {
+            let b = bridge(id: cell.id, cols: cell.w, rows: cell.h, fit: fit, state: state, vars: vars, scheme: scheme)
+            return wrap(html, bridge: b, images: true)
+        }
+        let f = filled ?? Filled()
+        let b = bridge(id: cell.id, cols: cell.w, rows: cell.h, fit: fit, state: state, vars: vars, scheme: scheme,
+                       data: dataValue(used, f))
+        return wrap(fill(html, f.text), bridge: b, images: allowRemote(cell.config))
     }
 
     // MARK: - 盒子里发出来的消息
@@ -239,6 +251,11 @@ extension CustomWidget {
         @State private var loaded = 0
         @State private var escapedKey = ""
         @State private var editing = false
+        /// 占位符要重算的次数：会话、朋友圈变了，或用到随时间变化的项时每分钟一次
+        @State private var tick = 0
+        @State private var filled: CustomWidget.Filled?
+        /// filled 算的是哪个文件、哪个角色
+        @State private var filledFor = ""
 
         var body: some View {
             let _ = loaded
@@ -247,19 +264,29 @@ extension CustomWidget {
             let fit = CustomWidget.fit(cell.config)
             let scheme = home.dark ? "dark" : "light"
             let vars = CustomWidget.themeVars(dark: home.dark)
-            // 这几样变了才重新装整页；组件自己存的状态变了不重装
-            let key = [fid, fit, "\(cell.w)", "\(cell.h)", vars, scheme, "\(CustomWidget.resets[cell.id] ?? 0)"].joined(separator: "|")
+            let used: [CustomWidget.Token] = text.map { CustomWidget.tokens(fileId: fid, html: $0) } ?? []
+            let charId = cell.config["charId"]?.string ?? ""
+            let remote = CustomWidget.allowRemote(cell.config)
+            // 换了文件或角色要等新值算好再装；只是重算（tick）时先照旧显示，值没变不重装
+            let base = fid + "|" + charId
+            let want = [base, "\(tick)", text == nil ? "0" : "1"].joined(separator: "|")
+            let ready = used.isEmpty || filledFor == base
+            let current = filled
+            let clocked = used.contains { CustomWidget.clockNames.contains($0.name) }
+            // 这几样变了才重新装整页；组件自己存的状态变了不重装。占位符的值变了也重装
+            let key = [fid, fit, "\(cell.w)", "\(cell.h)", vars, scheme, "\(CustomWidget.resets[cell.id] ?? 0)",
+                       used.isEmpty ? "" : "\(remote)|\(current?.hash ?? 0)"].joined(separator: "|")
             ZStack {
                 if fid.isEmpty {
                     placeholder("square.grid.2x2", "点这里上传 HTML 文件或粘贴代码")
                         .contentShape(Rectangle())
                         .onTapGesture { editing = true }
-                } else if let text {
+                } else if let text, ready {
                     if escapedKey == key {
                         placeholder("lock", "该组件试图打开外部网页，已停止")
                     } else {
                         Box(key: key, cellId: cell.id, settings: home.s, scrollable: fit == "cell",
-                            make: { CustomWidget.document(text, cell: cell, fit: fit, vars: vars, scheme: scheme) },
+                            make: { CustomWidget.document(text, cell: cell, fit: fit, vars: vars, scheme: scheme, filled: current) },
                             escaped: { escapedKey = key })
                             .accessibilityLabel(cell.config["name"]?.string ?? "自定义组件")
                     }
@@ -273,6 +300,16 @@ extension CustomWidget {
                 _ = CustomWidget.text(fid)
                 loaded += 1
             }
+            .task(id: want) {
+                guard !used.isEmpty else { return }
+                filled = await CustomWidget.resolve(used, charId: charId)
+                filledFor = base
+            }
+            .onReceive(NotificationCenter.chatChangesSettled) { _ in if !used.isEmpty { tick += 1 } }
+            .onReceive(NotificationCenter.default.publisher(for: .eiraMomentsChanged)) { _ in
+                if used.contains(where: { $0.name == "角色朋友圈" }) { tick += 1 }
+            }
+            .onReceive(CustomWidget.minute) { _ in if clocked { tick += 1 } }
             .sheet(isPresented: $editing) {
                 NavigationStack {
                     EditView(cell: cell, apply: { f in CustomWidget.apply(settings: home.s, f) }, done: { editing = false })
@@ -438,6 +475,11 @@ extension CustomWidget {
         @State private var clearing = false
         @State private var problem: String?
         @State private var loaded = false
+        @State private var charId = ""
+        @State private var chars: [Character] = []
+        @State private var remote = false
+        /// 当前的代码里写了占位符
+        @State private var uses = false
 
         var body: some View {
             Form {
@@ -453,14 +495,36 @@ extension CustomWidget {
                         Button("移除", role: .destructive) {
                             CustomWidget.resets[cell.id, default: 0] += 1
                             if write(["fileId": .null, "name": .string(""), "state": .object([:])]) {
-                                fileId = ""; name = ""; bytes = 0; stateBytes = 0
+                                fileId = ""; name = ""; bytes = 0; stateBytes = 0; uses = false
                             }
                         }
                     }
                 } header: {
                     Text("HTML")
                 } footer: {
-                    HelpNote("上传 .html 文件，或直接粘贴代码。上限 512 KB，保存在本设备。组件运行在隔离环境中，读不到本应用的数据与已保存的接口密钥，无法联网，也无法加载外部脚本；可以使用 https 开头的外部图片与字体。", title: "自定义组件：HTML")
+                    HelpNote("上传 .html 文件，或直接粘贴代码。上限 512 KB，保存在本设备。组件运行在隔离环境中，读不到本应用的数据与已保存的接口密钥，无法联网，也无法加载外部脚本；可以使用 https 开头的外部图片与字体。代码里可以写 {{角色名}} 这类占位符，组件显示时由本应用填入对应的数据，可用的占位符见「写法说明」；写了占位符时，外部图片与字体默认关闭。", title: "自定义组件：HTML")
+                }
+                Section {
+                    Picker("角色", selection: Binding(get: { charId }, set: { v in if write(["charId": .string(v)]) { charId = v } })) {
+                        Text("跟随最近聊过的角色").tag("")
+                        if !charId.isEmpty && !chars.contains(where: { $0.id == charId }) {
+                            Text("不可用的角色").tag(charId)
+                        }
+                        ForEach(chars, id: \.id) { c in Text(c.displayName).tag(c.id) }
+                    }
+                } header: {
+                    Text("角色")
+                } footer: {
+                    HelpNote("占位符填入哪个角色的数据。不选时跟随当前身份最近聊过的角色，与其他小组件相同。代码里没有占位符时，此项不起作用。", title: "自定义组件：角色")
+                }
+                if uses {
+                    Section {
+                        Toggle("仍允许外部图片与字体", isOn: Binding(get: { remote }, set: { v in if write(["allowRemote": .bool(v)]) { remote = v } }))
+                    } header: {
+                        Text("外部图片与字体")
+                    } footer: {
+                        Text("代码里写了占位符，外部图片与字体默认关闭。开启后，组件可以通过图片地址把填入的聊天内容发到外部网站。")
+                    }
                 }
                 Section {
                     Picker("显示方式", selection: Binding(get: { fit }, set: { v in if write(["fit": .string(v)]) { fit = v } })) {
@@ -480,7 +544,7 @@ extension CustomWidget {
                         Text("组件用 widget.set 保存了 \(CustomWidget.kb(stateBytes)) 的数据").font(.footnote).foregroundStyle(Theme.text2)
                     }
                 } footer: {
-                    HelpNote("写法说明：组件的大小、可用的颜色变量、保存数据的方法与限制；可复制起步模板，或复制一段说明交给 AI 编写。", title: "自定义组件：写法说明")
+                    HelpNote("写法说明：组件的大小、可用的颜色变量、保存数据的方法、占位符与限制；可复制起步模板与占位符示例，或复制一段说明交给 AI 编写。", title: "自定义组件：写法说明")
                 }
                 ProblemSection(text: problem)
             }
@@ -509,6 +573,10 @@ extension CustomWidget {
                 fit = CustomWidget.fit(cell.config)
                 bytes = fileId.isEmpty ? 0 : CustomWidget.text(fileId).utf8.count
                 stateBytes = (try? cell.config["state"]?.encoded())?.count ?? 0
+                charId = cell.config["charId"]?.string ?? ""
+                remote = CustomWidget.allowRemote(cell.config)
+                uses = !fileId.isEmpty && !CustomWidget.tokens(CustomWidget.text(fileId)).isEmpty
+                chars = ((try? Repo.characters()) ?? []).filter { !$0.archived }
             }
         }
 
@@ -530,6 +598,7 @@ extension CustomWidget {
                     fileId = cfg["fileId"]?.string ?? ""
                     name = url.lastPathComponent
                     bytes = data.count
+                    uses = !CustomWidget.tokens(String(decoding: data, as: UTF8.self)).isEmpty
                     problem = nil
                 }
             } catch {
@@ -548,6 +617,7 @@ extension CustomWidget {
                 fileId = cfg["fileId"]?.string ?? ""
                 name = n
                 bytes = data.count
+                uses = !CustomWidget.tokens(text).isEmpty
                 problem = nil
                 return nil
             } catch {
@@ -634,6 +704,10 @@ extension CustomWidget {
                         UIPasteboard.general.string = CustomWidget.template
                         copied = "模板已复制"
                     }
+                    Button("复制占位符示例") {
+                        UIPasteboard.general.string = CustomWidget.placeholderTemplate
+                        copied = "占位符示例已复制"
+                    }
                     Button("复制给 AI 的说明") {
                         UIPasteboard.general.string = CustomWidget.aiBrief()
                         copied = "说明已复制，可以粘贴给 AI 并写上想要的功能"
@@ -703,10 +777,38 @@ extension CustomWidget {
         所有数据合计不超过 \(kb(stateMax))，超出时 `set` 抛出错误。数据只属于这一个组件，读不到本应用和其他组件的数据。
         另有 `widget.cols`、`widget.rows` 两个数字，为格子数。
 
+        ## 占位符
+
+        代码里写 `{{名字}}`，组件显示时由本应用换成对应的数据。数据取自编辑页「角色」一项选定的角色，不选时为当前身份最近聊过的角色；只读本设备上已有的记录，不联网。没有数据时填空串；`{{未读}}`、`{{在一起天数}}`、`{{认识天数}}` 没有数据时填 `0`。认不出的名字原样保留。
+
+        - `{{角色名}}`：角色的名字，有备注时为备注
+        - `{{签名}}`：角色的一句话签名
+        - `{{角色头像}}`、`{{我的头像}}`：头像图片的 data 地址，可直接写进 `<img src="…">` 或 `url(…)`
+        - `{{我的名字}}`：与该角色对话所用的身份名字
+        - `{{最近一句}}`：角色在单聊中最近的一句文字消息
+        - `{{最近几句}}`：单聊中双方最近的 5 句，每行「名字：内容」；`{{最近几句:N}}` 取最近 N 句
+        - `{{上次聊天}}`：最后一条消息距今多久，如「刚刚」「5 分钟前」「3 小时前」「2 天前」，一周以前写月日
+        - `{{未读}}`：这段单聊的未读条数
+        - `{{在一起天数}}`：从情侣空间设定的起始日算起的天数，未设定时从这段对话建立的那天算起
+        - `{{认识天数}}`：从这段对话的第一条消息算起的天数
+        - `{{纪念日}}`：最近的一个纪念日，如「生日 还有 12 天」；`{{纪念日名}}`、`{{纪念日天数}}` 分别为名称与天数
+        - `{{最近记忆}}`：角色最新的一条记忆
+        - `{{角色日记}}`：角色最新一篇日记的开头 120 字，上锁的不填；`{{角色日记:N}}` 取开头 N 字
+        - `{{角色朋友圈}}`：角色最新一条朋友圈的文字
+        - `{{正在听}}`：正在一起听或上次一起听的歌名
+        - `{{角色时间}}`：角色所在时区的当前时间，如 `21:05`
+        - `{{角色天气}}`：角色今天的天气，只取已经排好的日程里存下的那一份，没有时不填
+
+        填入的文字已转义，可以写在标签之间或属性里，不会变成标签或脚本。脚本里请改用 `widget.data` 读取：它只包含代码里写了的那几项，键与占位符的写法相同（如 `widget.data['角色名']`、`widget.data['最近几句:3']`）；写了任何一种「最近几句」时，`widget.data['最近几句']` 是一个数组，每项为 `{ who, me, text, time }`（`me` 为是否本人所说，`time` 为毫秒时间戳）。
+
+        数据在组件显示时填入，聊天有新消息、朋友圈有新动态时重新填入；用到时间类的几项时每分钟核对一次，数据变了组件重新载入，`widget` 保存的数据不受影响。
+
+        代码里写了任何一个占位符时，外部图片与字体默认关闭，只能使用 `data:` 地址；需要外部图片与字体时，在编辑页打开「仍允许外部图片与字体」。打开后，组件可以通过图片地址把填入的聊天内容发到外部网站。
+
         ## 限制
 
         - 不能联网：`fetch`、`XMLHttpRequest`、WebSocket 均不可用，也不能加载外部脚本
-        - 可以使用 https 开头的外部图片与字体（包括 Google Fonts 这类字体样式表）
+        - 可以使用 https 开头的外部图片与字体（包括 Google Fonts 这类字体样式表）；写了占位符时默认不可用，见上一节
         - 读不到本应用的数据与已保存的接口密钥；`localStorage` 不可用，请改用 `widget`
         - 不能打开外部网页；组件试图跳转时会被停止
         - 长按组件进入主屏整理模式，组件内部不要依赖长按手势
@@ -772,6 +874,48 @@ extension CustomWidget {
 
     """
 
+    /// 占位符示例：头像、名字、最近一句、在一起的天数
+    static let placeholderTemplate = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+    <meta charset="utf-8">
+    <style>
+      html, body { height: 100%; }
+      body {
+        box-sizing: border-box; padding: 14px; margin: 0;
+        display: flex; flex-direction: column; justify-content: space-between;
+        background: var(--wg-bg); border-radius: var(--wg-radius);
+      }
+      .top { display: flex; align-items: center; gap: 10px; }
+      .face { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--wg-bg-2); }
+      .name { font-size: 15px; font-weight: 600; }
+      .days { font-size: 12px; color: var(--wg-text-3); }
+      .line {
+        font-size: 13px; color: var(--wg-text-2); line-height: 1.5;
+        overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+      }
+      html[data-size="2x1"] .line { display: none; }
+    </style>
+    </head>
+    <body>
+      <div class="top">
+        <img class="face" src="{{角色头像}}" alt="">
+        <div>
+          <div class="name">{{角色名}}</div>
+          <div class="days">在一起第 {{在一起天数}} 天</div>
+        </div>
+      </div>
+      <div class="line" id="line">{{最近一句}}</div>
+    <script>
+      // 脚本里通过 widget.data 读取同一份数据
+      if (!widget.data['最近一句']) document.getElementById('line').textContent = '暂无消息';
+    </script>
+    </body>
+    </html>
+
+    """
+
     /// 「复制给 AI 的说明」：交给任何 AI，让它按这个格式写组件
     static func aiBrief() -> String {
         """
@@ -787,7 +931,9 @@ extension CustomWidget {
 
         【保存数据】需要记住状态时使用全局对象 widget：widget.get(key) 读取（没有时为 null），widget.set(key, value) 保存（value 可转为 JSON），widget.remove(key)，widget.clear()。合计不超过 \(kb(stateMax))。不要使用 localStorage、sessionStorage、IndexedDB 与 cookie，它们不可用。
 
-        【限制】不能联网（fetch、XMLHttpRequest、WebSocket 均不可用）；可以使用 https 开头的外部图片与字体；不能跳转或打开外部网页；不要使用长按手势，长按用于进入主屏整理模式。
+        【占位符】需要本应用的数据时，在 HTML 里写 {{名字}}，显示时会换成转义过的文字：{{角色名}}、{{签名}}、{{角色头像}}（头像的 data 地址，可用于 img 的 src 或 CSS 的 url()）、{{我的名字}}、{{我的头像}}、{{最近一句}}（角色最近的一句）、{{最近几句}}（双方最近 5 句，每行「名字：内容」，{{最近几句:N}} 取 N 句）、{{上次聊天}}（如「5 分钟前」「2 天前」）、{{未读}}、{{在一起天数}}、{{认识天数}}、{{纪念日}}（如「生日 还有 12 天」）、{{纪念日名}}、{{纪念日天数}}、{{最近记忆}}、{{角色日记}}（最新一篇日记的开头 120 字，{{角色日记:N}} 取 N 字）、{{角色朋友圈}}、{{正在听}}、{{角色时间}}（如 21:05）、{{角色天气}}。没有数据时为空串，{{未读}}、{{在一起天数}}、{{认识天数}} 为 0。脚本里不要把占位符写进字符串，改用 widget.data 读取：它只包含 HTML 里写了的那几项，键与占位符的写法相同，如 widget.data['角色名']；widget.data['最近几句'] 是数组，每项为 { who, me, text, time }。用了占位符的组件不能使用外部图片与字体，只能使用 data: 地址。
+
+        【限制】不能联网（fetch、XMLHttpRequest、WebSocket 均不可用）；未使用占位符时可以使用 https 开头的外部图片与字体；不能跳转或打开外部网页；不要使用长按手势，长按用于进入主屏整理模式。
 
         【组件要做的事】（在这里写你想要的样子与功能）
         """
