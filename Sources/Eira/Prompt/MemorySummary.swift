@@ -132,8 +132,6 @@ enum MemorySummary {
         return parts.isEmpty ? "关闭" : parts.joined(separator: "或")
     }
 
-    /// 不调接口，直接把积压标成已总结。迁进来一大堆历史、又不想为它们付钱时用。
-    @discardableResult
     /// 开启「每 N 轮」时已经积压的（网页版 4.606）：每段对话早于最近 N 轮、尚未总结的消息条数，与按 N 轮一次要调用几次
     struct Backlog { var chatId: String; var msgs: Int; var runs: Int }
     static func backlog(every n: Int) -> [Backlog] {
@@ -162,6 +160,8 @@ enum MemorySummary {
         return cut
     }
 
+    /// 不调接口，直接把积压标成已总结。迁进来一大堆历史、又不想为它们付钱时用。
+    @discardableResult
     static func markCaughtUp(chatId: String) throws -> Int {
         let all = try pending(chatId: chatId)
         guard let last = all.last, var chat = try Repo.chat(chatId) else { return 0 }
