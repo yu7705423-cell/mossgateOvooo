@@ -83,7 +83,7 @@ final class TranslateApiTests: StoreTestCase {
 
     func testAlreadyIn() {
         XCTAssertTrue(TranslateOne.alreadyIn("我好想你", "中文"))
-        XCTAssertTrue(TranslateOne.alreadyIn("去 Costco 吗", "中文"))
+        XCTAssertTrue(TranslateOne.alreadyIn("我们周末去 Costco 买东西吗", "中文"), "夹一个拉丁词仍算中文（汉字数的两倍不少于字母数，同网页版）")
         XCTAssertFalse(TranslateOne.alreadyIn("宝贝我好想你 my love", "中文"))
         XCTAssertFalse(TranslateOne.alreadyIn("想你了，мой милый", "中文"))
         XCTAssertTrue(TranslateOne.alreadyIn("See you", "English"))
