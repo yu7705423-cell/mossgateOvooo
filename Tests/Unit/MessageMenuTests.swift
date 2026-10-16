@@ -233,3 +233,102 @@ final class InnerCardTests: StoreTestCase {
         XCTAssertEqual(InnerCardView.history("chat_a").map(\.id), [b.id, a.id])
     }
 }
+
+/// 旁白与「已读，未回复」的长按菜单、旁白与心声的译文显示、群聊旁白的名字颜色、多选「选到这里」、改心声的译文
+/// （网页版 MsgMenu 的 narr / silent，4.529、4.648、4.586、4.438、4.636）
+final class NarrationDisplayTests: StoreTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try importFixture("data.json")
+    }
+
+    func testSlimMenuForNarrationAndSilence() {
+        let narr = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[旁白：风停了]", kind: "narration")
+        XCTAssertEqual(MessageActions.slimMenu(narr, canRegen: true), ["regenerate", "edit", "copy", "select", "delete"])
+        XCTAssertEqual(MessageActions.slimMenu(narr, canRegen: false), ["edit", "copy", "select", "delete"])
+        let mine = Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "[旁白：雨停了]", kind: "narration")
+        XCTAssertEqual(MessageActions.slimMenu(mine, canRegen: true), ["edit", "copy", "select", "delete"])
+        let silence = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "", kind: "silence")
+        XCTAssertEqual(MessageActions.slimMenu(silence, canRegen: true), ["regenerate", "select", "delete"])
+        XCTAssertEqual(MessageActions.slimMenu(silence, canRegen: false), ["select", "delete"])
+        let text = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "嗯")
+        XCTAssertNil(MessageActions.slimMenu(text, canRegen: true))
+    }
+
+    func testNarrationTextStripsMarker() {
+        var m = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "[旁白：风停了]", kind: "narration")
+        XCTAssertEqual(MessageActions.narrationText(m), "风停了")
+        m.row["narration"] = .string("雨停了")
+        XCTAssertEqual(MessageActions.narrationText(m), "雨停了")
+        let old = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "【旁白: 夜深了】", kind: "narration")
+        XCTAssertEqual(MessageActions.narrationText(old), "夜深了")
+    }
+
+    func testTranslationModes() {
+        // 旁白与气泡：只显示译文时正文换成译文，点开看到原文；只显示原文时不画译文
+        XCTAssertEqual(MessageActions.transSwap("rain", "下雨了", mode: "both").main, "rain")
+        XCTAssertEqual(MessageActions.transSwap("rain", "下雨了", mode: "both").sub, "下雨了")
+        XCTAssertEqual(MessageActions.transSwap("rain", "下雨了", mode: "trans").main, "下雨了")
+        XCTAssertEqual(MessageActions.transSwap("rain", "下雨了", mode: "trans").sub, "rain")
+        XCTAssertEqual(MessageActions.transSwap("rain", "下雨了", mode: "orig").sub, "")
+        XCTAssertEqual(MessageActions.transSwap("rain", "  ", mode: "trans").main, "rain")
+        // 心声：网页版 transView.pair，只显示译文时下面不再有一行
+        XCTAssertEqual(MessageActions.transPair("tired", "累了", mode: "both").sub, "累了")
+        XCTAssertEqual(MessageActions.transPair("tired", "累了", mode: "trans").main, "累了")
+        XCTAssertEqual(MessageActions.transPair("tired", "累了", mode: "trans").sub, "")
+        XCTAssertEqual(MessageActions.transPair("tired", "累了", mode: "orig").main, "tired")
+        XCTAssertEqual(MessageActions.transPair("tired", "累了", mode: "orig").sub, "")
+    }
+
+    func testNarrToneCyclesByMemberOrder() {
+        let ids = (1...10).map { "c\($0)" }
+        XCTAssertNil(MessageActions.narrTone(mine: true, memberIds: ids, authorId: "me"))
+        XCTAssertEqual(MessageActions.narrTone(mine: false, memberIds: ids, authorId: "c1"), 0)
+        XCTAssertEqual(MessageActions.narrTone(mine: false, memberIds: ids, authorId: "c8"), 7)
+        XCTAssertEqual(MessageActions.narrTone(mine: false, memberIds: ids, authorId: "c9"), 0)
+        XCTAssertEqual(MessageActions.narrTone(mine: false, memberIds: ids, authorId: "gone"), 0)
+        XCTAssertEqual(Theme.narrPalette.count, 8)
+    }
+
+    func testPickRange() {
+        let ids = ["a", "b", "c", "d", "e"]
+        XCTAssertEqual(MessageActions.pickRange(ids: ids, picked: ["b"], last: "b", to: "d"), ["b", "c", "d"])
+        XCTAssertEqual(MessageActions.pickRange(ids: ids, picked: ["e"], last: "e", to: "c"), ["c", "d", "e"])
+        // 一条都没勾时只选这一条
+        XCTAssertEqual(MessageActions.pickRange(ids: ids, picked: [], last: nil, to: "c"), ["c"])
+        // 最后勾的那一条已经取消了：只选这一条
+        XCTAssertEqual(MessageActions.pickRange(ids: ids, picked: ["a"], last: "d", to: "c"), ["a", "c"])
+        XCTAssertEqual(MessageActions.pickRange(ids: ids, picked: ["a"], last: "a", to: "zz"), ["a"])
+    }
+
+    func testEditInnerTranslation() throws {
+        var m = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "Hello")
+        m.row["inner"] = .string("tired")
+        m.row["innerTrans"] = .string("累")
+        m = try Repo.append(m)
+        let a = try MessageActions.setTranslations(m, translation: " 你好 ", innerTrans: " 累了 ")
+        XCTAssertEqual(a.row.string("translation"), "你好")
+        XCTAssertEqual(a.row.string("innerTrans"), "累了")
+        XCTAssertTrue(a.row.bool("transEdited"))
+        let saved = try XCTUnwrap(Repo.messages(chatId: "chat_a").first { $0.id == m.id })
+        XCTAssertEqual(saved.row.string("innerTrans"), "累了")
+        let b = try MessageActions.setTranslations(a, translation: "", innerTrans: "")
+        XCTAssertNil(b.row["translation"])
+        XCTAssertNil(b.row["innerTrans"])
+        // 没有心声那一栏时不动 innerTrans
+        let c = try MessageActions.setTranslations(a, translation: "嗨", innerTrans: nil)
+        XCTAssertEqual(c.row.string("innerTrans"), "累了")
+    }
+
+    func testInnerHistoryOnlyThatMember() throws {
+        var a = Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "嗯")
+        a.row["inner"] = .string("甲的心声")
+        a = try Repo.append(a)
+        var b = Message.new(chatId: "chat_a", role: .char, authorId: "char_b", content: "好")
+        b.row["inner"] = .string("乙的心声")
+        b = try Repo.append(b)
+        XCTAssertEqual(InnerCardView.history("chat_a", who: "char_a").map(\.id), [a.id])
+        XCTAssertEqual(InnerCardView.history("chat_a", who: "char_b").map(\.id), [b.id])
+        XCTAssertEqual(Set(InnerCardView.history("chat_a").map(\.id)), [a.id, b.id])
+    }
+}

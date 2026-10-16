@@ -53,19 +53,19 @@ enum ExtraCalls {
                       || ((try? Repo.personas()) ?? []).contains { !FaceLock.faces($0.row).isEmpty }) },
                   when: { _ in "有锁脸照片、这一张用到锁脸且接口不收参考图时，每组照片读一次（走识图那一档），之后用缓存" }),
         // 默认开着：网页版用户明确要求的例外（每通接通过的电话挂断时一次）
-        ExtraCall(id: "callSummary", label: "通话结束后写总结",
+        ExtraCall(id: "callSummary", label: "打完电话自动总结",
                   isOn: { $0.raw["callSummary"]?.bool != false },
                   when: { _ in "每通接通过、有对白的电话挂断时一次（走副用接口）" }, allowOn: true),
-        // 挂在角色身上（会话设置里），不是全局设置
-        ExtraCall(id: "proactive", label: "角色主动发起对话",
+        // 挂在角色身上（会话设置里），不是全局设置。深夜那一档并在这一项里（网页版 cost.js 的 proactive）：
+        // 原生版深夜那一档只在主动发起开着时才发，所以只看 proactive
+        ExtraCall(id: "proactive", label: "角色主动发消息",
                   isOn: { _ in liveChars().contains { $0.row["proactive"]?.bool == true } },
-                  when: { s in "每个开了的角色按设定的间隔一次" + (BgPush.isOn(s) ? "；应用不在前台时由后台消息服务器代发" : "；只在应用打开时发送") }),
+                  when: { s in "每个开了的角色按设定的间隔一次，深夜那一档另算"
+                      + (BgPush.isOn(s) ? "；应用不在前台时由后台消息服务器代发，深夜那一档只在应用打开时发送" : "；只在应用打开时发送")
+                      + "。开关在该角色的会话菜单" }),
         ExtraCall(id: "groupProactive", label: "群里主动开口",
                   isOn: { _ in liveChats().contains { $0.isGroup && $0.row["groupProactive"]?["on"]?.bool == true } },
                   when: { _ in "每个开了的群按设定的间隔一次；只在应用打开时发送。开关在群资料" }),
-        ExtraCall(id: "emo", label: "深夜那一档",
-                  isOn: { _ in liveChars().contains { $0.row["proactive"]?.bool == true && $0.row["emo"]?.bool == true } },
-                  when: { _ in "开了的角色在设定的深夜时段内，距上次满设定的天数时一次；只在应用打开时发送" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "diaryAuto", label: "角色每天写日记",
                   isOn: { _ in liveChars().contains { $0.row["diaryAuto"]?.bool == true } },

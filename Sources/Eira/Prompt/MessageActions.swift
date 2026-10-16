@@ -102,6 +102,77 @@ enum MessageActions {
         return out
     }
 
+    /// 改译文页（网页版 4.438 的 TransEditSheet）：正文的译文一栏，有心声的多一栏（innerTrans 为 nil 即没有那一栏、不动它）。
+    /// 保存写回消息，标 transEdited。清空即去掉那一份译文
+    static func setTranslations(_ m: Message, translation: String, innerTrans: String?) throws -> Message {
+        var out = m
+        let t = translation.trimmingCharacters(in: .whitespacesAndNewlines)
+        out.row["translation"] = t.isEmpty ? nil : .string(t)
+        if let innerTrans {
+            let i = innerTrans.trimmingCharacters(in: .whitespacesAndNewlines)
+            out.row["innerTrans"] = i.isEmpty ? nil : .string(i)
+        }
+        out.row["transEdited"] = .bool(true)
+        out.row.touch()
+        try Repo.save(out)
+        return out
+    }
+
+    /// 旁白那一句：存着的 narration，没有就从正文摘掉标记（网页版 narrOf）
+    static func narrationText(_ m: Message) -> String {
+        let n = m.row.string("narration")
+        if !n.isEmpty { return n }
+        return m.content.replacingOccurrences(of: #"^[\[【]\s*旁白\s*[:：]\s*|[\]】]$"#, with: "", options: .regularExpression)
+    }
+
+    /// 译文显示方式（网页版 system/transview.js 的 pair，4.529）：main 画在正文位置，sub 画在下面那一行（空串不画）。
+    /// 心声那一句用它：只显示译文时只有译文，没有点开看原文那一层
+    static func transPair(_ orig: String, _ trans: String, mode: String) -> (main: String, sub: String) {
+        let t = trans.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || mode == "orig" { return (orig, "") }
+        if mode == "trans" { return (t, "") }
+        return (orig, t)
+    }
+
+    /// 气泡与旁白的译文（网页版 Conversation.js 的 swap / trans）：只显示译文时正文换成译文，点一下看到的是原文；
+    /// 只显示原文时不画译文。sub 是点一下展开的那一行
+    static func transSwap(_ orig: String, _ trans: String, mode: String) -> (main: String, sub: String) {
+        let t = trans.trimmingCharacters(in: .whitespacesAndNewlines)
+        if t.isEmpty || mode == "orig" { return (orig, "") }
+        if mode == "trans" { return (t, orig.trimmingCharacters(in: .whitespacesAndNewlines)) }
+        return (orig, t)
+    }
+
+    /// 群聊旁白前面那个名字配哪一种颜色（网页版 4.648 的 narr-c1 到 narr-c8）：按成员在群里的顺序轮着配，
+    /// 不在名单里的按第一位算。我写的回 nil（用次级文字色，narr-cme）
+    static func narrTone(mine: Bool, memberIds: [String], authorId: String) -> Int? {
+        if mine { return nil }
+        let seat = memberIds.firstIndex(of: authorId) ?? 0
+        return seat % 8
+    }
+
+    /// 旁白与「已读，未回复」那一行的长按菜单只有这几项（网页版 MsgMenu 的 narr / silent）。其余消息回 nil，用完整的菜单。
+    /// 旁白：重新生成（角色写的、最新一轮）、编辑、复制、多选、删除；「已读，未回复」：重新生成、多选、删除。都没有回应、引用、翻译
+    static func slimMenu(_ m: Message, canRegen: Bool) -> [String]? {
+        switch m.kind {
+        case "silence":
+            return (canRegen ? ["regenerate"] : []) + ["select", "delete"]
+        case "narration":
+            return (canRegen && m.role != .user ? ["regenerate"] : []) + ["edit", "copy", "select", "delete"]
+        default:
+            return nil
+        }
+    }
+
+    /// 选到这里（网页版 4.586，照 QQ）：从最后勾的那一条到长按的这一条，中间的全部选上。一条都没勾时只选这一条
+    static func pickRange(ids: [String], picked: Set<String>, last: String?, to: String) -> Set<String> {
+        guard let b = ids.firstIndex(of: to) else { return picked }
+        let a = last.flatMap { picked.contains($0) ? ids.firstIndex(of: $0) : nil } ?? b
+        var out = picked
+        for id in ids[min(a, b)...max(a, b)] { out.insert(id) }
+        return out
+    }
+
     /// 删一条。它若是一轮的第一条（带着原文与各个版本），把这些挪到同一轮剩下的下一条上，
     /// 不然这一轮就再也切不了版本、也没法重新生成成同一轮。
     static func delete(_ m: Message) throws {

@@ -163,7 +163,9 @@ final class ProactiveTests: StoreTestCase {
     func testEmoOncePerDays() async throws {
         try turnOn()
         try quiet()
-        XCTAssertFalse(ExtraCalls.switchedOn(.load()).contains { $0.id == "emo" })
+        // 深夜那一档不单列一项，并在「角色主动发消息」里（网页版 cost.js）
+        XCTAssertNil(ExtraCalls.all.first(where: { $0.id == "emo" }))
+        XCTAssertTrue(ExtraCalls.all.first(where: { $0.id == "proactive" })?.when(.load()).contains("深夜那一档另算") == true)
         var c = try XCTUnwrap(Repo.character("char_a"))
         c.row["emo"] = .bool(true)
         c.row["emoFrom"] = .number(0)

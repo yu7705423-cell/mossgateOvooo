@@ -42,6 +42,23 @@ enum Theme {
     /// 默认头像与无图格子的底（--cat-bg）
     static let catBg = pair(hex(0xEDEDEC), hex(0x222224))
 
+    /// 群聊旁白前面的名字按成员轮着配的八种颜色（网页版 --narr-p1 到 --narr-p8，4.648）。我写的那一行用 text2
+    static let narrPalette: [Color] = [
+        token("narr-p1", hex(0xA0705A), hex(0xC9A08C)),
+        token("narr-p2", hex(0x5F8A78), hex(0x92BBA8)),
+        token("narr-p3", hex(0x6E7FA6), hex(0xA2B0D2)),
+        token("narr-p4", hex(0xA0809A), hex(0xCBAEC6)),
+        token("narr-p5", hex(0x8A8A5A), hex(0xBDBC8E)),
+        token("narr-p6", hex(0x5A8A9A), hex(0x8EBCCB)),
+        token("narr-p7", hex(0x9A6A6A), hex(0xCB9C9C)),
+        token("narr-p8", hex(0x7A6EA0), hex(0xADA2CF)),
+    ]
+    /// 旁白名字的颜色：nil 为我写的
+    static func narrName(_ tone: Int?) -> Color {
+        guard let tone, narrPalette.indices.contains(tone) else { return text2 }
+        return narrPalette[tone]
+    }
+
     // 旧名字照旧能用，指到新令牌上
     static let background = bg
     static let groupedBackground = surface2

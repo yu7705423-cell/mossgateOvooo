@@ -80,6 +80,8 @@ struct ConversationView: View {
     @State private var earlier = 0
     /// 多选：nil 为没在选
     @State private var picking: Set<String>?
+    /// 多选时勾的先后（「选到这里」从最后勾的那一条起算，网页版 4.586）
+    @State private var pickOrder: [String] = []
     @State private var confirmBatchDelete = false
     @State private var notice: String?
     @State private var rememberedMemory: RememberedMemory?
@@ -225,7 +227,7 @@ struct ConversationView: View {
         .navigationDestination(isPresented: $showSettings) {
             ChatSettingsView(chatId: chatId, onDeleted: { showSettings = false; dismiss() },
                              onSearch: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showSearch = true } },
-                             onSelect: { showSettings = false; picking = [] },
+                             onSelect: { showSettings = false; picking = []; pickOrder = [] },
                              onLook: { showSettings = false; DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { showLook = true } })
         }
         .onAppear {
@@ -264,7 +266,10 @@ struct ConversationView: View {
             Text("一起重新生成时，原图片删除，新回复中的图片按新描述生成。保留图片时不调用生图接口；重新生成图片时按原描述各重画一次，每张调用一次生图接口。")
         }
         .sheet(item: Binding(get: { innerCardFor.map { ViewingImage(id: $0) } }, set: { innerCardFor = $0?.id })) { v in
-            InnerCardView(chatId: chatId, msgId: v.id, char: char)
+            // 群聊里只翻点的这一位成员的（网页版 4.636）
+            let hit = messages.first { $0.id == v.id }
+            InnerCardView(chatId: chatId, msgId: v.id, char: hit.flatMap { speaker(of: $0) } ?? char,
+                          who: isGroup ? (hit?.authorId ?? "") : "")
                 .presentationDetents([.medium, .large])
         }
         .sheet(item: $bindingSticker) { m in
@@ -385,7 +390,7 @@ struct ConversationView: View {
         }
         .confirmationDialog("删除后无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                             titleVisibility: .visible, presenting: deleting) { m in
-            Button("删除这条消息", role: .destructive) { remove(m) }
+            Button(m.kind == "narration" ? "删除这条旁白" : "删除这条消息", role: .destructive) { remove(m) }
         }
         .sheet(item: $composing) { k in
             NavigationStack {
@@ -723,8 +728,25 @@ struct ConversationView: View {
 
     private func togglePick(_ id: String) {
         guard var p = picking else { return }
-        if p.contains(id) { p.remove(id) } else { p.insert(id) }
+        if p.contains(id) {
+            p.remove(id)
+            pickOrder.removeAll { $0 == id }
+        } else {
+            p.insert(id)
+            pickOrder.append(id)
+        }
         picking = p
+    }
+
+    /// 选到这里：从最后勾的那一条到长按的这一条，中间的全部选上；一条都没勾时只选这一条
+    private func pickTo(_ id: String) {
+        guard let p = picking else { return }
+        let last = pickOrder.last { p.contains($0) }
+        let ids = messages.map(\.id)
+        let out = MessageActions.pickRange(ids: ids, picked: p, last: last, to: id)
+        pickOrder.removeAll { $0 == id }
+        pickOrder += ids.filter { out.contains($0) && !p.contains($0) && $0 != id } + [id]
+        picking = out
     }
 
     /// 转发选中的几条：落在对方会话里，不调接口
@@ -1057,6 +1079,10 @@ struct ConversationView: View {
                           summarized: ctx.memoryUpToAt > 0 && m.createdAt <= ctx.memoryUpToAt,
                           hasThink: m.role == .char && (ctx.thinkTurns.contains(m.turnId) || (m.turnId.isEmpty && !m.row.string("think").isEmpty)),
                           narrColor: look.narr,
+                          chatCharIds: chat?.characterIds ?? [],
+                          narrName: m.kind == "narration" ? narrName(of: m) : "",
+                          narrTone: MessageActions.narrTone(mine: m.role == .user, memberIds: chat?.characterIds ?? [], authorId: m.authorId),
+                          innerLook: chat.map { InnerLook.of($0, "inline") } ?? [:],
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
                           skin: skin,
@@ -1066,6 +1092,15 @@ struct ConversationView: View {
                           onRetry: retry,
                           onOpenImage: { viewing = ViewingImage(id: $0) },
                           onAction: { act($0, m) })
+    }
+
+    /// 群聊旁白前面的名字（网页版 4.648）：群昵称、备注、本名；我写的是账号名。单聊为空
+    private func narrName(of m: Message) -> String {
+        guard let chat, chat.isGroup else { return "" }
+        if m.role == .user { return me?.name ?? "我" }
+        guard let c = members[m.authorId] else { return "" }
+        let nick = GroupChat.nick(chat, c.id)
+        return nick.isEmpty ? c.displayName : nick
     }
 
     private func groupName(of m: Message) -> String {
@@ -1170,7 +1205,7 @@ struct ConversationView: View {
                 }
             }
         case .copy:
-            UIPasteboard.general.string = m.content
+            UIPasteboard.general.string = m.kind == "narration" ? MessageActions.narrationText(m) : m.content
         case .quote:
             quoting = m
         case .edit:
@@ -1211,6 +1246,9 @@ struct ConversationView: View {
             notice = (try? MessageActions.servedText(m)) ?? "这一条生成时尚未记录模型"
         case .select:
             picking = [m.id]
+            pickOrder = [m.id]
+        case .pickTo:
+            pickTo(m.id)
         case .settle(let yes):
             do {
                 let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
@@ -1614,12 +1652,18 @@ struct EditMessageView: View {
     var onSaved: (Message) -> Void
     @Environment(\.dismiss) private var dismiss
     @State private var text = ""
+    /// 改译文时，有心声的多一栏心声的译文（网页版 4.438）
+    @State private var innerText = ""
     @State private var problem: String?
+
+    private var inner: String { message.row.string("inner").trimmingCharacters(in: .whitespacesAndNewlines) }
 
     var body: some View {
         Form {
             Section {
                 TextField(translation ? "译文" : "内容", text: $text, axis: .vertical).lineLimit(3...20)
+            } header: {
+                if translation { Text("译文") }
             } footer: {
                 if translation {
                     HelpNote("译文只在气泡下方显示。清空后保存即去掉译文。", title: "改译文")
@@ -1631,6 +1675,15 @@ struct EditMessageView: View {
                     HelpNote("修改后，角色在之后的对话中看到的是修改后的内容。", title: "编辑消息")
                 }
             }
+            if translation && !inner.isEmpty {
+                Section {
+                    TextField("心声的译文", text: $innerText, axis: .vertical).lineLimit(2...12)
+                } header: {
+                    Text("心声的译文")
+                } footer: {
+                    Text("心声：\(String(inner.prefix(200)))")
+                }
+            }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
         }
         .navigationTitle(translation ? "改译文" : MessageActions.editTitle(message))
@@ -1639,13 +1692,20 @@ struct EditMessageView: View {
             ToolbarItem(placement: .cancellationAction) { Button("取消") { dismiss() } }
             ToolbarItem(placement: .confirmationAction) {
                 Button("保存") {
-                    do { onSaved(try translation ? MessageActions.setTranslation(message, text) : MessageActions.edit(message, text: text)) }
+                    do {
+                        onSaved(try translation
+                                ? MessageActions.setTranslations(message, translation: text, innerTrans: inner.isEmpty ? nil : innerText)
+                                : MessageActions.edit(message, text: text))
+                    }
                     catch { problem = "保存失败：\(error.localizedDescription)" }
                 }
                 .disabled(!translation && text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
-        .onAppear { text = translation ? (message.row["translation"]?.string ?? "") : MessageActions.editableText(message) }
+        .onAppear {
+            text = translation ? (message.row["translation"]?.string ?? "") : MessageActions.editableText(message)
+            innerText = message.row.string("innerTrans")
+        }
     }
 }
 
@@ -1661,9 +1721,10 @@ struct MessageRow: View, Equatable {
             && a.charFace == b.charFace && a.rejectNote == b.rejectNote && a.skin == b.skin
             && a.picking == b.picking && a.picked == b.picked && (a.onRetry == nil) == (b.onRetry == nil)
             && a.summarized == b.summarized && a.hasThink == b.hasThink
+            && a.chatCharIds == b.chatCharIds && a.narrName == b.narrName && a.narrTone == b.narrTone && a.innerLook == b.innerLook
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize }
 
     let message: Message
     let char: Character?
@@ -1692,6 +1753,14 @@ struct MessageRow: View, Equatable {
     var hasThink = false
     /// 旁白的文字颜色（聊天背景里设的，空为默认的灰）
     var narrColor = ""
+    /// 这段会话的成员（正则替换按角色限定时认它，网页版 chat.characterIds）
+    var chatCharIds: [String] = []
+    /// 群聊里旁白前面写的名字（单聊为空，网页版 4.648）：群昵称、备注、本名；我写的是账号名
+    var narrName = ""
+    /// 名字配哪一种颜色（Theme.narrPalette 的下标），nil 为我写的
+    var narrTone: Int?
+    /// 心声那一行的样式（会话菜单「心声」里设的 look.inner.inline，网页版 innerSide）
+    var innerLook: [String: JSONValue] = [:]
     /// 只在这段会话里用的角色头像（空为角色自己的那张）
     var charFace = ""
     /// 被拒收时气泡下那一行（好友与拉黑）
@@ -1746,16 +1815,7 @@ struct MessageRow: View, Equatable {
                     case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card":
                         bubbleRow
                     case "narration":
-                        VStack(spacing: 2) {
-                            Text(message.row.string("narration").isEmpty ? message.content : message.row.string("narration"))
-                                .font(.footnote.italic()).foregroundStyle(Color(hex: narrColor) ?? Theme.secondaryText)
-                            // 旁白的译文（随回复写的，或单独的翻译接口给的）
-                            if !message.row.string("translation").isEmpty {
-                                Text(message.row.string("translation")).font(.caption.italic()).foregroundStyle(Theme.tertiaryText)
-                            }
-                        }
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
+                        narrationRow
                     case "silence":
                         centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复")
                     case "notice":
@@ -1768,12 +1828,19 @@ struct MessageRow: View, Equatable {
                         centered(message.content)
                     }
                 }
-                .contextMenu { if !picking { menu } }
             }
         }
         .overlay {
             if picking {
                 Color.clear.contentShape(Rectangle()).onTapGesture { onPick?() }
+            }
+        }
+        // 长按：平时出这一条的菜单（撤回的、失败的那一行没有）；多选时只有「选到这里」（网页版 4.586）
+        .contextMenu {
+            if picking {
+                Button { onAction?(.pickTo) } label: { Label("选到这里", systemImage: "checklist") }
+            } else if !message.isRecalled && !message.isError {
+                menu
             }
         }
         .overlay(alignment: .leading) {
@@ -1812,8 +1879,32 @@ struct MessageRow: View, Equatable {
         return String(t.dropFirst().dropLast())
     }
 
+    /// 能不能重新生成这一轮：最新那一轮的角色消息（含旁白、「已读，未回复」）
+    private var canRegen: Bool { !mine && !message.turnId.isEmpty && message.turnId == latestTurn }
+
     @ViewBuilder private var menu: some View {
-        if message.kind != "notice" && message.kind != "silence" {
+        if let slim = MessageActions.slimMenu(message, canRegen: canRegen) {
+            slimMenu(slim)
+        } else {
+            fullMenu
+        }
+    }
+
+    /// 旁白与「已读，未回复」那一行：没有回应、引用、翻译（网页版 MsgMenu 的 narr / silent）
+    @ViewBuilder private func slimMenu(_ items: [String]) -> some View {
+        ForEach(items, id: \.self) { k in
+            switch k {
+            case "regenerate": Button { onAction?(.regenerate) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
+            case "edit": Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
+            case "copy": Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
+            case "select": Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
+            default: Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
+            }
+        }
+    }
+
+    @ViewBuilder private var fullMenu: some View {
+        if message.kind != "notice" {
             ControlGroup {
                 ForEach(Interact.quickList(SettingsModel.shared.s), id: \.self) { e in
                     Button(e) { onAction?(.react(e)) }
@@ -1830,14 +1921,15 @@ struct MessageRow: View, Equatable {
         if MessageActions.canEdit(message) {
             Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
         }
-        // 最新那一轮的角色消息（含旁白、「已读，未回复」）：重新生成这一轮
-        if !mine && !message.turnId.isEmpty && message.turnId == latestTurn {
+        // 最新那一轮的角色消息：重新生成这一轮
+        if canRegen {
             Button { onAction?(.regenerate) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
         }
         if TranslateOne.can(message, lang: translateLang) {
             Button { onAction?(.translate) } label: { Label(translation.isEmpty ? "翻译" : "重新翻译", systemImage: "character.bubble") }
         }
-        if !message.isRecalled && (TranslateOne.can(message, lang: translateLang) || !translation.isEmpty) {
+        // 改译文：正文的译文，有心声译文的连心声的一起（网页版 4.438）
+        if !message.isRecalled && (TranslateOne.can(message, lang: translateLang) || !translation.isEmpty || !innerTrans.isEmpty) {
             Button { onAction?(.editTrans) } label: { Label("改译文", systemImage: "pencil.line") }
         }
         if MessageActions.canRecall(message) {
@@ -1881,6 +1973,32 @@ struct MessageRow: View, Equatable {
     }
 
     private var translation: String { (message.row["translation"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var innerTrans: String { message.row.string("innerTrans").trimmingCharacters(in: .whitespacesAndNewlines) }
+    /// 正则替换「只改显示」的那一份按谁说的、在哪儿、这段会话有哪些角色来套（网页版 regex.forDisplay）
+    private var regexContext: RegexRules.Context {
+        .init(who: mine ? "user" : "char", whereIs: "online", charIds: chatCharIds.isEmpty ? (char.map { [$0.id] } ?? []) : chatCharIds)
+    }
+
+    /// 旁白：夹在消息中间的一行小字（网页版 4.221）。走正则的显示替换、跟随译文显示方式（4.529），
+    /// 有译文时点一下展开或收起；群聊里前面写「名字：」，名字按人配一种颜色（4.648）
+    private var narrationRow: some View {
+        let said = RegexRules.forDisplay(MessageActions.narrationText(message), regexContext, settings: SettingsModel.shared.s)
+        let v = MessageActions.transSwap(said, translation, mode: transShow)
+        let base: Color = Color(hex: narrColor) ?? Theme.secondaryText
+        let name: Text = narrName.isEmpty ? Text("")
+            : Text(narrName).fontWeight(.semibold).foregroundColor(Theme.narrName(narrTone)) + Text("：").foregroundColor(base)
+        return VStack(spacing: 2) {
+            (name + Text(v.main).foregroundColor(base))
+                .font(.footnote.italic())
+            if !v.sub.isEmpty && transIsOpen {
+                Text(v.sub).font(.caption.italic()).foregroundStyle(Theme.tertiaryText)
+            }
+        }
+        .multilineTextAlignment(.center)
+        .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
+        .contentShape(Rectangle())
+        .onTapGesture { if !v.sub.isEmpty { transOpen = !transIsOpen } }
+    }
     private var transShow: String {
         let v = SettingsModel.shared.s.raw["translateShow"]?.string ?? "both"
         return ["both", "trans", "orig"].contains(v) ? v : "both"
@@ -1950,7 +2068,14 @@ struct MessageRow: View, Equatable {
                     Text(extra).font(.system(size: 12)).foregroundStyle(Theme.text3).lineSpacing(3)
                 }
                 if let inner = message.row["inner"]?.string, !inner.isEmpty, innerOpen {
-                    Text("心声：\(inner)").font(.footnote).foregroundStyle(Theme.tertiaryText)
+                    // 心声的译文跟随译文显示方式（网页版 InnerVoice 的 transView.pair）
+                    let p = MessageActions.transPair(inner, innerTrans, mode: transShow)
+                    VStack(alignment: mine ? .trailing : .leading, spacing: 2) {
+                        Text("心声：\(p.main)").modifier(InnerLookStyle(look: innerLook, size: 13, color: Theme.tertiaryText))
+                        if !p.sub.isEmpty {
+                            Text(p.sub).font(.caption).foregroundStyle(Theme.tertiaryText)
+                        }
+                    }
                 }
                 reactions
                 if !rejectNote.isEmpty {
@@ -2046,7 +2171,7 @@ struct MessageRow: View, Equatable {
             if let face = SpecialCards.face(message) { specialCard(face) } else { bubble(message.content) }
         default:
             // 正则替换里「屏幕上显示」的那一份；只显示译文时正文位置换成译文。按空行拆成几个气泡（网页版 splitBubbles）
-            let shown = swapTrans ? translation : RegexRules.forDisplay(message.content, .init(who: mine ? "user" : "char", whereIs: "online", charIds: char.map { [$0.id] } ?? []), settings: SettingsModel.shared.s)
+            let shown = swapTrans ? translation : RegexRules.forDisplay(message.content, regexContext, settings: SettingsModel.shared.s)
             let paras = Self.paragraphs(shown)
             VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
                 ForEach(paras.indices, id: \.self) { i in bubble(paras[i]) }

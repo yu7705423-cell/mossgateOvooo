@@ -73,7 +73,24 @@ struct LorebookListView: View {
 }
 
 enum LoreText {
-    static let purposes = ["chat": "对话", "image": "生图", "voice": "语音", "memory": "记忆", "forum": "论坛"]
+    static let purposes = ["chat": "对话", "image": "生图", "voice": "语音", "memory": "记忆总结", "forum": "论坛"]
+    /// 书页上「用途」的选项（网页版 lore/App.js 的 PURPOSE_ITEMS）。原生版没有论坛，论坛只在这本书本来就是论坛用时列出
+    static func purposeChoices(current: String) -> [String] {
+        ["chat", "image", "voice", "memory"] + (current == "forum" ? ["forum"] : [])
+    }
+
+    /// 列表里跟在书名后面的用途（网页版 PURPOSE_TAG）
+    static func purposeTag(_ p: String) -> String {
+        ["image": " \u{00B7} 只用于生图", "voice": " \u{00B7} 只用于语音", "memory": " \u{00B7} 只用于记忆总结"][p] ?? ""
+    }
+
+    /// 改用途时写回去的那几个字段（网页版 purposePatch）：四个标记全写，不残留旧的 true；论坛用的书不全局生效
+    static func purposePatch(_ p: String) -> [String: JSONValue] {
+        var out: [String: JSONValue] = ["forImage": .bool(p == "image"), "forVoice": .bool(p == "voice"),
+                                        "forMemory": .bool(p == "memory"), "forForum": .bool(p == "forum")]
+        if p == "forum" { out["global"] = .bool(false) }
+        return out
+    }
 
     static func summary(_ b: Lorebook) -> String {
         var parts = ["\(b.entries.count) 条", purposes[b.purpose] ?? b.purpose]
@@ -96,19 +113,42 @@ struct LorebookView: View {
 
     struct Target: Identifiable, Hashable { let id: String }
 
+    private var purpose: String { book?.purpose ?? "chat" }
+
     var body: some View {
         Form {
             Section {
                 TextField("名字", text: $name)
                 TextField("说明", text: $description, axis: .vertical)
-                if book?.purpose == "chat" {
+                if purpose != "forum" {
                     Toggle("对全部角色生效", isOn: $global)
                 }
             } footer: {
-                if book?.purpose == "chat" {
+                if purpose != "forum" {
                     HelpNote("关闭时，只对在资料页挂上这本书的角色生效。")
-                } else {
-                    HelpNote("这本书用于「\(LoreText.purposes[book?.purpose ?? ""] ?? "")」，原生版暂未使用。")
+                }
+            }
+            Section {
+                Picker("用途", selection: Binding(get: { purpose }, set: setPurpose)) {
+                    ForEach(LoreText.purposeChoices(current: purpose), id: \.self) { p in
+                        Text(LoreText.purposes[p] ?? p).tag(p)
+                    }
+                }
+            } footer: {
+                // 网页版 lore/App.js 的 PURPOSE_DESC；语音那一条的开关在原生版的「设置 - 语音合成」里
+                switch purpose {
+                case "image": HelpNote("仅在生成图片时按画面描述匹配，拼入生图提示词，不注入对话。所属部分与注入深度不生效。", title: "用途：生图")
+                case "voice": HelpNote("仅在合成语音前写台本时使用，决定哪里停顿、哪里用什么情绪、哪里有叹气之类的声音，不注入对话。需在「设置 - 语音合成」开启「合成语音前先写成台本」。所属部分与注入深度不生效。", title: "用途：语音")
+                case "memory": HelpNote("仅在总结记忆时按要总结的那一批对话匹配，交给总结记忆的模型参考，不注入对话。适合写明哪些事需要记下、哪些不记、人名与称呼怎么写。所属部分与注入深度不生效。", title: "用途：记忆总结")
+                case "forum": Text("论坛用的书只进入绑定了它的论坛。原生版没有论坛，这本书只保存，供网页版使用。")
+                default: HelpNote("注入对话。条目按所属部分与注入深度进入提示词。", title: "用途：对话")
+                }
+            }
+            if (book?.entries.filter({ !$0.isCard }).count ?? 0) > 1 {
+                Section {
+                    NavigationLink { LoreBulkView(bookId: bookId) } label: { Text("批量调整") }
+                } footer: {
+                    HelpNote("选择多个条目，一并修改启用、常驻、所属部分、注入深度、优先级与触发概率。", title: "批量调整")
                 }
             }
             Section("条目") {
@@ -160,6 +200,18 @@ struct LorebookView: View {
             book = try Knowledge.updateBook(bookId, ["name": .string(name), "description": .string(description), "global": .bool(global)])
         } catch {
             Problems.report("世界书未能保存：\(error.localizedDescription)")
+        }
+    }
+
+    /// 改用途（网页版书页的「用途」）：当场写入。改成论坛用时不再全局生效
+    private func setPurpose(_ p: String) {
+        guard p != purpose else { return }
+        saveHeader()
+        do {
+            book = try Knowledge.updateBook(bookId, LoreText.purposePatch(p))
+            if p == "forum" { global = false }
+        } catch {
+            problem = "未能保存：\(error.localizedDescription)"
         }
     }
 
@@ -399,17 +451,19 @@ struct CharacterLoreView: View {
     var body: some View {
         List {
             Section {
-                ForEach(books.filter { $0.purpose == "chat" }) { b in
+                // 网页版 CharacterEdit.js「关联世界书」：论坛以外的都列出，生图、语音、记忆总结用的书写明用途
+                ForEach(books.filter { $0.purpose != "forum" }) { b in
+                    let title = (b.name.isEmpty ? "未命名世界书" : b.name) + LoreText.purposeTag(b.purpose)
                     if b.global {
-                        LabeledContent(b.name.isEmpty ? "未命名世界书" : b.name, value: "对全部角色生效")
+                        LabeledContent(title, value: "对全部角色生效")
                     } else {
-                        Toggle(b.name.isEmpty ? "未命名世界书" : b.name, isOn: Binding(
+                        Toggle(title, isOn: Binding(
                             get: { attached.contains(b.id) },
                             set: { on in toggle(b.id, on) }))
                     }
                 }
             } footer: {
-                HelpNote("挂上的世界书在与该角色对话时按关键词注入。", title: "角色挂载的世界书")
+                HelpNote("挂上的世界书在与该角色对话时按关键词注入。用途为生图、语音、记忆总结的书只在生成图片、写语音台本、总结记忆时使用，不注入对话。", title: "角色挂载的世界书")
             }
             Section { NavigationLink("管理全部世界书") { LorebookListView() } }
             if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
@@ -540,5 +594,147 @@ struct LorePreviewView: View {
             }
         }
         .navigationTitle("激活预览")
+    }
+}
+
+/// 整本批量调整（网页版 lore/Bulk.js，4.579）：选条目、选要改的项，一次写入。没动的那一项一律不改：
+/// 三态的写「不改」，数值的先打开「修改」再填。HTML 卡片有自己的一套设置，不列在这里
+enum LoreBulk {
+    /// 选中的那几条按 change 改，change 里只有用户动过的那几项。卡片一律不动
+    static func apply(_ entries: [JSONValue], ids: Set<String>, change: [String: JSONValue]) -> [JSONValue] {
+        entries.map { v in
+            guard case .object(var e) = v, let id = e["id"]?.string, ids.contains(id), e["type"]?.string != "card" else { return v }
+            for (k, x) in change { e[k] = x }
+            return .object(e)
+        }
+    }
+
+    /// 用户动过的那几项。tri 的值是 ""（不改）、"on"、"off"；数值为 nil 是不改。不进对话的书没有所属部分与注入深度
+    static func change(tri: [String: String], part: String, depth: Int?, priority: Int?, probability: Int?, bare: Bool) -> [String: JSONValue] {
+        var out: [String: JSONValue] = [:]
+        for (k, v) in tri where !v.isEmpty { out[k] = .bool(v == "on") }
+        if !bare, !part.isEmpty { out["part"] = .string(part) }
+        if !bare, let depth { out["depth"] = .number(Double(max(0, depth))) }
+        if let priority { out["priority"] = .number(Double(priority)) }
+        if let probability { out["probability"] = .number(Double(probability)) }
+        return out
+    }
+}
+
+struct LoreBulkView: View {
+    let bookId: String
+    @Environment(\.dismiss) private var dismiss
+    @State private var book: Lorebook?
+    @State private var picked: Set<String> = []
+    @State private var tri: [String: String] = ["enabled": "", "constant": "", "caseSensitive": ""]
+    @State private var part = ""
+    @State private var depth: Int?
+    @State private var priority: Int?
+    @State private var probability: Int?
+    @State private var confirming = false
+    @State private var problem: String?
+    @State private var loaded = false
+
+    private var all: [LoreEntry] { (book?.entries ?? []).filter { !$0.isCard } }
+    private var bare: Bool { (book?.purpose ?? "chat") != "chat" }
+    private var change: [String: JSONValue] {
+        LoreBulk.change(tri: tri, part: part, depth: depth, priority: priority, probability: probability, bare: bare)
+    }
+
+    var body: some View {
+        Form {
+            if book == nil {
+                Text("该世界书已被删除。").foregroundStyle(Theme.secondaryText)
+            } else {
+                Section {
+                    triPicker("enabled", "启用")
+                    triPicker("constant", "常驻")
+                    triPicker("caseSensitive", "区分大小写")
+                    if !bare {
+                        Picker("所属部分", selection: $part) {
+                            Text("不改").tag("")
+                            Text("角色卡前").tag("before")
+                            Text("角色卡后").tag("after")
+                        }
+                    }
+                } footer: {
+                    HelpNote("选择条目与要修改的项后一并写入。未修改的项保持各条目原有的设置。", title: "批量调整")
+                }
+                Section {
+                    if !bare {
+                        Toggle("修改注入深度", isOn: Binding(get: { depth != nil }, set: { depth = $0 ? 0 : nil }))
+                        if let d = depth {
+                            Stepper(d == 0 ? "深度：放在设定区" : "深度：插在倒数第 \(d) 条之前",
+                                    value: Binding(get: { depth ?? 0 }, set: { depth = $0 }), in: 0...200)
+                        }
+                    }
+                    Toggle("修改优先级", isOn: Binding(get: { priority != nil }, set: { priority = $0 ? 100 : nil }))
+                    if let p = priority {
+                        Stepper("优先级：\(p)", value: Binding(get: { priority ?? 100 }, set: { priority = $0 }), in: 0...1000, step: 10)
+                    }
+                    Toggle("修改触发概率", isOn: Binding(get: { probability != nil }, set: { probability = $0 ? 100 : nil }))
+                    if let p = probability {
+                        Stepper("触发概率：\(p)%", value: Binding(get: { probability ?? 100 }, set: { probability = $0 }), in: 0...100, step: 5)
+                    }
+                }
+                Section {
+                    Toggle("全选", isOn: Binding(get: { picked.count == all.count && !all.isEmpty },
+                                               set: { picked = $0 ? Set(all.map(\.id)) : [] }))
+                    ForEach(all) { e in
+                        Toggle(isOn: Binding(get: { picked.contains(e.id) },
+                                             set: { on in if on { picked.insert(e.id) } else { picked.remove(e.id) } })) {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(e.comment.isEmpty ? (e.content.isEmpty ? "未命名条目" : String(e.content.prefix(18))) : e.comment)
+                                Text(e.constant ? "常驻" : (e.keys.isEmpty ? "未填写关键词" : "关键词：\(e.keys.joined(separator: "、"))"))
+                                    .font(.footnote).foregroundStyle(Theme.secondaryText)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("已选 \(picked.count) / \(all.count) 个条目")
+                } footer: {
+                    if all.count < (book?.entries.count ?? 0) { Text("HTML 卡片有各自的设置，不在此处列出。") }
+                }
+                Section {
+                    Button(change.isEmpty ? "尚未选择要修改的项" : "修改 \(picked.count) 个条目的 \(change.count) 项设置") { confirming = true }
+                        .disabled(picked.isEmpty || change.isEmpty)
+                }
+                if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
+            }
+        }
+        .navigationTitle("批量调整")
+        .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("将修改 \(picked.count) 个条目的 \(change.count) 项设置，其余设置保持不变。", isPresented: $confirming, titleVisibility: .visible) {
+            Button("修改", action: run)
+        }
+        .onAppear(perform: load)
+    }
+
+    private func triPicker(_ key: String, _ label: String) -> some View {
+        Picker(label, selection: Binding(get: { tri[key] ?? "" }, set: { tri[key] = $0 })) {
+            Text("不改").tag("")
+            Text("开启").tag("on")
+            Text("关闭").tag("off")
+        }
+    }
+
+    private func load() {
+        do {
+            book = try Knowledge.book(bookId)
+            if !loaded { picked = Set(all.map(\.id)); loaded = true }
+        } catch {
+            problem = error.localizedDescription
+        }
+    }
+
+    private func run() {
+        do {
+            guard let row = try Database.shared.get(Collections.lorebooks, id: bookId) else { problem = "该世界书已被删除。"; return }
+            let next = LoreBulk.apply(row["entries"]?.array ?? [], ids: picked, change: change)
+            book = try Knowledge.updateBook(bookId, ["entries": .array(next)])
+            dismiss()
+        } catch {
+            problem = "未能保存：\(error.localizedDescription)"
+        }
     }
 }

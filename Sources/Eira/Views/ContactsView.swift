@@ -15,6 +15,7 @@ struct ContactsView: View {
         case chat(String)
         case personas
         case cardImport
+        case archived
     }
 
     var body: some View {
@@ -38,6 +39,21 @@ struct ContactsView: View {
                         }
                     } header: { GroupTitle(g.title) }
                 }
+                // 封存的角色不在列表里，收进「已封存」一行（网页版 4.557）
+                if archivedCount > 0 {
+                    Section {
+                        NavigationLink(value: Route.archived) {
+                            HStack(spacing: Theme.sp3) {
+                                SvgIcon(name: "lock", size: 19, color: Theme.text2)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("已封存")
+                                    Text("共 \(archivedCount) 个角色").font(.system(size: 12)).foregroundStyle(Theme.text3)
+                                }
+                            }
+                        }
+                        .eiraRow()
+                    }
+                }
                 if chars.isEmpty {
                     EmptyState(title: "暂无角色", desc: "点右上角新建，或在「设置 - 存储与备份 - 导入网页版备份」中导入。")
                         .listRowBackground(Color.clear)
@@ -60,6 +76,7 @@ struct ContactsView: View {
                 case .edit(let id): CharacterEditView(charId: id, path: $path)
                 case .chat(let id): ConversationView(chatId: id)
                 case .personas: PersonaListView()
+                case .archived: ArchivedCharsView()
                 case .cardImport: CardImportView { id in
                     path.removeLast()
                     path.append(Route.profile(id))
@@ -76,7 +93,9 @@ struct ContactsView: View {
         var id: String { title }
     }
 
-    /// 按分组列；小号不单列（它挂在本人名下），归档的放最后。
+    private var archivedCount: Int { chars.filter { ($0.parentId ?? "").isEmpty && $0.archived }.count }
+
+    /// 按分组列；小号不单列（它挂在本人名下），封存的不列（收在「已封存」里）。
     private var groups: [CharGroup] {
         let q = query.trimmingCharacters(in: .whitespaces)
         let list = chars.filter { ($0.parentId ?? "").isEmpty }
@@ -90,8 +109,6 @@ struct ContactsView: View {
         for g in names.sorted(by: { a, b in a.isEmpty != b.isEmpty ? !a.isEmpty : a < b }) {
             out.append(CharGroup(title: g.isEmpty ? "未分组" : g, chars: active.filter { !$0.pinned && $0.group == g }))
         }
-        let archived = list.filter(\.archived)
-        if !archived.isEmpty { out.append(CharGroup(title: "已归档", chars: archived)) }
         return out
     }
 
@@ -122,6 +139,53 @@ struct ContactsView: View {
             path.append(Route.edit(c.id))
         } catch {
             problem = "新建失败：\(error.localizedDescription)"
+        }
+    }
+}
+
+/// 已封存的角色（网页版 contact/App.js 的 ArchivedPage，4.557）。点进去是编辑资料，解除封存的开关在那一页
+struct ArchivedCharsView: View {
+    @State private var list: [Character] = []
+    @State private var problem: String?
+
+    var body: some View {
+        List {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            ForEach(list) { c in
+                NavigationLink(value: ContactsView.Route.edit(c.id)) {
+                    HStack(spacing: Theme.pad) {
+                        Avatar(imageId: c.avatar, name: c.displayName, size: 40)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(c.displayName).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                            Text("封存于 \(Self.day(c.row.number("archived") ?? 0))").font(.system(size: 12)).foregroundStyle(Theme.text3)
+                        }
+                    }
+                }
+                .eiraRow()
+            }
+            if list.isEmpty && problem == nil {
+                EmptyState(title: "没有已封存的角色", desc: "")
+                    .listRowBackground(Color.clear)
+            }
+        }
+        .navigationTitle("已封存")
+        .navigationBarTitleDisplayMode(.inline)
+        .onAppear(perform: reload)
+    }
+
+    /// 网页版 toLocaleDateString('zh-CN')：2026/10/16
+    static func day(_ millis: Double) -> String {
+        let c = Calendar.current.dateComponents([.year, .month, .day], from: Date(millis: millis))
+        return "\(c.year ?? 0)/\(c.month ?? 0)/\(c.day ?? 0)"
+    }
+
+    private func reload() {
+        do {
+            list = try Repo.characters().filter { ($0.parentId ?? "").isEmpty && $0.archived }
+                .sorted { ($0.row.number("archived") ?? 0) > ($1.row.number("archived") ?? 0) }
+            problem = nil
+        } catch {
+            problem = error.localizedDescription
         }
     }
 }

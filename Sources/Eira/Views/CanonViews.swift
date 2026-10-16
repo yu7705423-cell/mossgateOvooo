@@ -194,7 +194,7 @@ struct PresetEditView: View {
                     }
                     .pickerStyle(.segmented)
                 } footer: {
-                    HelpNote("从上到下即发给模型的顺序。点右上角「排序」后拖动调整位置；关闭的一条不发送。标为「必需」的关系到回复能否被正确拆分，不能关闭；标为「跟随开关」的由各自功能的开关决定，在这里只调整位置。原生版目前只发送线上聊天这一份，其余三份照样保存，供网页版使用。")
+                    HelpNote("从上到下即发给模型的顺序。点右上角「排序」后拖动调整位置；关闭的一条不发送。标为「必需」的关系到回复能否被正确拆分，不能关闭；标为「跟随开关」的由各自功能的开关决定，在这里只调整位置。")
                 }
                 Section {
                     ForEach(items) { it in itemRow(it) }
@@ -460,7 +460,7 @@ struct PresetEditView: View {
                 ForEach(legacyIds, id: \.self) { id in
                     Button { sheet = .legacy(id) } label: {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(id).foregroundStyle(Theme.bubbleTheirsText)
+                            Text(TemplateLabels.of(id)).foregroundStyle(Theme.bubbleTheirsText)
                             Text("仍按修改后的版本生效").font(.footnote).foregroundStyle(Theme.secondaryText)
                         }
                     }
@@ -518,7 +518,7 @@ struct PresetEditView: View {
                     HelpNote("恢复后这一段改用内置版本，并且不再能修改。")
                 }
             }
-            .navigationTitle(id)
+            .navigationTitle(TemplateLabels.of(id))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { sheet = nil } } }
         }
@@ -695,6 +695,249 @@ struct TemplateEditor: View {
     }
 }
 
+// MARK: - 内置提示词的名称
+
+/// 内置提示词各段的中文名（网页版 preset/prompt/TemplatesPage.js 的 LABELS，逐字照抄，只留原生版 templates.json 里有的）。
+/// 「以前修改过的内置提示词」按它显示，没有名称的显示内部 id（网页版 labelOf）
+enum TemplateLabels {
+    static func of(_ id: String) -> String { labels[id] ?? id }
+
+    static let labels: [String: String] = [
+        "skeleton.opening": "骨架 · 身份开场",
+        "skeleton.scene-opening": "线下 · 开场",
+        "skeleton.scene-rules": "线下 · 正文规则",
+        "skeleton.scene-length": "线下 · 篇幅",
+        "skeleton.scene-setup": "线下 · 场次设定",
+        "skeleton.scene-director": "线下 · 场外指示",
+        "skeleton.scene-style": "线下 · 文风",
+        "skeleton.scene-more": "线下 · 续写",
+        "skeleton.scene-tail": "线下 · 收尾提醒（贴着输出）",
+        "skeleton.prose-trans": "线下、长篇、番外 · 附带译文",
+        "task.scene-summary": "任务 · 线下收场摘要",
+        "skeleton.work-opening": "我们 · 开场",
+        "skeleton.work-solo": "我们 · 正文规则（整篇它写）",
+        "skeleton.work-premise": "我们 · 这部作品",
+        "skeleton.work-identity": "我们 · 这部作品里的身份",
+        "skeleton.work-identity-carry": "我们 · 带着记忆时身份那一句",
+        "skeleton.work-chapter": "我们 · 这一篇",
+        "skeleton.work-prev": "我们 · 前面各篇的进展",
+        "task.work-summary": "任务 · 我们收篇摘要",
+        "task.bond": "任务 · 压缩关系底色",
+        "task.core": "任务 · 压缩核心设定",
+        "skeleton.gender": "骨架 · 性别锚点",
+        "skeleton.world": "骨架 · 世界规则抬头",
+        "skeleton.rules": "骨架 · 消息规则",
+        "skeleton.core": "骨架 · 核心设定",
+        "skeleton.sticker": "骨架 · 可用表情",
+        "skeleton.quote": "骨架 · 引用某一句",
+        "skeleton.time": "骨架 · 先写出时间",
+        "skeleton.ban": "骨架 · 不要写这些",
+        "skeleton.todo": "骨架 · 待办",
+        "skeleton.wish": "骨架 · 心愿",
+        "skeleton.acquire": "骨架 · 入手记录",
+        "skeleton.mall": "骨架 · 商城",
+        "skeleton.slip": "骨架 · 纸条",
+        "skeleton.alt": "骨架 · 小号",
+        "skeleton.friend-moments": "骨架 · 认识的人的朋友圈（点赞、评论、转发）",
+        "skeleton.forum": "骨架 · 论坛（转发帖子）",
+        "skeleton.ties": "骨架 · 好友与拉黑",
+        "skeleton.sms-opening": "骨架 · 短信开场",
+        "skeleton.sms-unknown": "骨架 · 短信：身份未确认",
+        "skeleton.sms-known": "骨架 · 短信：身份已确认",
+        "skeleton.sms-rules": "骨架 · 短信规则",
+        "skeleton.sms-send": "骨架 · 发短信与借号",
+        "skeleton.sms-id": "骨架 · 短信里认出对方",
+        "skeleton.translate": "骨架 · 顺带给出译文",
+        "skeleton.translate-marked": "骨架 · 译文：哪几种标记各跟一句译文",
+        "skeleton.translate-voice": "骨架 · 译文：语音只译说出口的话",
+        "skeleton.translate-tail": "骨架 · 译文提醒（贴着输出）",
+        "task.translate": "任务 · 单独的翻译接口",
+        "skeleton.transfer": "骨架 · 转账",
+        "skeleton.location": "骨架 · 位置",
+        "skeleton.abilities": "骨架 · 能力清单",
+        "skeleton.image": "骨架 · 发图片",
+        "skeleton.voice": "骨架 · 发语音",
+        "skeleton.gift": "骨架 · 送礼物",
+        "skeleton.listen": "骨架 · 一起听歌",
+        "skeleton.mcp": "骨架 · 调用工具（MCP）",
+        "skeleton.joint": "骨架 · 情侣账户与亲属卡",
+        "skeleton.pact": "骨架 · 约定",
+        "skeleton.inner": "骨架 · 心声（随回复一起）",
+        "task.inner": "任务 · 心声（单独生成）",
+        "task.gacha-gen": "任务 · 扭蛋机批量生成",
+        "skeleton.pass": "骨架 · 门禁卡与钥匙",
+        "task.idcard-read": "任务 · 从角色卡读证件",
+        "skeleton.ticket": "骨架 · 票券",
+        "skeleton.group-say": "骨架 · 在群里发消息",
+        "skeleton.member": "骨架 · 会员卡",
+        "skeleton.inner-card": "骨架 · 心声卡片（随回复一起）",
+        "skeleton.inner-group": "骨架 · 群聊的心声",
+        "task.inner-card": "任务 · 心声卡片（单独生成）",
+        "task.inner-trans": "任务 · 心声的译文（单独生成）",
+        "task.json-trans": "任务 · 译文（朋友圈等）",
+        "task.json-trans-fields": "任务 · 译文（信、日记、角色手机等多个字段）",
+        "task.text-trans": "任务 · 译文（读后感、段评、年度回顾）",
+        "skeleton.pat": "骨架 · 拍一拍",
+        "skeleton.remark": "骨架 · 改备注",
+        "skeleton.follow-up": "骨架 · 对方未回复时接着说",
+        "skeleton.recall": "骨架 · 撤回",
+        "skeleton.recall-post": "骨架 · 撤回动态",
+        "skeleton.dice": "骨架 · 骰子",
+        "skeleton.group-dm": "骨架 · 群里发私信",
+        "skeleton.group-nick": "骨架 · 群昵称",
+        "skeleton.group-admin": "骨架 · 群管理",
+        "skeleton.takeout": "骨架 · 点外卖",
+        "skeleton.avatar": "骨架 · 换头像",
+        "skeleton.ring": "骨架 · 打电话",
+        "skeleton.call": "骨架 · 通话中",
+        "skeleton.call-notrans": "骨架 · 通话中不带译文",
+        "skeleton.call-translate": "骨架 · 通话中逐句译文",
+        "skeleton.call-voice": "骨架 · 语音通话的动作",
+        "skeleton.call-video": "骨架 · 视频通话的动作",
+        "task.call-open": "任务 · 通话接通后开口",
+        "skeleton.group": "骨架 · 群聊说明（每个角色单独调用时）",
+        "skeleton.group-opening": "骨架 · 群聊开场（一次调用写整轮）",
+        "skeleton.group-rules": "骨架 · 群聊格式",
+        "skeleton.group-mention": "骨架 · 群聊点名",
+        "skeleton.call-script": "骨架 · 通话台本标记",
+        "task.voice-script": "任务 · 语音台本",
+        "task.call-summary": "任务 · 通话总结",
+        "skeleton.video": "骨架 · 发视频",
+        "task.appearance": "任务 · 从人设里抽外貌",
+        "task.image-prompt": "任务 · 写生图提示词",
+        "task.video-prompt": "任务 · 写视频提示词",
+        "task.group-proactive": "任务 · 群里主动开口",
+        "skeleton.award": "骨架 · 颁发标识",
+        "skeleton.outfit": "骨架 · 搭配衣帽间里的衣物",
+        "skeleton.narration": "骨架 · 旁白",
+        "skeleton.card": "骨架 · HTML 卡片",
+        "skeleton.lockcode": "骨架 · 改锁屏密码",
+        "skeleton.closet-act": "骨架 · 衣帽间：换上、借走、借给、归还",
+        "skeleton.scene-closet": "骨架 · 线下的衣帽间标记与塞进包里",
+        "task.year-note": "任务 · 年度回顾里的一段话",
+        "task.memory-extract": "任务 · 提取记忆",
+        "task.memory-who": "任务 · 提取记忆：谁是谁",
+        "task.memory-who-group": "任务 · 提取记忆：谁是谁（联机群）",
+        "task.memory-lore": "任务 · 记忆总结用的世界书",
+        "task.wish-check": "任务 · 提取记忆时顺带判定心愿",
+        "task.badge-check": "任务 · 提取记忆时顺带判定自定义标识",
+        "task.user-sched": "任务 · 导入我的日程（文件与截图）",
+        "task.wish-judge": "任务 · 单独判定心愿",
+        "task.memory-import": "任务 · 从文本导入记忆",
+        "task.chat-summarize": "任务 · 压缩历史",
+        "task.card-import": "任务 · 导入角色卡",
+        "task.npc-batch": "任务 · 批量生成 NPC",
+        "task.npc-tool": "工具箱 · NPC 生成器",
+        "task.user-tool": "工具箱 · User 生成器",
+        "task.pet-tool": "工具箱 · 宠物生成器",
+        "task.monitor": "监控 · 生成记录",
+        "task.world-build": "工具箱 · 世界观生成器",
+        "task.world-module": "工具箱 · 世界观：重写一个模块",
+        "task.world-tags": "工具箱 · 世界观：批量生成标签",
+        "task.lore-outline": "工具箱 · 世界书：大纲",
+        "task.lore-body": "工具箱 · 世界书：正文",
+        "task.lore-examples": "工具箱 · 世界书：示例",
+        "task.lore-selfcheck": "工具箱 · 世界书：自检",
+        "task.lore-review": "工具箱 · 世界书：独立审查",
+        "task.lore-revise": "工具箱 · 世界书：修订",
+        "task.extra-compile": "工具箱 · 番外：AI 整理",
+        "task.extra-storyline": "工具箱 · 番外：编主线",
+        "task.extra-tags": "工具箱 · 番外：批量生成标签",
+        "skeleton.face-opening": "骨架 · 线下开场（会话里切到线下）",
+        "skeleton.face-mark": "骨架 · 以下当面（历史里的分界）",
+        "skeleton.scene-mark": "线上历史 · 线下见面那一段的开头",
+        "skeleton.group-chat-mark": "群聊历史 · 线下那一段之后回到群里",
+        "skeleton.phone-mark": "骨架 · 以下在手机上（历史里的分界）",
+        "skeleton.work-outline": "骨架 · 长篇大纲",
+        "task.novel-synopsis": "长篇向导 · 简介",
+        "task.novel-identity": "任务 · 按作品的世界改写身份",
+        "task.novel-outline": "长篇向导 · 总纲",
+        "task.novel-volume": "长篇向导 · 一卷的章纲",
+        "task.novel-branches": "长篇 · 章末几个走向",
+        "task.novel-replan": "长篇 · 重排后续大纲",
+        "skeleton.file": "骨架 · 文件",
+        "skeleton.file-fill": "骨架 · 填写对方发来的文件",
+        "task.file-fill": "任务 · 让角色填写文件",
+        "task.cardgen": "工具箱 · HTML 卡片生成器",
+        "task.cardgen-edit": "工具箱 · HTML 卡片：修改",
+        "task.card-fill": "任务 · 卡片「帮我填」",
+        "task.event-batch": "任务 · 批量生成随机事件",
+        "task.day-plan": "任务 · 排当天的日程",
+        "task.health-day": "任务 · 生成角色当天的健康记录",
+        "task.diary": "任务 · 角色写日记",
+        "task.drama-plot": "任务 · 音声：剧情",
+        "task.drama-anchors": "任务 · 音声：性格锚点",
+        "task.drama-script": "任务 · 音声：台本",
+        "task.impress": "任务 · 整理对我的印象",
+        "task.impress-compare": "任务 · 对照几位角色的印象",
+        "task.impress-note": "任务 · 总结记忆时顺带记下印象的依据",
+        "skeleton.drafts": "骨架 · 草稿箱",
+        "task.letter": "任务 · 角色写信",
+        "skeleton.image-en": "骨架 · 图片描述写英文",
+        "task.image-translate": "任务 · 生图提示词译成英文",
+        "task.letter-moment": "任务 · 总结时顺带看写信的时刻",
+        "task.snap": "任务 · 角色自己往相册存照片",
+        "task.recipe-batch": "任务 · 批量生成食谱",
+        "task.recipe-search": "任务 · 联网搜索吃处",
+        "skeleton.agenda": "骨架 · 今天的安排",
+        "task.proactive": "任务 · 主动发起对话",
+        "task.emo": "任务 · 深夜主动发起",
+        "task.vision-describe": "任务 · 识图描述",
+        "task.xhs-vision": "任务 · 链接卡片图片描述",
+        "task.face-describe": "任务 · 读取角色外貌",
+        "task.asr-tone": "任务 · 语音转写与语气",
+        "task.moment-create": "任务 · 发朋友圈",
+        "task.moment-song": "任务 · 动态附带歌曲",
+        "task.moment-recall": "任务 · 回复评论后撤回动态",
+        "task.closet-vision": "任务 · 衣帽间识图",
+        "task.closet-image": "任务 · 衣帽间按描述生图",
+        "task.closet-wardrobe": "任务 · 按角色设定生成衣帽间",
+        "task.collect-gen": "任务 · 按角色设定生成收藏馆",
+        "task.collect-image": "任务 · 收藏馆按外观生图",
+        "task.mall-image": "任务 · 商城按描述词生图",
+        "task.mall-nick": "任务 · 生成角色的商城昵称",
+        "task.mall-refresh": "任务 · 商城刷新",
+        "task.forum-refresh": "任务 · 论坛刷新版块",
+        "task.forum-replies": "任务 · 论坛加载更多回复",
+        "task.forum-court": "任务 · 论坛小法庭陪审发言",
+        "task.forum-dm": "任务 · 论坛私信回复",
+        "task.mall-value": "任务 · 商城拍卖估价",
+        "task.mall-charlist": "任务 · 角色自己挂东西",
+        "task.mall-npc-reply": "任务 · 商城私聊里买家或卖家回复",
+        "task.mall-char-reply": "任务 · 商城私聊里角色回复",
+        "task.char-money": "任务 · 按角色卡生成角色的钱",
+        "task.closet-daily": "任务 · 角色的每日穿搭",
+        "task.closet-daily-weather": "任务 · 每日穿搭的天气约束",
+        "task.moment-comment": "任务 · 评论动态",
+        "task.moment-reply": "任务 · 回复评论",
+        "task.moment-reply-thread": "任务 · 回复别人动态下的评论",
+        "task.scenario-seeds": "任务 · 生成近况",
+        "skeleton.watch": "骨架 · 一起看",
+        "task.watch-outline": "任务 · 影片分段提纲",
+        "task.review": "任务 · 看完之后写观后感",
+        "skeleton.trip": "骨架 · 出行",
+        "task.trip-tickets": "任务 · 联网找票",
+        "task.trip-tickets-guess": "任务 · 估算票价",
+        "task.trip-plan": "任务 · 联网检索攻略",
+        "task.trip-plan-guess": "任务 · 估算攻略",
+        "task.shelf-batch": "任务 · 批量生成读过的书",
+        "task.impression": "任务 · 一本书留下的印象",
+        "task.read-ahead": "任务 · 挑出想评的段落",
+        "task.para-one": "任务 · 对某一段的评论",
+        "task.para-crew": "任务 · 同读的几个人的评论",
+        "task.para-readers": "任务 · 读者们的评论",
+        "skeleton.keepphoto": "骨架 · 存图",
+        "task.phone-crop": "任务 · 存图时的裁切",
+        "task.phone-lock": "任务 · 角色手机的锁屏密码",
+        "task.phone-notes": "任务 · 角色手机的备忘录",
+        "task.phone-visits": "任务 · 角色手机的浏览记录",
+        "task.phone-album": "任务 · 角色手机的相册",
+        "task.phone-chats": "任务 · 角色手机的会话列表",
+        "task.phone-chat": "任务 · 角色手机里的某段对话",
+        "task.phone-reply": "任务 · 角色手机里对方的回复",
+    ]
+}
+
 // MARK: - 不要写这些
 
 /// 用户自己列的禁写词（网页版 system/ban.js）。默认一条都没有，内置也不给。
@@ -796,27 +1039,27 @@ struct CapsView: View {
         Cap(id: "quote", label: "引用消息", group: "消息", info: "角色可以引用某一条消息再回复"),
         Cap(id: "recall", label: "撤回", group: "消息", info: "角色可以撤回自己的消息"),
         Cap(id: "react", label: "回应消息", group: "消息", info: "角色可以对某一条消息贴一个 emoji 回应"),
-        Cap(id: "silence", label: "不回复", group: "消息", info: "角色可以选择不回复，此时会话中显示「已读，未回复」。角色卡上的开关默认关闭"),
+        Cap(id: "silence", label: "不回复", group: "消息", info: "角色可以选择不回复，此时会话中显示「已读，未回复」。「角色能力」中的开关默认关闭"),
         Cap(id: "transfer", label: "转账", group: "互动", info: "角色可以转账，以及收下或退回用户的转账"),
         Cap(id: "gift", label: "送礼物", group: "互动", info: "角色可以送礼物"),
         Cap(id: "takeout", label: "外卖与请客", group: "互动", info: "角色可以点外卖或请客"),
         Cap(id: "pat", label: "拍一拍", group: "互动", info: "角色可以拍一拍"),
-        Cap(id: "lockcode", label: "改锁屏密码", group: "互动", info: "角色可以修改自己的锁屏密码。距上次修改不满角色卡设定的天数（默认 30）时不提供，聊到密码时除外"),
-        Cap(id: "avatar", label: "换头像", group: "互动", info: "角色可以从角色卡的头像库中挑一张换上。头像库为空时不提供"),
+        Cap(id: "lockcode", label: "改锁屏密码", group: "互动", info: "角色可以修改自己的锁屏密码。距上次修改不满「角色能力」中设定的天数（默认 30）时不提供，聊到密码时除外"),
+        Cap(id: "avatar", label: "换头像", group: "互动", info: "角色可以从头像库中挑一张换上。头像库为空时不提供"),
         Cap(id: "remark", label: "改备注", group: "互动", info: "角色可以修改给用户的备注"),
         Cap(id: "dice", label: "骰子", group: "互动", info: "角色可以掷骰子"),
         Cap(id: "award", label: "颁发标识", group: "互动", info: "角色可以给用户颁发一枚互动标识，记进这段对话的标识收藏。删掉那一条消息时标识一并收回"),
         Cap(id: "card", label: "HTML 卡片", group: "消息", info: "角色可以按世界书里的卡片条目发一张卡片。只有常驻的、或最近几条消息里出现了关键词的卡片才提供"),
-        Cap(id: "ring", label: "打电话过来", group: "互动", info: "角色可以给用户打语音电话。正在看这段会话时响铃，否则记为未接来电。接听后每说一轮调用一次接口，与自己打出去相同"),
-        Cap(id: "groupnick", label: "改群昵称", group: "社交", info: "群里的角色可以修改自己的群昵称，群里出现一行提示"),
-        Cap(id: "groupadmin", label: "群管理", group: "社交", info: "群里有管理员时，管理员可以禁言、解除禁言、开关全员禁言、修改普通成员的群昵称。管不了群主与其他管理员"),
+        Cap(id: "groupnick", label: "改群昵称", group: "群聊", info: "群里的角色可以修改自己的群昵称，群里出现一行提示"),
+        Cap(id: "groupadmin", label: "群管理", group: "群聊", info: "群里有管理员时，管理员可以禁言、解除禁言、开关全员禁言、修改普通成员的群昵称。管不了群主与其他管理员"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
         Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),
         Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),
         Cap(id: "listen", label: "一起听、点歌、分享歌曲与歌单", group: "一起", info: "角色可以邀请一起听、点歌、分享歌曲与歌单"),
+        Cap(id: "ring", label: "打电话过来", group: "一起", info: "角色可以给用户打语音电话。正在看这段会话时响铃，否则记为未接来电。接听后每说一轮调用一次接口，与自己打出去相同"),
     ]
-    static let groups = ["消息", "互动", "社交", "生活", "一起"]
+    static let groups = ["消息", "互动", "社交", "生活", "一起", "群聊"]
     /// 开关不在这里的
     static let elsewhere: [(label: String, info: String)] = [
         ("旁白", "开关在会话菜单的「旁白」中"), ("心声", "开关、写法与样式在会话菜单的「心声」中"),
@@ -845,7 +1088,7 @@ struct CapsView: View {
                 }
                 .font(.footnote)
             } footer: {
-                HelpNote("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效，角色卡上的同一项随之不生效；只让某一个角色不发图、不发语音，在该角色的角色卡中设置。关闭某项不会删除已有的记录。预设里的「能力说明」一条跟随这里与角色卡的开关，不能在预设里单独关闭。", title: "能力开关")
+                HelpNote("关闭的能力不写进提示词，角色不知道有这项功能。对所有角色生效，「角色能力」中的同一项随之不生效（该页会注明）；只让某一个角色不发图、不发语音，在与该角色的会话菜单中的「角色能力」设置。关闭某项不会删除已有的记录。预设里的「能力说明」一条跟随这里与「角色能力」的开关，不能在预设里单独关闭。", title: "能力开关")
             }
             if key.isEmpty {
                 Section {
@@ -872,7 +1115,7 @@ struct CapsView: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(c.label)
                                     if Self.off(model.s).contains(c.id) {
-                                        Text("已关闭：角色卡与各处对这一项的开关不再生效").font(.footnote).foregroundStyle(Theme.text3)
+                                        Text("已关闭：「角色能力」与各处对这一项的开关不再生效").font(.footnote).foregroundStyle(Theme.text3)
                                     }
                                 }
                             }

@@ -6,6 +6,7 @@ private struct EditTarget: Identifiable { var id: String }
 
 struct ChatSettingsView: View {
     let chatId: String
+    /// 删除会话已经不在这一页（网页版「更多」页没有它，删除在消息列表长按）；参数留着，调用方不用改
     var onDeleted: () -> Void = {}
     /// 搜索这段会话的聊天记录：回到会话页打开搜索，选中一条后跳过去
     var onSearch: (() -> Void)?
@@ -15,11 +16,6 @@ struct ChatSettingsView: View {
     var onLook: (() -> Void)?
 
     @State private var chat: Chat?
-    @State private var pinned = false
-    @State private var muted = false
-    @State private var narration = false
-    @State private var userNarration = false
-    @State private var innerStyle = "quiet"
     /// 在这里打开角色卡（编辑资料）：一张自带导航的页，从「聊天」与「联系」进来的会话都打得开
     @State private var editingChar: String?
     @State private var cardPath = NavigationPath()
@@ -27,22 +23,12 @@ struct ChatSettingsView: View {
     @State private var faceKey = ""
     @State private var pickingFace = false
     @State private var facePhoto: PhotosPickerItem?
-    @State private var innerMode = "off"
-    @State private var innerWhat = ""
-    @State private var translateTo = ""
-    @State private var translateRules = ""
-    /// 常见的几个，够挑就行；要别的直接填（网页版 TranslatePage 的 COMMON）
-    static let commonLangs = ["中文", "英文", "日文", "韩文", "法文", "德文", "西班牙文", "俄文"]
-    @State private var presetId = ""
-    @State private var summary = ""
-    @State private var presets: [AppSettings.Preset] = []
-    @State private var confirmClear = false
-    @State private var clearCounts = ClearHistory.Counts()
-    @State private var confirmDelete = false
     @State private var problem: String?
     @State private var loaded = false
     @State private var backlog = 0
     @State private var sinceRounds = 0
+    /// 那年今天：往年的今天有记录才出现在菜单里（网页版 otdYears）。翻一遍要过整段历史，只在进来时翻
+    @State private var otd: [OnThisDay.Year] = []
     @State private var showSkin = false
     @State private var query = ""
 
@@ -54,9 +40,7 @@ struct ChatSettingsView: View {
         .navigationTitle("聊天信息")
         .navigationBarTitleDisplayMode(.inline)
         .searchable(text: $query, placement: .navigationBarDrawer(displayMode: .always), prompt: "搜索设置项")
-        .onAppear { if loaded { chat = try? Repo.chat(chatId); refreshBacklog(); presets = AppSettings.load().presets } else { load() } }
-        .onChange(of: pinned) { _, _ in save() }
-        .onChange(of: muted) { _, _ in save() }
+        .onAppear(perform: load)
         .sheet(item: Binding(get: { editingChar.map { EditTarget(id: $0) } }, set: { editingChar = $0?.id })) { t in
             NavigationStack(path: $cardPath) {
                 CharacterEditView(charId: t.id, path: $cardPath)
@@ -78,18 +62,7 @@ struct ChatSettingsView: View {
                 }
             }
         }
-        .onChange(of: narration) { _, _ in save() }
-        .onChange(of: userNarration) { _, _ in save() }
-        .onChange(of: presetId) { _, _ in save() }
-        .onChange(of: innerMode) { _, _ in save() }
-        .onChange(of: innerStyle) { _, _ in save() }
-        // 输入框也随改随存：子页返回时这一页会重新出现，不能等到整页关掉才存
         .navigationDestination(isPresented: $showSkin) { SkinPageView(chatId: chatId) }
-        .onChange(of: summary) { _, _ in save() }
-        .onChange(of: innerWhat) { _, _ in save() }
-        .onChange(of: translateTo) { _, _ in save() }
-        .onChange(of: translateRules) { _, _ in save() }
-        .onDisappear(perform: save)
     }
 
     /// 菜单里的一项。分组、搜索、最近打开都读同一份，不各写一遍
@@ -106,6 +79,7 @@ struct ChatSettingsView: View {
         var dest: AnyView?
     }
 
+    /// 分组与先后照网页版 Conversation.js 的会话菜单：这个角色 / 这段对话怎么聊 / 记忆 / 回顾 / 好友与拉黑 / 更多
     private func entries(_ c: Chat) -> [Entry] {
         var out: [Entry] = []
         func add(_ id: String, _ group: String, _ title: String, _ value: String = "", keys: String = "", searchOnly: Bool = false,
@@ -115,20 +89,22 @@ struct ChatSettingsView: View {
         if let onSearch { add("search", "", "搜索聊天记录", keys: "查找 消息", searchOnly: true, action: onSearch) }
         if let onSelect { add("select", "", "多选消息", keys: "批量 删除", searchOnly: true, action: onSelect) }
         if let onLook { add("look", "", "聊天背景", keys: "背景图 遮罩 顶栏 输入栏 颜色 旁白颜色", searchOnly: true, action: onLook) }
-        add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执 译文显示", searchOnly: true,
+        add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执", searchOnly: true,
             action: { showSkin = true })
         if c.isGroup {
             add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称",
                 dest: AnyView(MenuPage("群资料") { GroupMembersSection(chatId: chatId); GroupProactiveSection(chatId: chatId) }))
             add("face", "这个群", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "成员的头像 我的头像", dest: AnyView(facePage(c)))
+            add("abilities", "这个群", "成员的能力", "\(c.characterIds.count) 人",
+                keys: "角色能力 能力 开关 语音 图片 音色 生图提示词 锁脸",
+                dest: AnyView(GroupAbilitiesView(chatId: chatId)))
         } else if let charId = c.characterIds.first {
-            let char = try? Repo.character(charId)
             add("card", "这个角色", "角色卡与备注", keys: "人设 资料 编辑 备注",
                 action: { cardPath = NavigationPath(); editingChar = charId })
+            add("abilities", "这个角色", "角色能力", Abilities.countLabel(try? Repo.character(charId)),
+                keys: "能力 开关 语音 图片 发图 表情 转账 通话 电话 来电 一起听 礼物 约定 外卖 拍一拍 备注 锁屏密码 撤回 回应 不回复 骰子 位置 标识 音色 生图提示词 锁脸 长相",
+                dest: AnyView(AbilitiesPage(charId: charId)))
             add("face", "这个角色", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "角色的头像 我的头像", dest: AnyView(facePage(c)))
-            add("proactive", "这个角色", "主动发起对话", Proactive.config(char).on ? "开启" : "关闭", keys: "主动消息 间隔 免打扰",
-                dest: AnyView(MenuPage("主动发起对话") { ProactiveSection(charId: charId) }))
-            add("pat", "这个角色", "拍一拍", keys: "后缀 拍了拍", dest: AnyView(MenuPage("拍一拍") { PatSection(charId: charId) }))
             add("day", "这个角色", "日常与日记", keys: "日程 随机事件 写日记",
                 dest: AnyView(MenuPage("日常与日记") {
                     DayOnSection(charId: charId)
@@ -141,39 +117,47 @@ struct ChatSettingsView: View {
         add("pace", how, "节奏与自动回复", Self.paceLabel(c) + (AutoReply.listTag(c).isEmpty ? "" : " · 自动回复"),
             keys: "回复节奏 按按钮 发完就回 延迟回复 自动回复 忙碌 休息",
             dest: AnyView(MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }))
-        add("inner", how, "心声", Self.innerLabel(innerMode), keys: "想法 内心", dest: AnyView(MenuPage("心声") { innerSection }))
+        if !c.isGroup, let charId = c.characterIds.first {
+            let char = try? Repo.character(charId)
+            add("proactive", how, "主动发起对话", Proactive.config(char).on ? "已开启" : "关闭",
+                keys: "主动消息 间隔 免打扰 深夜",
+                dest: AnyView(MenuPage("主动发起对话") { ProactiveSection(charId: charId) }))
+        }
+        add("inner", how, "心声", Self.innerLabel(InnerVoice.mode(c)), keys: "想法 内心 显示方式 样式 字色 字号",
+            dest: AnyView(InnerSetPageView(chatId: chatId)))
+        add("extras", how, "互动", c.isGroup ? "旁白 · 我也写旁白" : "旁白 · 拍一拍 · \(ChatEngine.diceFaces(c)) 面骰子",
+            keys: "旁白 我也写旁白 草稿箱 拍一拍 后缀 骰子 几面",
+            dest: AnyView(ExtrasPageView(chatId: chatId)))
         if !c.isGroup {
-            add("status", how, "状态栏", StatusBar.active(c) ? "开启" : "关闭", keys: "心情 所在地 进度条",
+            add("status", how, "状态栏", StatusBar.active(c) ? "已开启" : "关闭", keys: "心情 所在地 进度条",
                 dest: AnyView(StatusBarSettingsView(chatId: chatId)))
         }
-        if !c.isGroup {
-            add("drafts", how, "草稿箱", Drafts.on(c) ? "开启" : "关闭", keys: "没发出去 写了又删",
-                dest: AnyView(DraftsView(chatId: chatId)))
-        }
-        add("narr", how, "旁白", narration || userNarration ? "开启" : "关闭", keys: "我也写旁白",
-            dest: AnyView(MenuPage("旁白") { narrationSections }))
-        add("translate", how, "翻译", translateTo.trimmingCharacters(in: .whitespaces).isEmpty ? "关闭" : translateTo, keys: "译文 语言",
-            dest: AnyView(MenuPage("翻译") { translateSection }))
-        add("preset", how, "预设与前情", presets.first(where: { $0.id == presetId })?.name ?? "跟随全局", keys: "提示词 更早之前 摘要",
-            dest: AnyView(MenuPage("预设与前情") { presetSections }))
+        let lang = c.row.string("translateTo").trimmingCharacters(in: .whitespaces)
+        add("translate", how, "翻译", lang.isEmpty ? "关闭" : lang, keys: "译文 语言 显示哪一种 译文怎么显示 只显示译文 只显示原文",
+            dest: AnyView(TranslatePageView(chatId: chatId)))
+        add("preset", how, "预设", ChatPresetPage.label(c), keys: "提示词 条目 参数",
+            dest: AnyView(ChatPresetPage(chatId: chatId)))
         add("time", how, "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", summaryState, keys: "总结 记住",
             dest: AnyView(SummaryPage(chatId: chatId)))
-        add("badges", "记忆", "互动标识", Badges.streak(c).n > 0 ? "连续 \(Badges.streak(c).n) 天" : "", keys: "火花 连续互发 成就 等级 亲密度",
-            dest: AnyView(BadgesView(chatId: chatId)))
-        add("otd", "记忆", "那年今天", keys: "往年 去年今天 回忆",
-            dest: AnyView(OnThisDayView(chatId: chatId)))
         if !c.isGroup {
             add("bond", "记忆", "关系底色", keys: "你们之间 关系 现状 S 级",
                 dest: AnyView(BondView(chatId: chatId)))
+        }
+        add("badges", "回顾", "互动标识", Badges.streak(c).n > 0 ? "连续 \(Badges.streak(c).n) 天" : "", keys: "火花 连续互发 成就 等级 亲密度",
+            dest: AnyView(BadgesView(chatId: chatId)))
+        if let first = otd.first {
+            add("otd", "回顾", "那年今天", "\(first.ago) 年前的今天，共 \(first.msgs.count) 条", keys: "往年 去年今天 回忆",
+                dest: AnyView(OnThisDayView(chatId: chatId)))
         }
         if !c.isGroup, Ties.pair(c) != nil {
             add("ties", "好友与拉黑", "好友与拉黑", Self.tieLabel(c), keys: "拉黑 删除好友 好友申请",
                 dest: AnyView(MenuPage("好友与拉黑") { TiesSection(chatId: chatId) }))
         }
-        add("more", "更多", "更多", "置顶、免打扰、清空与删除", keys: "置顶 免打扰 清空聊天记录 删除这段会话",
-            dest: AnyView(MenuPage("更多") { moreSections }))
+        add("more", "更多", "更多", c.isGroup ? "表情包、每轮的接口调用" : "表情包、每轮的接口调用、清空数据",
+            keys: "表情包 每轮的接口调用 清空聊天记录 清空记忆",
+            dest: AnyView(ChatMorePageView(chatId: chatId)))
         return out
     }
 
@@ -286,152 +270,12 @@ struct ChatSettingsView: View {
         }
     }
 
-    @ViewBuilder private var innerSection: some View {
-        // 群聊没有「单独生成」（网页版 4.636）：那一次调用只针对一个角色；存着的 apart 读成随回复一起
-        let grouped = chat?.isGroup == true
-        Section {
-            Picker("心声", selection: $innerMode) {
-                Text("关闭").tag("off")
-                Text("随回复一起").tag("inline")
-                if !grouped { Text("单独生成").tag("apart") }
-            }
-            if innerMode != "off" {
-                Picker("显示方式", selection: $innerStyle) {
-                    Text("淡色小字").tag("quiet")
-                    Text("打开一页").tag("card")
-                }
-                TextField("写什么（留空为默认）", text: $innerWhat, axis: .vertical).lineLimit(1...4)
-            }
-        } footer: {
-            if innerMode == "apart" && !grouped { Text("每轮多调用一次接口。") }
-            if grouped {
-                HelpNote("每个开口的成员在自己那几句下面多写一行心声，不额外调用接口。点哪位成员的头像，看的是哪位成员的心声。群聊中没有「单独生成」：那一次调用只针对一个角色。", title: "群聊的心声")
-            } else {
-                HelpNote(innerMode == "apart"
-                     ? "每一轮说完之后另调用一次接口，写出刚才那几句话背后的想法。每轮多一次调用（走副用接口）。"
-                     : innerMode == "inline" ? "角色在每轮回复的最后写一行心声，对方看不到。不多调用接口。"
-                     : "开启后显示角色每轮话语背后的想法。")
-            }
-        }
-    }
-
-    @ViewBuilder private var narrationSections: some View {
-        Section {
-            Toggle("旁白", isOn: $narration)
-        } footer: {
-            HelpNote("开启后，角色的回复中可以夹带旁白，旁白显示为居中的斜体文字。关闭时，回复中的旁白不显示。")
-        }
-        Section {
-            Toggle("我也写旁白", isOn: $userNarration)
-        } footer: {
-            HelpNote("开启后，输入框上方出现「消息 旁白」切换。选择「旁白」后输入的内容以旁白发出，显示为居中的一行小字，发出后自动切回发送消息。旁白不单独触发回复，角色在下一次回复时一并读到。不额外调用接口。")
-        }
-    }
-
-    @ViewBuilder private var translateSection: some View {
-        Section {
-            Toggle("翻译这段对话", isOn: Binding(
-                get: { !translateTo.trimmingCharacters(in: .whitespaces).isEmpty },
-                set: { translateTo = $0 ? (translateTo.isEmpty ? "中文" : translateTo) : ""; save() }))
-            if !translateTo.trimmingCharacters(in: .whitespaces).isEmpty {
-                TextField("译成什么语言", text: $translateTo)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: Theme.sp2) {
-                        ForEach(Self.commonLangs, id: \.self) { l in
-                            Button(l) { translateTo = l; save() }
-                                .font(.system(size: 13))
-                                .foregroundStyle(translateTo == l ? Theme.onAccent : Theme.text)
-                                .padding(.horizontal, Theme.sp3).padding(.vertical, 5)
-                                .background(translateTo == l ? Theme.accent : Theme.surface2, in: Capsule())
-                                .buttonStyle(.plain)
-                        }
-                    }
-                }
-                TextField("额外的翻译要求（例如：保留原文中的称呼）", text: $translateRules, axis: .vertical).lineLimit(1...4)
-            }
-        } header: {
-            Text("翻译")
-        } footer: {
-            Text("回复变长，用量随之增加。")
-            HelpNote("开启后，角色每说一条同时给出译文，显示在气泡下方。随回复一起写出，不多调用接口；回复会变长，用量随之增加。列表以外的语言可直接填写，例如「粤语」「文言文」。额外的翻译要求在长按菜单「翻译这一条」时随原文一并发送；随回复给出的译文不使用此项。开启前已经发出的消息没有译文，需要重新生成才会带上。")
-        }
-    }
-
-    @ViewBuilder private var presetSections: some View {
-        Section {
-            Picker("预设", selection: $presetId) {
-                Text("跟随全局").tag("")
-                ForEach(presets) { p in Text(p.name).tag(p.id) }
-            }
-        } footer: {
-            HelpNote("预设决定这段会话的提示词条目、每轮条数与携带的历史。预设在「设定集 - 预设」中编辑。")
-        }
-        Section {
-            TextField("尚无摘要", text: $summary, axis: .vertical).lineLimit(3...20)
-        } header: {
-            Text("更早之前发生过什么")
-        } footer: {
-            HelpNote("写有内容时，每次请求都会带上这一段，作为携带的历史之前的经过。")
-        }
-    }
-
     /// 菜单那一行（网页版 Conversation.js）：按轮数时写「几轮未总结 · 每 N 轮自动总结」，没开时写条数
     private var summaryState: String {
         let s = AppSettings.load()
         let every = Int((s.raw["autoSummarizeInterval"]?.number ?? 0).rounded())
         if every > 0 { return "\(sinceRounds) 轮未总结 · 每 \(every) 轮自动总结" }
         return "\(backlog) 条未总结 · 自动总结已关闭"
-    }
-
-    @ViewBuilder private var moreSections: some View {
-        Section {
-            Toggle("置顶", isOn: $pinned)
-            Toggle("免打扰", isOn: $muted)
-        }
-        Section {
-            Button("清空聊天记录", role: .destructive) {
-                if let c = chat, !c.isGroup, let cid = c.characterIds.first {
-                    clearCounts = (try? ClearHistory.counts(cid)) ?? ClearHistory.Counts()
-                }
-                confirmClear = true
-            }.foregroundStyle(Theme.dangerText)
-            Button("删除这段会话", role: .destructive) { confirmDelete = true }.foregroundStyle(Theme.dangerText)
-            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
-        } footer: {
-            Text("清空与删除均无法撤销。")
-            HelpNote("清空聊天记录：清空这个角色名下全部单聊的消息，总结进度、前情摘要与未读一并归零；会话、角色与已提取的记忆保留。群聊只清这一段。删除会话连同消息一并删除。均无法撤销。", title: "更多：清空与删除")
-        }
-        .confirmationDialog("清空聊天记录", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("清空聊天记录", role: .destructive) {
-                do {
-                    if let c = chat, !c.isGroup, let cid = c.characterIds.first {
-                        try ClearHistory.run(charId: cid)
-                    } else {
-                        // 群聊只清这一段；消息没了，总结进度、前情与未读一并归零（网页版 clearHistory 同一处理）
-                        try Database.shared.deleteAll(Collections.messages, where: chatId)
-                        if var c = try Repo.chat(chatId) {
-                            for k in ["memoryUpTo", "memoryUpToBeat", "memoryTriedId"] { c.row[k] = .null }
-                            for k in ["memoryUpToAt", "memoryUpToBeatAt", "memoryTriedAt", "unread"] { c.row[k] = .number(0) }
-                            c.row["summary"] = .string("")
-                            c.row.touch()
-                            try Repo.save(c)
-                        }
-                    }
-                } catch { problem = "清空失败：\(error.localizedDescription)" }
-            }
-        } message: {
-            if chat?.isGroup ?? false {
-                Text("将删除这段群聊的全部消息。已提取的记忆保留。无法撤销。")
-            } else {
-                Text("将删除这个角色名下 \(clearCounts.chats) 段单聊共 \(clearCounts.messages) 条消息。已提取的记忆保留。无法撤销。")
-            }
-        }
-        .confirmationDialog("删除后无法恢复。", isPresented: $confirmDelete, titleVisibility: .visible) {
-            Button("删除这段会话", role: .destructive) {
-                do { try People.deleteChat(chatId); onDeleted() }
-                catch { problem = "删除失败：\(error.localizedDescription)" }
-            }
-        }
     }
 
     /// 只在这段会话里换头像（网页版 4.437）：角色卡与主页上换的才是所有会话一起换
@@ -492,45 +336,17 @@ struct ChatSettingsView: View {
         sinceRounds = MemorySummary.roundsIn((try? MemorySummary.sinceTried(chatId: chatId)) ?? [])
     }
 
+    /// 每次回到菜单都重读：子页各自写库，菜单各行的当前状态跟着变
     private func load() {
         refreshBacklog()
         do {
             guard let c = try Repo.chat(chatId) else { problem = "这段会话不存在"; return }
             chat = c
-            pinned = c.pinned; muted = c.muted; narration = c.row.bool("narration"); userNarration = c.row.bool("userNarration")
-            innerMode = InnerVoice.mode(c); innerWhat = c.row.string("innerWhat"); innerStyle = InnerVoice.style(c)
-            translateTo = c.row.string("translateTo")
-            translateRules = c.row.string("translateRules")
-            presetId = c.presetId; summary = c.summary
-            presets = AppSettings.load().presets
+            if !loaded { otd = OnThisDay.ofChat(chatId) }
             loaded = true
         } catch {
             problem = error.localizedDescription
         }
-    }
-
-    /// 只写改过的字段。页面刚打开时 load 赋值也会触发 onChange，那时和库里一样，不写。
-    private func save() {
-        guard loaded, let c = try? Repo.chat(chatId) else { return }
-        var f: [String: JSONValue] = [:]
-        if pinned != c.pinned { f["pinned"] = .bool(pinned) }
-        if muted != c.muted { f["muted"] = .bool(muted) }
-        if narration != c.row.bool("narration") { f["narration"] = .bool(narration) }
-        if userNarration != c.row.bool("userNarration") { f["userNarration"] = .bool(userNarration) }
-        if presetId != c.presetId { f["presetId"] = .string(presetId) }
-        if summary != c.summary { f["summary"] = .string(summary) }
-        if innerMode != InnerVoice.mode(c) { f["innerMode"] = .string(innerMode) }
-        if innerStyle != InnerVoice.style(c) { f["innerStyle"] = .string(innerStyle) }
-        let lang = translateTo.trimmingCharacters(in: .whitespaces)
-        if lang != c.row.string("translateTo") { f["translateTo"] = .string(String(lang.prefix(40))) }
-        if translateRules != c.row.string("translateRules") { f["translateRules"] = .string(String(translateRules.prefix(500))) }
-        if innerWhat != c.row.string("innerWhat") { f["innerWhat"] = .string(String(innerWhat.prefix(300))) }
-        guard !f.isEmpty else { return }
-        var row = c.row
-        for (k, v) in f { row[k] = v }
-        row.touch()
-        do { try Database.shared.put(Collections.chats, row); problem = nil }
-        catch { problem = "保存失败：\(error.localizedDescription)" }
     }
 }
 
@@ -574,7 +390,8 @@ struct ProactiveSection: View {
             Text("主动发起对话")
         } footer: {
             Text("每次开口调用一次接口。" + (bg.problem.isEmpty ? "" : "\n" + bg.problem))
-            HelpNote(footer)
+            HelpNote("开启后，聊天停下来、隔了设定的间隔没有新消息时，角色主动发起对话。间隔从最后一条消息（任何一方）算起，实际间隔在设定值的 0.5 至 1.5 倍之间随机取值；最后一条消息距今不到设定值的一半时不发送。正在聊天、回复尚未落下或排着延迟回复时不发送。每次调用一次接口（走主用接口）。免打扰时段内不发，开始与结束相同表示不设。未读消息达到「设置 - 用量与上限」中的条数后暂停。"
+                     + (BgPush.isOn() ? "应用不在前台时由后台消息服务器代发。" : "只在应用打开时发送；应用不在前台时的代发见「设置 - 后台消息」。"), title: "主动发起对话")
         }
         .onAppear(perform: load)
         .onChange(of: on) { _, _ in save() }
@@ -585,13 +402,6 @@ struct ProactiveSection: View {
         .onChange(of: emoFrom) { _, _ in saveEmo() }
         .onChange(of: emoTo) { _, _ in saveEmo() }
         .onChange(of: emoDays) { _, _ in saveEmo() }
-    }
-
-    private var footer: String {
-        var t = "开启后，角色在设定的间隔内主动发起对话，实际间隔在设定值的一半到一倍半之间。每次调用一次接口（走主用接口）。免打扰时段内不发，开始与结束相同表示不设。未读消息达到「设置 - 用量与上限」中的条数后暂停。"
-        t += BgPush.isOn() ? "应用不在前台时由后台消息服务器代发。" : "只在应用打开时发送；应用不在前台时的代发见「设置 - 后台消息」。"
-        if !bg.problem.isEmpty { t += "\n" + bg.problem }
-        return t
     }
 
     private func load() {
@@ -659,7 +469,8 @@ struct ProactiveSection: View {
     }
 }
 
-/// 会话里怎么显示：消息时刻、已读回执、译文（网页版「美化」页与「翻译」页里的全局几项）。对所有会话生效
+/// 会话里怎么显示：消息时刻、已读回执（网页版 SkinPage 的这两项，对所有会话生效）。
+/// 译文显示哪一种、怎么展开在会话菜单的「翻译」页（网页版 4.529），这里不再放第二份（第 5 条：一个开关一个入口）
 struct ShowSection: View {
     @ObservedObject private var model = SettingsModel.shared
 
@@ -673,20 +484,11 @@ struct ShowSection: View {
                 ForEach(Receipt.stamps.indices, id: \.self) { i in Text(Receipt.stamps[i].label).tag(Receipt.stamps[i].id) }
             }
             Toggle("显示已读回执", isOn: model.bool("msgRead", false))
-            Picker("译文显示", selection: pick("translateShow", "both")) {
-                Text("原文与译文").tag("both")
-                Text("只显示译文").tag("trans")
-                Text("只显示原文").tag("orig")
-            }
-            Picker("译文展开", selection: pick("translateOpen", "tap")) {
-                Text("点击展开").tag("tap")
-                Text("下一轮收起").tag("turn")
-                Text("默认展开").tag("always")
-            }
         } header: {
             GroupTitle("显示")
         } footer: {
-            HelpNote("对所有会话生效。按间隔：相隔五分钟以上时在两条消息之间显示一行时间。已读回执：角色开始回复时，之前发出的消息标为已读。心声默认收起，点角色的头像展开。")
+            HelpNote("显示消息在本机出现的时刻，与角色写在正文里的时间无关。按间隔：相邻两条相隔五分钟以上时，在中间居中显示一行时间。每条：在每条消息旁或下方显示时分，隔天带上日期。对所有会话生效。", title: "消息时刻")
+            HelpNote("在自己发出的消息旁标注已读或未读。角色开始生成回复时记为已读，一直没有回复则保持未读。关闭后不再标注。对所有会话生效。", title: "显示已读回执")
         }
     }
 }
@@ -898,38 +700,42 @@ enum ChatMenuRecent {
     }
 }
 
-/// 拍一拍的后缀（网页版 extras.js）：拍角色时写在角色那一份上，角色拍你时用你自己的（全局一份）
+/// 拍一拍的后缀（网页版 extras.js 与 ExtrasPage）：后缀由被拍的一方设定。拍角色时写在角色那一份上，
+/// 角色拍你时用你自己的（全局一份）。网页版「拍角色时」在角色卡里；原生版的角色卡还没有这一项，先放在「互动」页。群聊只有后一项
 struct PatSection: View {
-    let charId: String
+    let charId: String?
     @ObservedObject private var model = SettingsModel.shared
     @State private var charPat = ""
     @State private var loaded = false
     @State private var problem: String?
 
     var body: some View {
-        Section {
-            TextField(Interact.patSuffixes[0], text: $charPat)
-            chips { charPat = $0 }
-        } header: {
-            Text("拍角色时")
-        } footer: {
-            HelpNote("你拍角色时，提示写成「你拍了拍角色」加上这一段，例如「的头」。留空时用「的头」。只对这个角色生效。", title: "拍一拍：拍角色时")
-        }
-        .onAppear {
-            charPat = (((try? Repo.character(charId)) ?? nil)?.row.string("patSuffix")) ?? ""
-            loaded = true
-        }
-        .onChange(of: charPat) { _, v in
-            guard loaded, let c = (try? Repo.character(charId)) ?? nil else { return }
-            do { _ = try People.update(c, ["patSuffix": .string(String(v.prefix(20)))]) } catch { problem = "保存失败：\(error.localizedDescription)" }
+        if let charId {
+            Section {
+                TextField(Interact.patSuffixes[0], text: $charPat)
+                chips { charPat = $0 }
+            } header: {
+                Text("拍角色时显示的后缀")
+            } footer: {
+                HelpNote("你拍角色时，提示写成「你拍了拍角色」加上这一段，例如「的头」。留空则使用「的头」。只对这个角色生效，在该角色参与的各个单聊中一致。", title: "拍一拍：拍角色时")
+            }
+            .onAppear {
+                charPat = (((try? Repo.character(charId)) ?? nil)?.row.string("patSuffix")) ?? ""
+                loaded = true
+            }
+            .onChange(of: charPat) { _, v in
+                guard loaded, let c = (try? Repo.character(charId)) ?? nil else { return }
+                do { _ = try People.update(c, ["patSuffix": .string(String(v.prefix(20)))]); problem = nil }
+                catch { problem = "保存失败：\(error.localizedDescription)" }
+            }
         }
         Section {
             TextField(Interact.patSuffixes[0], text: model.textBinding("patSuffix"))
             chips { v in model.set("patSuffix", .string(v)) }
         } header: {
-            Text("角色拍你时")
+            Text("别人拍我时显示的后缀")
         } footer: {
-            HelpNote("角色拍你时用的后缀，对所有角色生效。留空时用「的头」。", title: "拍一拍：角色拍你时")
+            HelpNote("双击头像即可拍一拍。后缀由被拍的一方设定，所以这一项是角色拍你时显示的。拍角色时显示的是上面那一项。留空则使用「的头」。对所有角色生效。", title: "拍一拍：别人拍我时")
         }
         if let problem { Section { Text(problem).foregroundStyle(Theme.danger) } }
     }

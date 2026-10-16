@@ -56,9 +56,9 @@ struct UsageLimitsView: View {
             }
 
             Section {
-                NumberRow(title: "会话一次显示几条", value: model.number("chatPage", 60), unit: "条", placeholder: "全部")
+                NumberRow(title: "会话一次渲染多少条", value: model.number("chatPage", 60), unit: "条", placeholder: "全部")
             } footer: {
-                HelpNote("打开会话时先显示最近这么多条，往上翻按同样的条数继续加载。填 0 表示一次全部显示，消息很多时打开会变慢。不影响发给模型的历史。")
+                HelpNote("打开会话时先渲染最近的这些消息，再往上翻会按同样的数量继续加载。不影响发给模型的内容，只影响打开速度。填 0 表示一次渲染全部，消息很多的会话打开时会明显卡顿。")
             }
 
             Section {
@@ -68,10 +68,11 @@ struct UsageLimitsView: View {
             }
 
             Section {
-                NumberRow(title: "我的日程往前读几天", value: model.number("userSchedBack", 1), unit: "天", placeholder: "0")
-                NumberRow(title: "我的日程往后读几天", value: model.number("userSchedAhead", 0), unit: "天", placeholder: "0")
+                NumberRow(title: "你的日程往前读几天", value: model.number("userSchedBack", 1), unit: "天", placeholder: "只读今天")
+                NumberRow(title: "你的日程往后读几天", value: model.number("userSchedAhead", 0), unit: "天", placeholder: "不读")
             } footer: {
-                HelpNote("「日常 - 我的日程」写进对话时读哪几天：今天总在里面，另加往前与往后这么多天。天数越多，提示词越长。")
+                HelpNote("每次请求带上「日常 - 我的日程」里今天以及往前这么多天的安排，并写明此刻是否正在其中。填 0 表示只读今天。在「我的日程」页里关掉的角色读不到。", title: "你的日程往前读几天")
+                HelpNote("同上，今天以及往后这么多天的安排。填 0 表示不读今天以后的。", title: "你的日程往后读几天")
             }
 
             Section {
@@ -112,7 +113,7 @@ struct UsageLimitsView: View {
             }
 
             Section {
-                Toggle("通话结束后写总结", isOn: model.bool("callSummary", true))
+                Toggle("打完电话自动总结", isOn: model.bool("callSummary", true))
                 NumberRow(title: "通话每轮回复上限", value: model.number("callMaxTokens", 400), unit: "token", placeholder: "不限")
                 NumberRow(title: "视频通话两帧画面的间隔", value: model.number("callFrameGap", 8), unit: "秒", placeholder: "每轮都带")
             } header: {
@@ -123,7 +124,7 @@ struct UsageLimitsView: View {
             }
 
             Section {
-                Toggle("自动重压关系底色", isOn: model.bool("bondAuto", false))
+                Toggle("自动生成关系底色", isOn: model.bool("bondAuto", false))
             } footer: {
                 Text("开启后多调用一次接口。")
                 HelpNote("关系转折级记忆有增删改之后，下一次请求回复时把这些记忆重新压成「你们之间」的几句现状，多调用一次接口（走记忆接口，未单独配置时走副用）。失败当次记为已尝试，记忆再有变动才会再压。关闭后底色保持上一次的结果。")

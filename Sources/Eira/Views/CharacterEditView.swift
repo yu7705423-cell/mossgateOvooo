@@ -22,17 +22,13 @@ struct CharacterEditView: View {
     @State private var core = ""
     @State private var avatar = ""
     @State private var appearance = ""
-    @State private var imagePrompt = ""
-    @State private var voiceId = ""
-    @State private var voicePrompt = ""
-    @State private var voiceLang = ""
-    @State private var voiceSpeed = 1.0
     @State private var avatarItem: PhotosPickerItem?
     @State private var avatarBase = ""
     @State private var confirmDelete = false
     @State private var problem: String?
     @State private var saved = false
     @State private var archived = false
+    @State private var abilityCount = ""
 
     var body: some View {
         Form {
@@ -87,30 +83,17 @@ struct CharacterEditView: View {
             }
             Section {
                 TextField("外貌", text: $appearance, axis: .vertical).lineLimit(2...10)
-                TextField("这个角色的固定生图提示词", text: $imagePrompt, axis: .vertical).lineLimit(2...10)
-                NavigationLink("锁脸") { FaceLockView(owner: .char(charId)) }
             } header: {
-                Text("生图")
+                Text("外貌")
             } footer: {
-                HelpNote("图片描述里出现这个角色的名字时，外貌随提示词一起发给生图接口；固定提示词接在这个角色发的每一张图后面。")
+                HelpNote("仅用于生成图片。图片描述里出现这个角色的名字时，外貌随提示词一起发给生图接口。写发型、五官、身形、常穿什么，不写性格。")
             }
             Section {
-                TextField("音色 ID", text: $voiceId)
-                    .textInputAutocapitalization(.never).autocorrectionDisabled()
-                TextField("风格（留空用接口的默认风格）", text: $voicePrompt)
-                Picker("语种", selection: $voiceLang) {
-                    ForEach(VoicePreset.langs) { Text($0.id.isEmpty ? "跟随接口" : $0.label).tag($0.id) }
+                NavigationLink { AbilitiesPage(charId: charId) } label: {
+                    LabeledContent("角色能力", value: abilityCount)
                 }
-                Stepper("语速 \(String(format: "%.1f", voiceSpeed))", value: $voiceSpeed, in: 0.5...2, step: 0.1)
-            } header: {
-                Text("语音")
             } footer: {
-                HelpNote(voiceFooter)
-            }
-            Section {
-                NavigationLink("角色能做的事") { CharCapsView(charId: charId) }
-            } footer: {
-                HelpNote("这个角色能不能发语音、图片、表情，能不能打电话、转账、送礼物、撤回、回应、不回复等，逐项开关。", title: "角色能做的事")
+                HelpNote("语音、图片、表情、转账、通话等各项的开关，以及音色、生图提示词与锁脸，都在「角色能力」中设置。会话右上角菜单的「这个角色 - 角色能力」进入的是同一页。", title: "角色能力")
             }
             Section {
                 Toggle("封存", isOn: Binding(get: { archived }, set: { setArchived($0) }))
@@ -150,15 +133,12 @@ struct CharacterEditView: View {
         .onChange(of: [name, remark, signature, gender, age, birthday, persona, scenario, firstMessage, exampleDialogue, core]) { _, _ in
             saved = false
         }
-        .onChange(of: [appearance, imagePrompt, voiceId, voicePrompt, voiceLang]) { _, _ in saved = false }
-        .onChange(of: voiceSpeed) { _, _ in saved = false }
-        .onAppear(perform: load)
-    }
-
-    private var voiceFooter: String {
-        let s = AppSettings.load()
-        guard let vp = s.activeVoice, s.voiceEnabled else { return "「设置 - 接口与服务 - 语音合成」开启后，填写了音色的角色可以发语音。" }
-        return "音色填在当前语音接口「\(vp.name)」上，换一套接口需另填。填写后角色可以在回复里发语音，每条调用一次语音接口。"
+        .onChange(of: appearance) { _, _ in saved = false }
+        .onAppear {
+            load()
+            // 从「角色能力」返回时开关数要跟上
+            abilityCount = Abilities.countLabel((try? Repo.character(charId)) ?? nil)
+        }
     }
 
     /// 封存（网页版 characters.archived，记的是封存那一刻的毫秒）：随改随存，不等「保存」
@@ -188,10 +168,7 @@ struct CharacterEditView: View {
             persona = c.persona; scenario = c.scenario; firstMessage = c.firstMessage
             exampleDialogue = c.exampleDialogue; core = c.core; avatar = c.avatar
             avatarBase = AvatarPool.base(c.row)
-            appearance = c.row.string("appearance"); imagePrompt = c.row.string("imagePrompt")
-            voiceId = VoiceGen.voiceId(c, presetId: AppSettings.load().activeVoice?.id ?? "")
-            voicePrompt = c.row.string("voicePrompt"); voiceLang = c.row.string("voiceLang")
-            voiceSpeed = c.row.number("voiceSpeed") ?? 1
+            appearance = c.row.string("appearance")
         } catch {
             problem = error.localizedDescription
         }
@@ -208,16 +185,11 @@ struct CharacterEditView: View {
             "avatar": avatar.isEmpty ? .null : .string(avatar),
             // 自己选了一张就是新的原本那张；角色换过的那张记录在 avatarBase
             "avatarBase": .string(avatarBase),
-            "appearance": .string(appearance), "imagePrompt": .string(imagePrompt),
-            "voicePrompt": .string(voicePrompt), "voiceLang": .string(voiceLang), "voiceSpeed": .number(voiceSpeed),
+            "appearance": .string(appearance),
         ]
-        var all = fields
-        // 音色按语音接口分别存；没有语音接口时不写
-        if let vp = AppSettings.load().activeVoice {
-            for (k, v) in VoiceGen.voiceIdPatch(c, presetId: vp.id, id: voiceId.trimmingCharacters(in: .whitespaces)) { all[k] = v }
-        }
+        // 音色、生图提示词、锁脸与各项能力在「角色能力」中随改随存，这里不写，免得拿打开时读到的旧值盖掉
         do {
-            loaded = try People.update(c, all)
+            loaded = try People.update(c, fields)
             saved = true
             problem = nil
         } catch {
