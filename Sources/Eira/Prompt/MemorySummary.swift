@@ -132,6 +132,13 @@ enum MemorySummary {
         return parts.isEmpty ? "关闭" : parts.joined(separator: "或")
     }
 
+    /// 追平要总结几次（网页版 runsFor）：设了「每 N 轮」按积压里的轮数算，否则按「一次总结的条数」算
+    static func runsFor(_ pending: [Message], every: Int, batch: Int) -> Int {
+        guard pending.count >= 2 else { return 0 }
+        if every > 0 { return max(1, Int((Double(roundsIn(pending)) / Double(every)).rounded(.up))) }
+        return batch > 0 ? Int((Double(pending.count) / Double(batch)).rounded(.up)) : 1
+    }
+
     /// 开启「每 N 轮」时已经积压的（网页版 4.606）：每段对话早于最近 N 轮、尚未总结的消息条数，与按 N 轮一次要调用几次
     struct Backlog { var chatId: String; var msgs: Int; var runs: Int }
     static func backlog(every n: Int) -> [Backlog] {
@@ -352,7 +359,7 @@ enum MemorySummary {
         return s.range(of: #"^\d{4}-\d{2}-\d{2}$"#, options: .regularExpression) != nil ? s : ""
     }
 
-    /// 总结一次。只吃最早的一批（memoryBatch，默认 200，0 为全部）；设了「每 N 轮」就总结最近这 N 轮，更早的一并标为已总结。
+    /// 总结一次。设了「每 N 轮」就总结最早的 N 轮、只标这一段；没设时吃最早的一批（memoryBatch，默认 200，0 为全部）。
     static func extract(chatId: String) async throws -> Counts {
         let s = AppSettings.load()
         guard let chat = try Repo.chat(chatId) else { throw StoreError(message: "会话不存在") }

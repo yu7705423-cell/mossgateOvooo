@@ -207,6 +207,20 @@ final class MemorySummaryTests: StoreTestCase {
         XCTAssertTrue(MemorySummary.backlog(every: 2).isEmpty)
     }
 
+    /// 追平要几次：设了「每 N 轮」按轮数算（网页版 runsFor），没设按条数
+    func testRunsForCountsRounds() throws {
+        for i in 0..<5 {
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .user, authorId: "me", content: "问\(i)"))
+            _ = try Repo.append(Message.new(chatId: "chat_a", role: .char, authorId: "char_a", content: "答\(i)", turnId: "r\(i)"))
+        }
+        let p = try MemorySummary.pending(chatId: "chat_a")
+        let rounds = MemorySummary.roundsIn(p)
+        XCTAssertEqual(MemorySummary.runsFor(p, every: 2, batch: 200), Int((Double(rounds) / 2).rounded(.up)))
+        XCTAssertEqual(MemorySummary.runsFor(p, every: 0, batch: 4), Int((Double(p.count) / 4).rounded(.up)))
+        XCTAssertEqual(MemorySummary.runsFor(p, every: 0, batch: 0), 1)
+        XCTAssertEqual(MemorySummary.runsFor(Array(p.prefix(1)), every: 2, batch: 200), 0)
+    }
+
     /// 自定义标识里「模型判断」的那几个随这一次顺带判断：只多几行清单，不多调接口；模型编出来的 id 不算数
     func testJudgedBadgesRideAlong() async throws {
         let def = try BadgeDefs.save(id: nil, ["name": .string("一起看过日出"), "how": .string("judge"), "cond": .string("两人一起看了日出"),

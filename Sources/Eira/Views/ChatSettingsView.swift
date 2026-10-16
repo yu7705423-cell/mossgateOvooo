@@ -41,8 +41,7 @@ struct ChatSettingsView: View {
     @State private var problem: String?
     @State private var loaded = false
     @State private var backlog = 0
-    @State private var summarizing = false
-    @State private var summaryNote: String?
+    @State private var sinceRounds = 0
     @State private var showSkin = false
     @State private var query = ""
 
@@ -158,8 +157,8 @@ struct ChatSettingsView: View {
             dest: AnyView(MenuPage("预设与前情") { presetSections }))
         add("time", how, "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
             dest: AnyView(TimeSettingsView()))
-        add("summary", "记忆", "记忆总结", backlog > 0 ? "\(backlog) 条未总结" : "", keys: "总结 记住",
-            dest: AnyView(MenuPage("记忆总结") { summarySection }))
+        add("summary", "记忆", "记忆总结", summaryState, keys: "总结 记住",
+            dest: AnyView(SummaryPage(chatId: chatId)))
         add("badges", "记忆", "互动标识", Badges.streak(c).n > 0 ? "连续 \(Badges.streak(c).n) 天" : "", keys: "火花 连续互发 成就 等级 亲密度",
             dest: AnyView(BadgesView(chatId: chatId)))
         add("otd", "记忆", "那年今天", keys: "往年 去年今天 回忆",
@@ -369,22 +368,12 @@ struct ChatSettingsView: View {
         }
     }
 
-    @ViewBuilder private var summarySection: some View {
-        Section {
-            LabeledContent("未总结的消息", value: "\(backlog) 条")
-            LabeledContent("自动总结", value: MemorySummary.autoText())
-            Button(summarizing ? "总结中" : "立即总结", action: summarizeNow).disabled(summarizing || backlog < 2)
-            Button("全部标为已总结") {
-                do { let n = try MemorySummary.markCaughtUp(chatId: chatId); summaryNote = "已将 \(n) 条标为已总结。"; refreshBacklog() }
-                catch { problem = "未能保存：\(error.localizedDescription)" }
-            }
-            .disabled(summarizing || backlog == 0)
-            if let summaryNote { Text(summaryNote).font(.footnote).foregroundStyle(Theme.secondaryText) }
-            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
-        } footer: {
-            Text("立即总结调用一次接口。")
-            HelpNote("立即总结：把未总结的对话交给模型整理成记忆，调用一次接口（走记忆接口，没单独配时走副用）。一次最多处理「每次总结的条数」那么多条。全部标为已总结：不调用接口，之后只总结新的对话。自动总结的门槛在「设定集 - 记忆」中设置。")
-        }
+    /// 菜单那一行（网页版 Conversation.js）：按轮数时写「几轮未总结 · 每 N 轮自动总结」，没开时写条数
+    private var summaryState: String {
+        let s = AppSettings.load()
+        let every = Int((s.raw["autoSummarizeInterval"]?.number ?? 0).rounded())
+        if every > 0 { return "\(sinceRounds) 轮未总结 · 每 \(every) 轮自动总结" }
+        return "\(backlog) 条未总结 · 自动总结已关闭"
     }
 
     @ViewBuilder private var moreSections: some View {
@@ -469,23 +458,7 @@ struct ChatSettingsView: View {
 
     private func refreshBacklog() {
         backlog = (try? MemorySummary.pending(chatId: chatId).count) ?? 0
-    }
-
-    private func summarizeNow() {
-        summarizing = true
-        summaryNote = nil
-        let id = chatId
-        Task {
-            do {
-                let r = try await MemorySummary.extract(chatId: id)
-                await MainActor.run {
-                    summaryNote = r.total + r.state == 0 ? "没有需要新记下的内容。" : "新记 \(r.added) 条，更新 \(r.updated) 条，了结 \(r.closed) 条" + (r.state > 0 ? "，现状改写 \(r.state) 块。" : "。")
-                }
-            } catch {
-                await MainActor.run { problem = "总结失败：\(error.localizedDescription)" }
-            }
-            await MainActor.run { summarizing = false; refreshBacklog() }
-        }
+        sinceRounds = MemorySummary.roundsIn((try? MemorySummary.sinceTried(chatId: chatId)) ?? [])
     }
 
     private func load() {
