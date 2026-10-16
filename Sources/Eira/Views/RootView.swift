@@ -33,7 +33,7 @@ struct RootView: View {
                        changed: { layout = Shell.layout() })
         }
         // 换了配色或字号：主屏整个重画一遍，取色时读到新的那一套。打开的 app 下次打开时换上
-        .id("\(Palette.key)|\(Palette.fontScale)")
+        .id("\(Palette.key)|\(Palette.fontScale)|\(Fonts.key)")
         .overlay {
             if locked && !onboarding {
                 LockScreenView(wallpaper: layout.wallpaperLock) { chat in

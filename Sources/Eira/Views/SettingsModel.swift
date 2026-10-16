@@ -18,6 +18,7 @@ final class SettingsModel: ObservableObject {
     private static func applyLook(_ s: AppSettings) {
         Palette.apply(s.raw["palette"])
         Palette.applyFont(s.raw["fontScale"])
+        Fonts.apply(s)
     }
     @Published var problem: String?
 

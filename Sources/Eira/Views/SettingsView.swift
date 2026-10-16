@@ -488,6 +488,7 @@ struct AppearanceView: View {
             }
             PaletteSection()
             FontScaleSection()
+            FontSection()
             WallpaperSection()
             LockLookSection()
             IconLookSection()

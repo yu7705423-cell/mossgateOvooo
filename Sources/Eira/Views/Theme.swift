@@ -87,9 +87,10 @@ enum Theme {
     // MARK: 字
     /// 新版的标题宋体（思源宋体 600，网页版 vendor/fonts/noto-serif-sc 合成一份）
     static let serifName = "EiraSerif-SemiBold"
-    static func serif(_ size: CGFloat) -> Font { .custom(serifName, fixedSize: size) }
+    /// 「设置 - 主题 - 字体」选了标题宋体就用那一款
+    static func serif(_ size: CGFloat) -> Font { .custom(Fonts.serif ?? serifName, fixedSize: size) }
     static func serifUI(_ size: CGFloat) -> UIFont {
-        UIFont(name: serifName, size: size) ?? .systemFont(ofSize: size, weight: .semibold)
+        UIFont(name: Fonts.serif ?? serifName, size: size) ?? UIFont(name: serifName, size: size) ?? .systemFont(ofSize: size, weight: .semibold)
     }
     /// 正文默认字号：新版列表标题 15 + 1
     static let bodySize: CGFloat = 16
@@ -132,7 +133,7 @@ extension View {
     /// 新版界面的全局默认：正文 16 号、按钮与开关用文字色（黑白）、列表不垫系统的灰底，露出页面底色。
     func eiraLook() -> some View {
         self
-            .font(.system(size: Theme.bodySize * Palette.fontScale))
+            .font(Fonts.body.map { Font.custom($0, size: Theme.bodySize * Palette.fontScale) } ?? .system(size: Theme.bodySize * Palette.fontScale))
             .dynamicTypeSize(Palette.typeSize)
             .tint(Theme.text)
             .scrollContentBackground(.hidden)

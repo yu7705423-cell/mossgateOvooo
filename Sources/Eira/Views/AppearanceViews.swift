@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// 「设置 - 主题」里的几组（网页版 AppearancePage 的配色、字号、图标、底栏与外观预设）。
 /// 这些字段与网页版同名，导入的设置原样认得。
@@ -386,5 +387,95 @@ struct LockLookSection: View {
         .sheet(isPresented: $lockOff) {
             NavigationStack { LockPinView(lockOff: true) }
         }
+    }
+}
+
+/// 字体：正文与标题宋体各选一款，字体从本机文件或字体文件的网址添加（网页版 FontPicker）
+struct FontSection: View {
+    @ObservedObject private var model = SettingsModel.shared
+    @State private var importing = false
+    @State private var linking = false
+    @State private var link = ""
+    @State private var busy = false
+    @State private var problem: String?
+    @State private var deleting: Fonts.Rec?
+
+    private var fonts: [Fonts.Rec] { Fonts.list(model.s) }
+
+    var body: some View {
+        Section {
+            slot("正文", key: "fontBody")
+            slot("标题宋体", key: "fontSerif")
+            ForEach(fonts) { f in
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(f.name).font(Fonts.psName(f).map { Font.custom($0, size: 16) } ?? .body)
+                        Text(status(f)).font(.caption).foregroundStyle(Theme.text2)
+                    }
+                    Spacer()
+                    if f.fileId.isEmpty && !f.url.isEmpty {
+                        Button("存到本机") { Task { await keep(f) } }.buttonStyle(.borderless).disabled(busy)
+                    }
+                }
+                .swipeActions { Button("删除", role: .destructive) { deleting = f } }
+            }
+            Button(busy ? "正在添加" : "从文件添加") { importing = true }.disabled(busy)
+            Button("按网址添加") { link = ""; linking = true }.disabled(busy)
+            if let problem { Text(problem).font(.footnote).foregroundStyle(Theme.danger) }
+        } header: {
+            Text("字体")
+        } footer: {
+            HelpNote("正文与标题宋体可以各换一款。字体从本机的 ttf 或 otf 文件添加，或填写字体文件的网址下载一份到本机；样式表网址（例如 Google Fonts 的链接）原生版读不了。主屏立即换上，已打开的应用在下次打开时换上。左滑删除。", title: "字体")
+        }
+        .fileImporter(isPresented: $importing, allowedContentTypes: [.font], allowsMultipleSelection: false) { result in
+            guard case .success(let urls) = result, let url = urls.first else { return }
+            let scoped = url.startAccessingSecurityScopedResource()
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let data = try Data(contentsOf: url)
+                try Fonts.add(data, name: url.lastPathComponent)
+                model.reload()
+                problem = nil
+            } catch { problem = error.localizedDescription }
+        }
+        .alert("字体文件的网址", isPresented: $linking) {
+            TextField("https://…/font.ttf", text: $link).textInputAutocapitalization(.never).autocorrectionDisabled()
+            Button("取消", role: .cancel) {}
+            Button("添加") { Task { await addLink() } }
+        }
+        .confirmationDialog("删除这款字体。正在使用它的地方回到默认字体。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
+                            titleVisibility: .visible) {
+            Button("删除", role: .destructive) {
+                guard let f = deleting else { return }
+                do { try Fonts.remove(f.id); model.reload() } catch { problem = "未能删除：\(error.localizedDescription)" }
+            }
+        }
+    }
+
+    private func slot(_ title: String, key: String) -> some View {
+        Picker(title, selection: Binding(get: { model.s.raw[key]?.string ?? "" }, set: { model.set(key, $0.isEmpty ? .null : .string($0)) })) {
+            Text("系统默认").tag("")
+            ForEach(fonts.filter { !$0.fileId.isEmpty }) { f in Text(f.name).tag(f.id) }
+        }
+    }
+
+    private func status(_ f: Fonts.Rec) -> String {
+        if !f.css.isEmpty { return "样式表网址，原生版不显示" }
+        if f.fileId.isEmpty { return "只有网址，存到本机后可用" }
+        return f.bytes > 0 ? ByteCountFormatter.string(fromByteCount: Int64(f.bytes), countStyle: .file) : "本机"
+    }
+
+    private func addLink() async {
+        busy = true
+        defer { busy = false }
+        do { try await Fonts.add(url: link); model.reload(); problem = nil }
+        catch { problem = "未能添加：\(error.localizedDescription)" }
+    }
+
+    private func keep(_ f: Fonts.Rec) async {
+        busy = true
+        defer { busy = false }
+        do { try await Fonts.keep(f); model.reload(); problem = nil }
+        catch { problem = "未能存到本机：\(error.localizedDescription)" }
     }
 }
