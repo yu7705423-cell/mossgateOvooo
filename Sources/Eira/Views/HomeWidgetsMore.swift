@@ -11,7 +11,7 @@ import SwiftUI
 /// framed 为 false 的（网页版 frameless: true）不垫主屏的卡片，自己画形状；其中月相、今年、这一周、节气、一句
 /// 自己画一张 dw-card。数据在各自的小视图里 .task 读一次，会话或朋友圈变了再读，不在 body 里每次重读。
 enum MoreWidgets {
-    struct Field { let key: String; let kind: String /* "image" | "text" | "char" */; let label: String; let placeholder: String }
+    struct Field { let key: String; let kind: String /* "image" | "text" | "char" | "lang" */; let label: String; let placeholder: String }
     struct Def { let id: String; let label: String; let desc: String; let sizes: [(Int, Int)]; let fields: [Field]; let framed: Bool /* false = web frameless: true (no card background) */ }
 
     // MARK: - 登记（网页版 registerWidget / deco 的 id、label、desc、sizes、fields、frameless）
@@ -24,8 +24,8 @@ enum MoreWidgets {
     }
     private static let charField = Field(key: "charId", kind: "char", label: "角色", placeholder: "不选则跟随最近聊过的角色")
 
-    // 网页版月相、今年、这一周、节气还有一项「文字」（中文 / English，config.lang），这里的编辑页只有图片、文字、角色三种，
-    // 先不列；导入的版式里已经写了 lang 的照样按它显示。
+    /// 网页版月相、今年、这一周、节气的「文字」：中文 / English（config.lang）。placeholder 是没设时的那一档
+    private static func lang(_ def: String) -> Field { Field(key: "lang", kind: "lang", label: "文字", placeholder: def) }
     static let all: [Def] = [
         Def(id: "clock", label: "时间", desc: "当前的时间与日期",
             sizes: [(2, 1), (2, 2), (4, 1)], fields: [], framed: true),
@@ -59,13 +59,13 @@ enum MoreWidgets {
         Def(id: "ins-quote", label: "一句", desc: "每天从聊天记录里摘一句角色说过的话",
             sizes: [(2, 2), (4, 2)], fields: [charField], framed: false),
         Def(id: "dw-phase", label: "月相", desc: "今晚的月亮是什么样子，按日期算，不用填任何东西",
-            sizes: [(2, 2), (4, 2), (2, 1)], fields: [], framed: false),
+            sizes: [(2, 2), (4, 2), (2, 1)], fields: [lang("en")], framed: false),
         Def(id: "dw-year", label: "今年", desc: "今天是这一年的第几天，下面一条细线是过了多少",
-            sizes: [(2, 2), (4, 1), (2, 1)], fields: [], framed: false),
+            sizes: [(2, 2), (4, 1), (2, 1)], fields: [lang("en")], framed: false),
         Def(id: "dw-week", label: "这一周", desc: "七个小圆，过去的几天浅一些，今天是实心的",
-            sizes: [(4, 1), (2, 1)], fields: [], framed: false),
+            sizes: [(4, 1), (2, 1)], fields: [lang("en")], framed: false),
         Def(id: "dw-term", label: "节气", desc: "今天落在哪个节气，离下一个还有几天，按日期算，不用填任何东西",
-            sizes: [(2, 2), (4, 2), (2, 1), (4, 1)], fields: [], framed: false),
+            sizes: [(2, 2), (4, 2), (2, 1), (4, 1)], fields: [lang("zh")], framed: false),
     ]
 
     static func has(_ id: String) -> Bool { all.contains { $0.id == id } }

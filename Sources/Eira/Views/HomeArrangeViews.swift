@@ -476,6 +476,12 @@ struct WidgetFieldsView: View {
                         }
                         Button(id.isEmpty ? "选择图片" : "更换图片") { picking = f.key }
                         if !id.isEmpty { Button("去掉图片", role: .destructive) { values[f.key] = "" } }
+                    case "lang":
+                        Picker("文字", selection: Binding(get: { (values[f.key] ?? "").isEmpty ? f.placeholder : values[f.key] ?? "" }, set: { values[f.key] = $0 })) {
+                            Text("中文").tag("zh")
+                            Text("English").tag("en")
+                        }
+                        .pickerStyle(.segmented)
                     case "char":
                         Picker("角色", selection: Binding(get: { values[f.key] ?? "" }, set: { values[f.key] = $0 })) {
                             Text("默认").tag("")
