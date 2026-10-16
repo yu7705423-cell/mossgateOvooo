@@ -67,6 +67,8 @@ struct RootView: View {
             OnboardingView { onboarding = false; settings.reload() }.eiraLook()
         }
         .onReceive(NotificationCenter.chatChangesSettled) { _ in unread = Shell.chatUnread() }
+        // 主屏自己的整理流程之外改了版式（自定义组件存数据、点空的自定义组件改内容）：重读一遍
+        .onReceive(NotificationCenter.default.publisher(for: .eiraHomeLayoutChanged)) { _ in layout = Shell.layout() }
         .preferredColorScheme(AppearanceView.scheme(settings.s))
     }
 

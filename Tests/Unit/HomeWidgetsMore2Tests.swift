@@ -34,7 +34,7 @@ final class HomeWidgetsMore2Tests: StoreTestCase {
 
     // MARK: - 登记
 
-    /// 每一个都登记了、主屏认得、编辑页列得出；自定义组件（用户贴的 HTML）不搬
+    /// 每一个都登记了、主屏认得、编辑页列得出
     func testAllRegistered() throws {
         for id in Self.ids {
             XCTAssertTrue(MoreWidgets.has(id), id)
@@ -42,7 +42,9 @@ final class HomeWidgetsMore2Tests: StoreTestCase {
             XCTAssertNotNil(HomeWidgets.def(id), id)
             XCTAssertFalse((MoreWidgets.all.first(where: { $0.id == id })?.sizes ?? []).isEmpty, id)
         }
-        XCTAssertFalse(MoreWidgets.has("custom"))
+        // 自定义组件（用户贴的 HTML）关在盒子里画，见 CustomWidget.swift
+        XCTAssertTrue(MoreWidgets.has("custom"))
+        XCTAssertEqual(HomeWidgets.def("custom")?.editable, true)
         let all = MoreWidgets.all.map { $0.id }
         XCTAssertEqual(Set(all).count, all.count, "id 不重复")
         // 没有可填项的两块不进编辑页

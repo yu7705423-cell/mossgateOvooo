@@ -33,7 +33,7 @@ enum HomeWidgets {
         Def(id: "note", label: "文字块", sizes: [(2, 1), (2, 2), (4, 1), (4, 2)], editable: true),
         Def(id: "photo", label: "图片块", sizes: [(2, 2), (4, 2), (2, 1)], editable: true),
         Def(id: "recent-chats", label: "最近会话", sizes: [(2, 2), (4, 2)], editable: false),
-    ] + MoreWidgets.all.map { Def(id: $0.id, label: $0.label, sizes: $0.sizes, editable: !$0.fields.isEmpty) }
+    ] + MoreWidgets.all.map { Def(id: $0.id, label: $0.label, sizes: $0.sizes, editable: !$0.fields.isEmpty || $0.id == CustomWidget.id) }
     static func def(_ id: String) -> Def? { all.first { $0.id == id } }
     static func label(_ id: String) -> String { def(id)?.label ?? "小组件" }
 }
@@ -142,7 +142,9 @@ struct ArrangeMenu: View {
                 Button("名称") { titleText = c.title; naming = true }
                 if HomeWidgets.def(c.ref)?.editable == true {
                     NavigationLink("编辑内容") {
-                        if let more = MoreWidgets.all.first(where: { $0.id == c.ref }) {
+                        if c.ref == CustomWidget.id {
+                            CustomWidget.EditView(cell: c, apply: apply, done: close)
+                        } else if let more = MoreWidgets.all.first(where: { $0.id == c.ref }) {
                             WidgetFieldsView(cell: c, def: more, apply: apply, done: close)
                         } else {
                             WidgetEditView(cell: c, apply: apply, done: close)

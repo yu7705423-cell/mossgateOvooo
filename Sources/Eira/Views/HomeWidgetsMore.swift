@@ -74,7 +74,7 @@ enum MoreWidgets {
             sizes: [(4, 1), (2, 1)], fields: [lang("en")], framed: false),
         Def(id: "dw-term", label: "节气", desc: "今天落在哪个节气，离下一个还有几天，按日期算，不用填任何东西",
             sizes: [(2, 2), (4, 2), (2, 1), (4, 1)], fields: [lang("zh")], framed: false),
-    ] + more2
+    ] + more2 + [CustomWidget.def]
 
     static func has(_ id: String) -> Bool { all.contains { $0.id == id } }
 
@@ -97,6 +97,7 @@ enum MoreWidgets {
         case "dw-year": return AnyView(YearW(cell: cell, home: home))
         case "dw-week": return AnyView(WeekW(cell: cell, home: home))
         case "dw-term": return AnyView(TermW(cell: cell, home: home))
+        case CustomWidget.id: return AnyView(CustomWidget.CellView(cell: cell, home: home))
         default: return view2(cell, home: home, open: open, openChat: openChat) ?? AnyView(EmptyView())
         }
     }
