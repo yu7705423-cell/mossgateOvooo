@@ -420,7 +420,8 @@ extension CostTests {
     func testCompareOnlyLatestOneToOne() async throws {
         let third = try XCTUnwrap(CompareTurn.presets().first { $0.id == "svc_third" })
         do { _ = try await CompareTurn.run(chatId: "chat_a", turnId: "turn_not_there", preset: third); XCTFail("应当拒绝") } catch {}
-        XCTAssertEqual(MockNet.count, 0)
+        // 只看选中的那一套：别的测试留下的后台任务（识图描述等）可能恰好在这时发出去
+        XCTAssertFalse(hosts().contains("third.test"), "不是最新一轮时不调接口")
         let g = try GroupChat.create(memberIds: ["char_a", People.createCharacter(name: "小周").id], title: "", personaId: "me_root")
         XCTAssertFalse(CompareTurn.can(g, turnId: "t", latestTurn: "t"))
     }
