@@ -67,6 +67,10 @@ struct ConversationView: View {
     @State private var archivedChat = false
     /// 这段会话挂着的美化里原生版画得出来的那几格（气泡、头像、间距）
     @State private var skin = Skins.Look()
+    /// 这段会话挂着的美化里的手写 CSS 读成的原生样式（经 \.phSkin 往下传）。nil 为没有，各处照原样画
+    @State private var css: CssCompiled?
+    /// css 换了没有：消息行按它判断要不要重画（行本身只比较数据）
+    @State private var cssTag = ""
     @State private var showLook = false
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
@@ -121,6 +125,57 @@ struct ConversationView: View {
 
     var body: some View {
         withEditors(withPanels(page))
+            .environment(\.phSkin, css)
+    }
+
+    /// 读这段会话用的美化：画得出来的几格（Look）与手写 CSS 读成的样式
+    private func applySkin(_ c: Chat?) {
+        let row = Skins.of(c)
+        let compiled = Skins.compiled(row)
+        css = compiled
+        skin = Skins.look(row, css: compiled)
+        cssTag = row.map { "\($0.id)|\($0.string("css").hashValue)" } ?? ""
+    }
+
+    /// 名字后面挂着火花的那一种标题
+    private var fireShown: Bool {
+        guard picking == nil, let fire, fire.n > 0 else { return false }
+        return ["lit", "risk", "ember"].contains(fire.state)
+    }
+
+    /// 顶栏标题（.ph-nav-title）：美化写了样式时照着画
+    @ViewBuilder private var titleText: some View {
+        if let st = css?.resolve(["nav-title"]) {
+            Text(pageTitle).font(CssFonts.font(st, size: 17, weight: .semibold)).lineLimit(1)
+                .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 17)))
+        } else {
+            Text(pageTitle).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+        }
+    }
+
+    /// 顶栏右上角的「更多」（.ph-nav-action）
+    @ViewBuilder private var navMore: some View {
+        if let st = css?.resolve(["nav-action"]) {
+            skinIcon("more", size: 20, color: Theme.text, hooks: ["nav-action"], st: st)
+                .frame(width: 34, height: 34)
+                .contentShape(Rectangle())
+                .modifier(PhBox(style: st, fallback: PhFallback()))
+        } else {
+            NavIcon("more")
+        }
+    }
+
+    /// 挂了钩子的按钮里的图标：CSS 把图标藏起来（.ph-X svg { display: none }）时换成伪元素上的那句话，没有那句话就空着
+    @ViewBuilder private func skinIcon(_ name: String, size: CGFloat, color: Color, hooks: [CssHook], st: CssStyle) -> some View {
+        if st.iconHidden {
+            let part: CssPart = css?.pseudoText(hooks, .before) != nil ? .before : .after
+            if let t = css?.pseudoText(hooks, part) {
+                PhPseudoText(text: t, style: css?.resolve(hooks, .normal, part), size: 15, color: st.color?.color ?? color)
+                    .lineLimit(1).fixedSize()
+            }
+        } else {
+            SvgIcon(name: name, size: size, color: st.color?.color ?? color)
+        }
     }
 
     /// 页面本身：消息列表、输入栏、顶栏，以及开关这一页时要做的事
@@ -157,6 +212,8 @@ struct ConversationView: View {
         }
         .background { ChatBackdrop(look: look) }
         .modifier(TopBarLook(bar: look.top))
+        // 美化的顶栏底色（.ph-navbar）。这段会话自己设过顶栏的以自己设的为准
+        .modifier(PhNavBar(style: look.top.isSet ? nil : css?.resolve(["navbar"])))
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(picking != nil)
@@ -178,14 +235,17 @@ struct ConversationView: View {
             }
             if picking == nil {
                 ToolbarItem(placement: .primaryAction) {
-                    Button { showSettings = true } label: { NavIcon("more") }.accessibilityLabel("会话设置")
+                    Button { showSettings = true } label: { navMore }.accessibilityLabel("会话设置")
                 }
+            }
+            if !fireShown, picking == nil, css?.resolve(["nav-title"]) != nil {
+                ToolbarItem(placement: .principal) { titleText }
             }
             // 名字后面的火花与连续互发天数（互动标识，这段对话自己的开关，默认显示）
             if picking == nil, let fire, fire.n > 0, ["lit", "risk", "ember"].contains(fire.state) {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 4) {
-                        Text(pageTitle).font(.system(size: 17, weight: .semibold)).lineLimit(1)
+                        titleText
                         SvgIcon(name: "flame", size: 14, color: fire.state == "lit" ? Theme.text : Theme.text3)
                         Text("\(fire.n)").font(.system(size: 13).monospacedDigit()).foregroundStyle(fire.state == "lit" ? Theme.text : Theme.text3)
                     }
@@ -265,7 +325,7 @@ struct ConversationView: View {
         base
         .onReceive(dueTimer) { _ in checkDue() }
         .onReceive(NotificationCenter.default.publisher(for: .eiraSkinChanged)) { _ in
-            skin = Skins.look(Skins.of(try? Repo.chat(chatId)))
+            applySkin(try? Repo.chat(chatId))
         }
         .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
             Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
@@ -495,20 +555,12 @@ struct ConversationView: View {
             narrTabs
             // 网页版的输入栏（.composer-bar）：加号、输入框、表情、发送。和消息区同底，不画分隔线
             HStack(alignment: .bottom, spacing: Theme.sp2) {
-                sideButton("plus", label: showPanel ? "收起" : "添加内容") {
+                sideButton("plus", label: showPanel ? "收起" : "添加内容", hooks: ["composer-btn", "plus"]) {
                     showPanel.toggle()
                     if showPanel { showStickers = false; typing = false }
                 }
-                TextField(narrMode && chat?.row.bool("userNarration") == true ? "写一行旁白" : "Aa…", text: $draft, axis: .vertical)
-                    .focused($typing)
-                    .onChange(of: typing) { _, t in if t { showStickers = false; showPanel = false } }
-                    .lineLimit(1...5)
-                    .font(.system(size: 15))
-                    .padding(.horizontal, Theme.sp3).padding(.vertical, Theme.sp2)
-                    .frame(minHeight: Theme.composerH)
-                    .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
-                sideButton("heart", label: showStickers ? "收起表情" : "表情") {
+                composerInput
+                sideButton("heart", label: showStickers ? "收起表情" : "表情", hooks: ["composer-btn", "sticker-btn"]) {
                     showStickers.toggle()
                     if showStickers { showPanel = false; typing = false }
                 }
@@ -520,14 +572,42 @@ struct ConversationView: View {
                     sendButton("reply", size: 22, filled: false, label: "请角色回复", action: primary)
                 }
             }
-            .padding(.horizontal, Theme.sp3)
-            .padding(.vertical, Theme.sp2)
-            if showPanel { plusPanel }
+            // 美化的底栏（.ph-composer）：CSS 写了 padding 时以它为准
+            .modifier(PhPadded(hooks: ["composer"], padH: skin.composerPad ?? Theme.sp3, padV: skin.composerPad ?? Theme.sp2))
+            if showPanel { plusPanel.phStyle("panel") }
             if showStickers {
-                StickerPanel { st in sendSticker(st) }
+                StickerPanel { st in sendSticker(st) }.phStyle("panel")
             }
         }
         .modifier(BottomBarLook(bar: look.bottom))
+    }
+
+    /// 输入框（.ph-composer-input）。美化写了样式时照着画，聚焦时叠上 :focus 的那一份；
+    /// 按「有没有写过样式」分支，不按聚焦分支，聚焦的那一刻不换视图
+    @ViewBuilder private var composerInput: some View {
+        let hint = narrMode && chat?.row.bool("userNarration") == true ? "写一行旁白" : "Aa…"
+        if let css, css.has(["composer-input"]) {
+            let st = css.resolve(["composer-input"], typing ? .focused : .normal) ?? CssStyle()
+            let ph = css.resolve(["composer-input"], .normal, .placeholder)
+            TextField(hint, text: $draft, prompt: ph?.color.map { Text(hint).foregroundColor($0.color) }, axis: .vertical)
+                .focused($typing)
+                .onChange(of: typing) { _, t in if t { showStickers = false; showPanel = false } }
+                .lineLimit(1...5)
+                .font(CssFonts.font(st, size: 15))
+                .modifier(PhBox(style: st, fallback: PhFallback(fill: Theme.surface2, radius: Theme.rLg, continuous: true,
+                                                                 padH: Theme.sp3, padV: Theme.sp2, stroke: Theme.border,
+                                                                 minHeight: skin.composerH ?? Theme.composerH, fontSize: 15)))
+        } else {
+            TextField(hint, text: $draft, axis: .vertical)
+                .focused($typing)
+                .onChange(of: typing) { _, t in if t { showStickers = false; showPanel = false } }
+                .lineLimit(1...5)
+                .font(.system(size: 15))
+                .padding(.horizontal, Theme.sp3).padding(.vertical, Theme.sp2)
+                .frame(minHeight: skin.composerH ?? Theme.composerH)
+                .background(Theme.surface2, in: RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous))
+                .overlay(RoundedRectangle(cornerRadius: Theme.rLg, style: .continuous).strokeBorder(Theme.border, lineWidth: 1))
+        }
     }
 
     /// 好友与拉黑的说明条（网页版 .tie-bar）：谁挡着谁；我这一边的可以当场解除
@@ -608,28 +688,58 @@ struct ConversationView: View {
         }
     }
 
-    /// 输入栏两侧的圆按钮（.composer-side）
-    private func sideButton(_ icon: String, label: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            SvgIcon(name: icon, size: 20, color: Theme.text2)
-                .frame(width: Theme.composerH, height: Theme.composerH)
-                .contentShape(Circle())
+    /// 输入栏两侧的圆按钮（.composer-side，契约 .ph-composer-btn 加上 .ph-plus 或 .ph-sticker-btn）
+    @ViewBuilder
+    private func sideButton(_ icon: String, label: String, hooks: [CssHook] = ["composer-btn"], action: @escaping () -> Void) -> some View {
+        let h = skin.composerH ?? Theme.composerH
+        if let css, css.has(hooks) {
+            let st = css.resolve(hooks) ?? CssStyle()
+            Button(action: action) {
+                skinIcon(icon, size: 20, color: Theme.text2, hooks: hooks, st: st)
+                    .frame(minWidth: h, minHeight: h)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(PhButtonStyle(hooks: hooks, fallback: PhFallback(radius: h / 2, continuous: false)))
+            .accessibilityLabel(label)
+        } else {
+            Button(action: action) {
+                SvgIcon(name: icon, size: 20, color: Theme.text2)
+                    .frame(width: h, height: h)
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
     }
 
     /// 发送键（.send-btn）：有字时黑底圆键；空着时是「请角色回复」，不垫底；回复中是停止
+    @ViewBuilder
     private func sendButton(_ icon: String, size: CGFloat, filled: Bool, stop: Bool = false, label: String,
                             action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            SvgIcon(name: icon, size: size, color: filled ? Theme.onAccent : Theme.text)
-                .frame(width: Theme.composerH, height: Theme.composerH)
-                .background(Circle().fill(filled ? Theme.accent : (stop ? Theme.surface3 : Color.clear)))
-                .contentShape(Circle())
+        let h = skin.composerH ?? Theme.composerH
+        if let css, css.has(["send"]) {
+            // 美化的发送键（.ph-send）：CSS 把图标藏起来、在伪元素上写了字时显示那句话（如 Send）
+            let st = css.resolve(["send"]) ?? CssStyle()
+            let worded = st.iconHidden && (css.pseudoText(["send"], .before) ?? css.pseudoText(["send"], .after)) != nil
+            Button(action: action) {
+                skinIcon(icon, size: size, color: filled ? Theme.onAccent : Theme.text, hooks: ["send"], st: st)
+                    .frame(minWidth: h, minHeight: h)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(PhButtonStyle(hooks: ["send"], fallback: PhFallback(
+                fill: filled ? Theme.accent : (stop ? Theme.surface3 : nil), radius: h / 2, continuous: false,
+                padH: worded ? Theme.sp3 : nil)))
+            .accessibilityLabel(label)
+        } else {
+            Button(action: action) {
+                SvgIcon(name: icon, size: size, color: filled ? Theme.onAccent : Theme.text)
+                    .frame(width: h, height: h)
+                    .background(Circle().fill(filled ? Theme.accent : (stop ? Theme.surface3 : Color.clear)))
+                    .contentShape(Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(label)
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(label)
     }
 
     /// 加号面板（.composer-panel .panel-grid）：一行四格，浅灰圆角方块里一个线条图标，下面一行小字
@@ -838,6 +948,8 @@ struct ConversationView: View {
     /// 消息列表那一块。拆出来单独推断类型，整页写在 body 里编译器推断不过来
     private func messageScroll(_ proxy: ScrollViewProxy) -> some View {
         ScrollView { messageStack(proxy) }
+        // 美化的消息列表底（.ph-chat-body）。这段会话自己设了聊天背景图的以背景图为准
+        .modifier(PhBodyBackground(style: look.bg.isEmpty ? css?.resolve(["chat-body"]) : nil))
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: messages.last?.id) { _, id in
             guard let id else { return }
@@ -1015,6 +1127,9 @@ struct ConversationView: View {
         var memoryUpToAt: Double = 0
         /// 存着思考过程的那几轮（长按给「查看思考」）
         var thinkTurns: Set<String> = []
+        /// 我发的、角色发的最后一条（美化的 msg-mine-last / msg-theirs-last 写了字时才算，否则为空）
+        var lastMineId = ""
+        var lastTheirsId = ""
     }
 
     private func rowContext() -> RowContext {
@@ -1034,7 +1149,16 @@ struct ConversationView: View {
             innerCard: chat.map { InnerVoice.style($0, settings: st) == "card" } ?? false,
             meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""),
             memoryUpToAt: chat?.isGroup == false ? (chat?.row.number("memoryUpToAt") ?? 0) : 0,
-            thinkTurns: Set(messages.filter { !$0.turnId.isEmpty && !$0.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.turnId)))
+            thinkTurns: Set(messages.filter { !$0.turnId.isEmpty && !$0.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.turnId)),
+            lastMineId: Self.lastOf(messages, mine: true, css: css),
+            lastTheirsId: Self.lastOf(messages, mine: false, css: css))
+    }
+
+    /// 美化在「最后一条」上写了字（如我发的最后一条下面写 Delivered）时，那一条是哪条。没写为空，消息行不因此重画
+    static func lastOf(_ list: [Message], mine: Bool, css: CssCompiled?) -> String {
+        let hook = mine ? "msg-mine-last" : "msg-theirs-last"
+        guard let css, css.pseudoText([hook], .before) != nil || css.pseudoText([hook], .after) != nil else { return "" }
+        return list.last { ($0.role == .user) == mine && !$0.isRecalled && !$0.isError && $0.kind != "narration" && $0.kind != "notice" && $0.kind != "silence" && $0.kind != "side" }?.id ?? ""
     }
 
     /// 这一条上下要挂的状态栏：最后一条那两档挂在带着状态的那一条上，第一条那两档挂在这一轮的第一条上
@@ -1054,8 +1178,7 @@ struct ConversationView: View {
         let top: CGFloat = prev == nil ? 0 : (tight ? skin.gapIn : skin.gap)
         VStack(spacing: 0) {
             if sep {
-                Text(Receipt.sepOf(m.createdAt)).font(.system(size: 12)).foregroundStyle(Theme.text3)
-                    .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
+                timeSep(Receipt.sepOf(m.createdAt))
             }
             let status = statusFor(m, ctx)
             if let status, status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.bottom, Theme.sp2) }
@@ -1067,6 +1190,26 @@ struct ConversationView: View {
         .padding(.top, top)
         .background(flashId == m.id ? Theme.groupFill : Color.clear)
         .id(m.id)
+    }
+
+    /// 两条消息中间那一行时间（.ph-time-sep）。美化在 ::before / ::after 写了字的，写在时间上方、下方
+    @ViewBuilder private func timeSep(_ text: String) -> some View {
+        if let css, let st = css.resolve(["time-sep"]) {
+            VStack(spacing: 2) {
+                if let t = css.pseudoText(["time-sep"], .before) {
+                    PhPseudoText(text: t, style: css.resolve(["time-sep"], .normal, .before), size: 11, color: Theme.text3)
+                }
+                Text(text).font(CssFonts.font(st, size: 12))
+                    .modifier(PhBox(style: st, fallback: PhFallback(fg: Theme.text3, fontSize: 12)))
+                if let t = css.pseudoText(["time-sep"], .after) {
+                    PhPseudoText(text: t, style: css.resolve(["time-sep"], .normal, .after), size: 11, color: Theme.text3)
+                }
+            }
+            .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
+        } else {
+            Text(text).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                .padding(.vertical, Theme.sp1).padding(.bottom, Theme.sp3)
+        }
     }
 
     private func messageRow(_ m: Message, _ ctx: RowContext) -> MessageRow {
@@ -1095,6 +1238,8 @@ struct ConversationView: View {
                           charFace: speaker(of: m).map { ChatFaces.of(chat, key: $0.id, fallback: "") } ?? "",
                           rejectNote: ctx.rejects[m.id] ?? "",
                           skin: skin,
+                          cssTag: cssTag,
+                          lastOfSide: m.id == ctx.lastMineId || m.id == ctx.lastTheirsId,
                           nameOf: { reactorName($0) },
                           picking: picking != nil, picked: picking?.contains(m.id) == true,
                           onPick: { togglePick(m.id) },
@@ -1489,7 +1634,7 @@ struct ConversationView: View {
             fire = Badges.shown(chat) ? Badges.streak(chat) : nil
             look = chat.map(ChatLook.of) ?? ChatLook.Look()
             archivedChat = chat.map(Archive.chatArchived) ?? false
-            skin = Skins.look(Skins.of(chat))
+            applySkin(chat)
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }
             if let chat { Notifier.planStreak(chat, title: chat.isGroup ? GroupChat.title(chat, members: GroupChat.members(chat)) : (char?.name ?? "")) }
             me = try Repo.personas().first { $0.id == chat?.personaId } ?? Repo.activePersona()
@@ -1740,6 +1885,7 @@ struct MessageRow: View, Equatable {
             && a.latestTurn == b.latestTurn && a.translateLang == b.translateLang && a.quoteName == b.quoteName
             && a.speakerName == b.speakerName && a.innerCard == b.innerCard && a.narrColor == b.narrColor
             && a.charFace == b.charFace && a.rejectNote == b.rejectNote && a.skin == b.skin
+            && a.cssTag == b.cssTag && a.lastOfSide == b.lastOfSide
             && a.picking == b.picking && a.picked == b.picked && (a.onRetry == nil) == (b.onRetry == nil)
             && a.summarized == b.summarized && a.hasThink == b.hasThink
             && a.chatCharIds == b.chatCharIds && a.narrName == b.narrName && a.narrTone == b.narrTone && a.innerLook == b.innerLook
@@ -1788,6 +1934,11 @@ struct MessageRow: View, Equatable {
     var rejectNote = ""
     /// 美化里的气泡、头像
     var skin = Skins.Look()
+    /// 美化的手写 CSS 换了没有（样式本身经环境值 \.phSkin 传进来）
+    var cssTag = ""
+    /// 这一条是这一边的最后一条，且美化在 msg-mine-last / msg-theirs-last 上写了字
+    var lastOfSide = false
+    @Environment(\.phSkin) private var css
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -2006,7 +2157,34 @@ struct MessageRow: View, Equatable {
 
     /// 旁白：夹在消息中间的一行小字（网页版 4.221）。走正则的显示替换、跟随译文显示方式（4.529），
     /// 有译文时点一下展开或收起；群聊里前面写「名字：」，名字按人配一种颜色（4.648）
-    private var narrationRow: some View {
+    /// 美化写了 .ph-narration（先）与 -mine / -theirs（后）时照着画；这段会话自己设了旁白颜色的以自己设的为准
+    @ViewBuilder private var narrationRow: some View {
+        if let css, let st = css.resolve(["narration", mine ? "narration-mine" : "narration-theirs"]) {
+            let said = RegexRules.forDisplay(MessageActions.narrationText(message), regexContext, settings: SettingsModel.shared.s)
+            let v = MessageActions.transSwap(said, translation, mode: transShow)
+            let base: Color = Color(hex: narrColor) ?? st.color?.color ?? Theme.secondaryText
+            let name: Text = narrName.isEmpty ? Text("")
+                : Text(narrName).fontWeight(.semibold).foregroundColor(Theme.narrName(narrTone)) + Text("：").foregroundColor(base)
+            let italic = st.raw["font-style"].map { $0.trimmingCharacters(in: .whitespaces) != "normal" } ?? true
+            let font: Font = st.hasFont ? CssFonts.font(st, size: 13) : .footnote
+            VStack(spacing: 2) {
+                (name + Text(v.main).foregroundColor(base))
+                    .font(italic ? font.italic() : font)
+                if !v.sub.isEmpty && transIsOpen {
+                    Text(v.sub).font(.caption.italic()).foregroundStyle(Theme.tertiaryText)
+                }
+            }
+            .multilineTextAlignment(.center)
+            .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 13)))
+            .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
+            .contentShape(Rectangle())
+            .onTapGesture { if !v.sub.isEmpty { transOpen = !transIsOpen } }
+        } else {
+            narrationPlain
+        }
+    }
+
+    private var narrationPlain: some View {
         let said = RegexRules.forDisplay(MessageActions.narrationText(message), regexContext, settings: SettingsModel.shared.s)
         let v = MessageActions.transSwap(said, translation, mode: transShow)
         let base: Color = Color(hex: narrColor) ?? Theme.secondaryText
@@ -2054,12 +2232,33 @@ struct MessageRow: View, Equatable {
 
     @ViewBuilder private var meta: some View {
         if !stamp.isEmpty || !read.isEmpty {
-            VStack(alignment: mine ? .trailing : .leading, spacing: 1) {
-                if !stamp.isEmpty { Text(stamp) }
-                if !read.isEmpty { Text(read) }
+            if let css, css.has(["meta"]) || css.has(["stamp"]) || css.has(["read"]) {
+                // 美化写了 .ph-meta / .ph-stamp / .ph-read 的样式
+                VStack(alignment: mine ? .trailing : .leading, spacing: 1) {
+                    if !stamp.isEmpty { Text(stamp).phStyle("stamp", fallback: PhFallback(fontSize: 11)) }
+                    if !read.isEmpty { Text(read).phStyle("read", fallback: PhFallback(fontSize: 11)) }
+                }
+                .font(.system(size: 11)).foregroundStyle(Theme.text3)
+                .phStyle("meta", fallback: PhFallback(fontSize: 11))
+                .padding(.bottom, stampBelow ? 0 : 3)
+            } else {
+                VStack(alignment: mine ? .trailing : .leading, spacing: 1) {
+                    if !stamp.isEmpty { Text(stamp) }
+                    if !read.isEmpty { Text(read) }
+                }
+                .font(.system(size: 11)).foregroundStyle(Theme.text3)
+                .padding(.bottom, stampBelow ? 0 : 3)
             }
-            .font(.system(size: 11)).foregroundStyle(Theme.text3)
-            .padding(.bottom, stampBelow ? 0 : 3)
+        }
+    }
+
+    /// 美化在「这一边的最后一条」上写的字（如 .ph-msg-mine:last-child::after { content: "Delivered" }）
+    @ViewBuilder private func lastNote(_ part: CssPart) -> some View {
+        if lastOfSide, let css {
+            let hook = mine ? "msg-mine-last" : "msg-theirs-last"
+            if let t = css.pseudoText([hook], part) {
+                PhPseudoText(text: t, style: css.resolve([hook], .normal, part), size: 11, color: Theme.text3)
+            }
         }
     }
 
@@ -2068,6 +2267,7 @@ struct MessageRow: View, Equatable {
             if mine { Spacer(minLength: 48) }
             if !mine && skin.showFace(false) { avatarView(false) }
             VStack(alignment: mine ? .trailing : .leading, spacing: 5) {
+                lastNote(.before)
                 if showName && !mine {
                     Text(speakerName.isEmpty ? (char?.displayName ?? "某人") : speakerName).font(.caption).foregroundStyle(Theme.secondaryText)
                 }
@@ -2113,6 +2313,7 @@ struct MessageRow: View, Equatable {
                 if !mine, let ban = message.row["ban"]?.array, !ban.isEmpty {
                     Text("命中禁写：\(ban.compactMap(\.string).joined(separator: "、"))").font(.caption).foregroundStyle(Theme.danger)
                 }
+                lastNote(.after)
             }
             if mine && skin.showFace(true) { avatarView(true) }
             if !mine { Spacer(minLength: 48) }
@@ -2180,7 +2381,8 @@ struct MessageRow: View, Equatable {
         case "voice":
             VoiceBubble(message: message, mine: mine) { onAction?(.revoice) }
         case "location":
-            card(icon: "mappin.and.ellipse", text: [message.row.string("place"), message.row.string("address")].filter { !$0.isEmpty }.joined(separator: " "))
+            card(icon: "mappin.and.ellipse", text: [message.row.string("place"), message.row.string("address")].filter { !$0.isEmpty }.joined(separator: " "),
+                 hook: "location")
         case "dice":
             diceCard
         case "transfer":
@@ -2276,16 +2478,31 @@ struct MessageRow: View, Equatable {
 
     /// 气泡（.bubble）：角色的是白底加一道很淡的阴影，自己的是黑底白字；14 号字，行高 1.6
     /// 美化里写了的按美化来
+    /// 美化的手写 CSS 写了 .ph-bubble（先）与 .ph-bubble-mine / -theirs（后）的，照着画；生成器定下的几项仍以生成器为准
+    @ViewBuilder
     private func bubble(_ text: String) -> some View {
         let b = skin.bubble(mine)
-        return Text(text)
-            .font(.system(size: b.font))
-            .lineSpacing(b.font * 0.4)
-            .textSelection(.disabled)
-            .padding(.horizontal, b.padX).padding(.vertical, b.padY)
-            .foregroundStyle(b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText))
-            .background(b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), in: RoundedRectangle(cornerRadius: b.radius, style: .continuous))
-            .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
+        if let css, let raw = css.resolve(["bubble", mine ? "bubble-mine" : "bubble-theirs"]) {
+            let st = b.overriding(raw)
+            let size = CGFloat(st.fontSize ?? Double(b.font))
+            Text(text)
+                .font(CssFonts.font(st, size: size))
+                .lineSpacing(CssPaint.lineSpacing(st, fontSize: size) ?? size * 0.4)
+                .textSelection(.disabled)
+                .modifier(PhBox(style: st, fallback: PhFallback(
+                    fill: b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), radius: b.radius, continuous: true,
+                    padH: b.padX, padV: b.padY, fg: b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText),
+                    shadow: mine ? nil : PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: size)))
+        } else {
+            Text(text)
+                .font(.system(size: b.font))
+                .lineSpacing(b.font * 0.4)
+                .textSelection(.disabled)
+                .padding(.horizontal, b.padX).padding(.vertical, b.padY)
+                .foregroundStyle(b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText))
+                .background(b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), in: RoundedRectangle(cornerRadius: b.radius, style: .continuous))
+                .shadow(color: .black.opacity(mine ? 0 : 0.06), radius: 1, y: 1)
+        }
     }
 
     /// 原生版还没有对应 app 的消息（约定、信、申请、出行、商城、纸条……）：一张只读的卡，点开看全文
@@ -2354,14 +2571,26 @@ struct MessageRow: View, Equatable {
         .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
     }
 
-    private func card(icon: String, text: String) -> some View {
-        HStack(alignment: .top, spacing: Theme.gap) {
-            Image(systemName: icon).foregroundStyle(Theme.secondaryText)
-            Text(text).font(.system(size: Theme.bubbleFont)).foregroundStyle(Theme.bubbleTheirsText)
+    /// 一张小卡。hook 是它的契约钩子（位置卡 .ph-location）；美化给它写了样式时照着画
+    @ViewBuilder
+    private func card(icon: String, text: String, hook: CssHook? = nil) -> some View {
+        if let hook, let css, let st = css.resolve([hook]) {
+            HStack(alignment: .top, spacing: Theme.gap) {
+                Image(systemName: icon).foregroundStyle(st.color?.color ?? Theme.secondaryText)
+                Text(text).font(CssFonts.font(st, size: Theme.bubbleFont))
+            }
+            .modifier(PhBox(style: st, fallback: PhFallback(
+                fill: Theme.bubbleTheirs, radius: Theme.bubbleRadius, continuous: true, padH: Theme.pad, padV: Theme.pad,
+                fg: Theme.bubbleTheirsText, shadow: PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: Theme.bubbleFont)))
+        } else {
+            HStack(alignment: .top, spacing: Theme.gap) {
+                Image(systemName: icon).foregroundStyle(Theme.secondaryText)
+                Text(text).font(.system(size: Theme.bubbleFont)).foregroundStyle(Theme.bubbleTheirsText)
+            }
+            .padding(Theme.pad)
+            .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+            .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
         }
-        .padding(Theme.pad)
-        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
-        .shadow(color: .black.opacity(0.06), radius: 1, y: 1)
     }
 
     /// 贴在这一条上的回应，按 emoji 归并。点自己贴的那一个就是取消。
@@ -2415,9 +2644,7 @@ struct MessageRow: View, Equatable {
                 .font(.footnote).buttonStyle(.bordered)
             }
         }
-        .padding(Theme.pad)
-        .frame(minWidth: 160, alignment: .leading)
-        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        .modifier(CardBox(hook: "transfer"))
     }
 
     /// 礼物：封面；拆开之后写里面是什么。自己送出去的在对方拆开之前也写明里面是什么（只有自己看得到）。
@@ -2441,9 +2668,7 @@ struct MessageRow: View, Equatable {
                 .font(.footnote).buttonStyle(.bordered)
             }
         }
-        .padding(Theme.pad)
-        .frame(minWidth: 160, alignment: .leading)
-        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        .modifier(CardBox(hook: "gift"))
     }
 
     /// 外卖、请客、代付。对方请客或让你代付、还没表态的那一单可以表态。
@@ -2662,6 +2887,25 @@ struct CompareTurnView: View {
             } catch {
                 await MainActor.run { busy = false; problem = "未能加入候选：\(error.localizedDescription)" }
             }
+        }
+    }
+}
+
+/// 转账、礼物那种卡片的外框（.ph-transfer、.ph-gift）：没有样式时照原样（内距、最小宽、白底圆角），有样式时照 CSS 改写
+private struct CardBox: ViewModifier {
+    let hook: CssHook
+    @Environment(\.phSkin) private var css
+
+    func body(content: Content) -> some View {
+        if let css, let st = css.resolve([hook]) {
+            content.modifier(PhBox(style: st, fallback: PhFallback(
+                fill: Theme.bubbleTheirs, radius: Theme.bubbleRadius, continuous: false, padH: Theme.pad, padV: Theme.pad,
+                minWidth: 160, alignment: .leading)))
+        } else {
+            content
+                .padding(Theme.pad)
+                .frame(minWidth: 160, alignment: .leading)
+                .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
         }
     }
 }
