@@ -69,7 +69,11 @@ struct ConversationView: View {
     @State private var skin = Skins.Look()
     /// 这段会话挂着的美化里的手写 CSS 读成的原生样式（经 \.phSkin 往下传）。nil 为没有，各处照原样画
     @State private var css: CssCompiled?
-    /// css 换了没有：消息行按它判断要不要重画（行本身只比较数据）
+    /// 这段会话挂着的美化里格子表达不了、画成图的那几块（经 \.phRaster 往下传）。nil 为没有画过，各处照格子画
+    @State private var raster: CssRasterSet?
+    /// 已经请画图的一边核对过的那一份（美化 id 与 CSS 原文）：同一份只核对一次，存图之后的通知不再引出下一次
+    @State private var rasterAsked = ""
+    /// css 或画好的图换了没有：消息行按它判断要不要重画（行本身只比较数据）
     @State private var cssTag = ""
     @State private var showLook = false
     @State private var photoText = ""
@@ -126,15 +130,30 @@ struct ConversationView: View {
     var body: some View {
         withEditors(withPanels(page))
             .environment(\.phSkin, css)
+            .environment(\.phRaster, raster)
     }
 
-    /// 读这段会话用的美化：画得出来的几格（Look）与手写 CSS 读成的样式
+    /// 读这段会话用的美化：画得出来的几格（Look）、手写 CSS 读成的样式、以及画好的图。
+    /// 这一份还没画过、或 CSS 改过之后没重画的，交给画图的一边在后台画（每份 CSS 只请一次），画完存进库、发通知，再读一遍
     private func applySkin(_ c: Chat?) {
         let row = Skins.of(c)
         let compiled = Skins.compiled(row)
         css = compiled
         skin = Skins.look(row, css: compiled)
-        cssTag = row.map { "\($0.id)|\($0.string("css").hashValue)" } ?? ""
+        raster = compiled == nil ? nil : Skins.raster(row)
+        let shot = raster.map { r -> String in
+            "\(r.cssHash)|\(r.engine)|" + r.images.keys.sorted().map { "\($0)=\(r.images[$0]?.imageId ?? "")" }.joined(separator: ",")
+        } ?? ""
+        cssTag = row.map { "\($0.id)|\($0.string("css").hashValue)|\(shot.hashValue)" } ?? ""
+        guard let row, compiled != nil else { return }
+        let asked = "\(row.id)|\(row.string("css").hashValue)"
+        guard asked != rasterAsked else { return }
+        rasterAsked = asked
+        let skinId = row.id
+        Task { @MainActor in
+            await CssRasterizer.ensure(skinId: skinId)
+            applySkin(try? Repo.chat(chatId))
+        }
     }
 
     /// 名字后面挂着火花的那一种标题
@@ -147,7 +166,7 @@ struct ConversationView: View {
     @ViewBuilder private var titleText: some View {
         if let st = css?.resolve(["nav-title"]) {
             Text(pageTitle).font(CssFonts.font(st, size: 17, weight: .semibold)).lineLimit(1)
-                .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 17)))
+                .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 17), hooks: ["nav-title"]))
         } else {
             Text(pageTitle).font(.system(size: 17, weight: .semibold)).lineLimit(1)
         }
@@ -159,23 +178,33 @@ struct ConversationView: View {
             skinIcon("more", size: 20, color: Theme.text, hooks: ["nav-action"], st: st)
                 .frame(width: 34, height: 34)
                 .contentShape(Rectangle())
-                .modifier(PhBox(style: st, fallback: PhFallback()))
+                .modifier(PhBox(style: st, fallback: PhFallback(), hooks: ["nav-action"]))
         } else {
             NavIcon("more")
         }
     }
 
-    /// 挂了钩子的按钮里的图标：CSS 把图标藏起来（.ph-X svg { display: none }）时换成伪元素上的那句话，没有那句话就空着
+    /// 挂了钩子的按钮里的图标：画好了换图标的那张图时贴图（第二步）；
+    /// 否则 CSS 把图标藏起来（.ph-X svg { display: none }）时换成伪元素上的那句话，没有那句话就空着
     @ViewBuilder private func skinIcon(_ name: String, size: CGFloat, color: Color, hooks: [CssHook], st: CssStyle) -> some View {
-        if st.iconHidden {
+        if let icon = CssRasterDraw.icon(raster, hooks) {
+            let s = CssRasterDraw.size(icon)
+            CssRasterView(image: icon).frame(width: s.width, height: s.height)
+        } else if st.iconHidden {
             let part: CssPart = css?.pseudoText(hooks, .before) != nil ? .before : .after
-            if let t = css?.pseudoText(hooks, part) {
+            // 这个伪元素画成了装饰图（字在图里，由 PhBox 贴上）：不再写字
+            if CssRasterDraw.pick(raster, hooks, parts: [part], kind: .decor) == nil, let t = css?.pseudoText(hooks, part) {
                 PhPseudoText(text: t, style: css?.resolve(hooks, .normal, part), size: 15, color: st.color?.color ?? color)
                     .lineLimit(1).fixedSize()
             }
         } else {
             SvgIcon(name: name, size: size, color: st.color?.color ?? color)
         }
+    }
+
+    /// 美化画好的返回键（.ph-back 的图标）。多选时左上角是「取消」，不换
+    private var backIcon: CssRasterImage? {
+        picking == nil ? CssRasterDraw.icon(raster, ["back"]) : nil
     }
 
     /// 页面本身：消息列表、输入栏、顶栏，以及开关这一页时要做的事
@@ -216,8 +245,19 @@ struct ConversationView: View {
         .modifier(PhNavBar(style: look.top.isSet ? nil : css?.resolve(["navbar"])))
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
-        .navigationBarBackButtonHidden(picking != nil)
+        // 美化画好了返回键的图（.ph-back）时换成自己的返回键；没有图时用系统的
+        .navigationBarBackButtonHidden(picking != nil || backIcon != nil)
         .toolbar {
+            if let icon = backIcon {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button { dismiss() } label: {
+                        let s = CssRasterDraw.size(icon)
+                        CssRasterView(image: icon).frame(width: s.width, height: s.height)
+                    }
+                    .buttonStyle(PhButtonStyle(hooks: ["back"]))
+                    .accessibilityLabel("返回")
+                }
+            }
             if let picked = picking {
                 ToolbarItem(placement: .cancellationAction) { Button("取消") { picking = nil } }
                 ToolbarItem(placement: .principal) {
@@ -596,7 +636,8 @@ struct ConversationView: View {
                 .font(CssFonts.font(st, size: 15))
                 .modifier(PhBox(style: st, fallback: PhFallback(fill: Theme.surface2, radius: Theme.rLg, continuous: true,
                                                                  padH: Theme.sp3, padV: Theme.sp2, stroke: Theme.border,
-                                                                 minHeight: skin.composerH ?? Theme.composerH, fontSize: 15)))
+                                                                 minHeight: skin.composerH ?? Theme.composerH, fontSize: 15),
+                                hooks: ["composer-input"], state: typing ? .focused : .normal))
         } else {
             TextField(hint, text: $draft, axis: .vertical)
                 .focused($typing)
@@ -720,7 +761,10 @@ struct ConversationView: View {
         if let css, css.has(["send"]) {
             // 美化的发送键（.ph-send）：CSS 把图标藏起来、在伪元素上写了字时显示那句话（如 Send）
             let st = css.resolve(["send"]) ?? CssStyle()
-            let worded = st.iconHidden && (css.pseudoText(["send"], .before) ?? css.pseudoText(["send"], .after)) != nil
+            let wordPart: CssPart = css.pseudoText(["send"], .before) != nil ? .before : .after
+            let worded = CssRasterDraw.icon(raster, ["send"]) == nil && st.iconHidden
+                && css.pseudoText(["send"], wordPart) != nil
+                && CssRasterDraw.pick(raster, ["send"], parts: [wordPart], kind: .decor) == nil
             Button(action: action) {
                 skinIcon(icon, size: size, color: filled ? Theme.onAccent : Theme.text, hooks: ["send"], st: st)
                     .frame(minWidth: h, minHeight: h)
@@ -950,6 +994,9 @@ struct ConversationView: View {
         ScrollView { messageStack(proxy) }
         // 美化的消息列表底（.ph-chat-body）。这段会话自己设了聊天背景图的以背景图为准
         .modifier(PhBodyBackground(style: look.bg.isEmpty ? css?.resolve(["chat-body"]) : nil))
+        // 消息列表的 ::before 画成的那一条：钉在顶栏下面，不随消息滚动
+        .modifier(PhStickyTop(image: CssRasterDraw.pick(raster, ["chat-body"], parts: [.before], kind: .decor),
+                              margin: css?.resolve(["chat-body"], .normal, .before)?.margin))
         .scrollDismissesKeyboard(.interactively)
         .onChange(of: messages.last?.id) { _, id in
             guard let id else { return }
@@ -1196,12 +1243,19 @@ struct ConversationView: View {
     @ViewBuilder private func timeSep(_ text: String) -> some View {
         if let css, let st = css.resolve(["time-sep"]) {
             VStack(spacing: 2) {
-                if let t = css.pseudoText(["time-sep"], .before) {
+                // 伪元素画成了图的贴图（图里已有它的字），没画成的照第一步写字
+                if let d = CssRasterDraw.pick(raster, ["time-sep"], parts: [.before], kind: .decor)
+                    ?? CssRasterDraw.pick(raster, ["time-sep"], parts: [.before], kind: .icon) {
+                    PhFlowDecor(image: d)
+                } else if let t = css.pseudoText(["time-sep"], .before) {
                     PhPseudoText(text: t, style: css.resolve(["time-sep"], .normal, .before), size: 11, color: Theme.text3)
                 }
                 Text(text).font(CssFonts.font(st, size: 12))
-                    .modifier(PhBox(style: st, fallback: PhFallback(fg: Theme.text3, fontSize: 12)))
-                if let t = css.pseudoText(["time-sep"], .after) {
+                    .modifier(PhBox(style: st, fallback: PhFallback(fg: Theme.text3, fontSize: 12), hooks: ["time-sep"], rasterDecor: false))
+                if let d = CssRasterDraw.pick(raster, ["time-sep"], parts: [.after], kind: .decor)
+                    ?? CssRasterDraw.pick(raster, ["time-sep"], parts: [.after], kind: .icon) {
+                    PhFlowDecor(image: d)
+                } else if let t = css.pseudoText(["time-sep"], .after) {
                     PhPseudoText(text: t, style: css.resolve(["time-sep"], .normal, .after), size: 11, color: Theme.text3)
                 }
             }
@@ -1939,6 +1993,7 @@ struct MessageRow: View, Equatable {
     /// 这一条是这一边的最后一条，且美化在 msg-mine-last / msg-theirs-last 上写了字
     var lastOfSide = false
     @Environment(\.phSkin) private var css
+    @Environment(\.phRaster) private var raster
     /// 回应是谁贴的：id 换成名字（me 为我）
     var nameOf: ((String) -> String)?
     /// 多选模式：点一下选中或取消，长按菜单停用
@@ -2175,7 +2230,7 @@ struct MessageRow: View, Equatable {
                 }
             }
             .multilineTextAlignment(.center)
-            .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 13)))
+            .modifier(PhBox(style: st, fallback: PhFallback(fontSize: 13), hooks: ["narration", mine ? "narration-mine" : "narration-theirs"]))
             .frame(maxWidth: .infinity).padding(.horizontal, Theme.pad * 2)
             .contentShape(Rectangle())
             .onTapGesture { if !v.sub.isEmpty { transOpen = !transIsOpen } }
@@ -2256,7 +2311,10 @@ struct MessageRow: View, Equatable {
     @ViewBuilder private func lastNote(_ part: CssPart) -> some View {
         if lastOfSide, let css {
             let hook = mine ? "msg-mine-last" : "msg-theirs-last"
-            if let t = css.pseudoText([hook], part) {
+            // 画成了图的贴图（字在图里），没画成的照第一步写字
+            if let d = CssRasterDraw.pick(raster, [hook], parts: [part], kind: .decor) ?? CssRasterDraw.pick(raster, [hook], parts: [part], kind: .icon) {
+                PhFlowDecor(image: d)
+            } else if let t = css.pseudoText([hook], part) {
                 PhPseudoText(text: t, style: css.resolve([hook], .normal, part), size: 11, color: Theme.text3)
             }
         }
@@ -2485,6 +2543,8 @@ struct MessageRow: View, Equatable {
         if let css, let raw = css.resolve(["bubble", mine ? "bubble-mine" : "bubble-theirs"]) {
             let st = b.overriding(raw)
             let size = CGFloat(st.fontSize ?? Double(b.font))
+            // 画好的图：气泡的底按 bubble 加这一边（bubble-mine / bubble-theirs）找；小尾巴（::after）贴在气泡外面，不裁。
+            // 生成器定下了底色或圆角的那一边不用底图（生成器赢，同上面的 overriding）
             Text(text)
                 .font(CssFonts.font(st, size: size))
                 .lineSpacing(CssPaint.lineSpacing(st, fontSize: size) ?? size * 0.4)
@@ -2492,7 +2552,9 @@ struct MessageRow: View, Equatable {
                 .modifier(PhBox(style: st, fallback: PhFallback(
                     fill: b.fill ?? (mine ? Theme.bubbleMine : Theme.bubbleTheirs), radius: b.radius, continuous: true,
                     padH: b.padX, padV: b.padY, fg: b.text ?? (mine ? Theme.bubbleMineText : Theme.bubbleTheirsText),
-                    shadow: mine ? nil : PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: size)))
+                    shadow: mine ? nil : PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: size),
+                    hooks: ["bubble", mine ? "bubble-mine" : "bubble-theirs"],
+                    rasterBox: b.fill == nil && !b.fixed.contains("r")))
         } else {
             Text(text)
                 .font(.system(size: b.font))
@@ -2581,7 +2643,8 @@ struct MessageRow: View, Equatable {
             }
             .modifier(PhBox(style: st, fallback: PhFallback(
                 fill: Theme.bubbleTheirs, radius: Theme.bubbleRadius, continuous: true, padH: Theme.pad, padV: Theme.pad,
-                fg: Theme.bubbleTheirsText, shadow: PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: Theme.bubbleFont)))
+                fg: Theme.bubbleTheirsText, shadow: PhShadow(color: .black.opacity(0.06), radius: 1, y: 1), fontSize: Theme.bubbleFont),
+                hooks: [hook]))
         } else {
             HStack(alignment: .top, spacing: Theme.gap) {
                 Image(systemName: icon).foregroundStyle(Theme.secondaryText)
@@ -2900,7 +2963,7 @@ private struct CardBox: ViewModifier {
         if let css, let st = css.resolve([hook]) {
             content.modifier(PhBox(style: st, fallback: PhFallback(
                 fill: Theme.bubbleTheirs, radius: Theme.bubbleRadius, continuous: false, padH: Theme.pad, padV: Theme.pad,
-                minWidth: 160, alignment: .leading)))
+                minWidth: 160, alignment: .leading), hooks: [hook]))
         } else {
             content
                 .padding(Theme.pad)

@@ -20,11 +20,22 @@ private struct PhSkinKey: EnvironmentKey {
     static let defaultValue: CssCompiled? = nil
 }
 
+private struct PhRasterEnvKey: EnvironmentKey {
+    static let defaultValue: CssRasterSet? = nil
+}
+
 extension EnvironmentValues {
     /// 这一页用的美化 CSS 读出来的样子。nil 为没有美化（或总开关关着），各处照原样画
     var phSkin: CssCompiled? {
         get { self[PhSkinKey.self] }
         set { self[PhSkinKey.self] = newValue }
+    }
+
+    /// 这一页用的美化里格子表达不了、请 WebKit 画成图的那几块（第二步，`CssRaster`）。
+    /// nil 为没有画过（或没有美化），各处照第一步的格子画
+    var phRaster: CssRasterSet? {
+        get { self[PhRasterEnvKey.self] }
+        set { self[PhRasterEnvKey.self] = newValue }
     }
 }
 
@@ -363,16 +374,30 @@ struct CssBoxShape: InsettableShape {
 // MARK: - 画一个盒子
 
 /// 照 CSS 画一个盒子：文字样式、内距、尺寸、背景、阴影、边框、外框线、透明度、变换、外边距。
-/// 只在这个钩子确实有样式时用；没有样式的地方不要经过它
+/// 只在这个钩子确实有样式时用；没有样式的地方不要经过它。
+///
+/// 第二步：传了 hooks 且这一页有画好的图（`\.phRaster`）时，整块背景（底、边框、阴影）换成那张图按九宫格拉伸，
+/// ::before / ::after 画成的装饰按各自的位置贴上（z-index 负的贴在底下）。文字样式、内距、尺寸照第一步。
+/// 没传 hooks、没有图时与第一步一个像素都不差
 struct PhBox: ViewModifier {
     let style: CssStyle
     var fallback = PhFallback()
+    /// 这一块挂的钩子（基础的在前，同 `CssCompiled.resolve`）与此刻的状态：找画好的图用。空为不找
+    var hooks: [CssHook] = []
+    var state: CssState = .normal
+    /// 整块背景用不用画好的图（生成器定下了底色、圆角的气泡不用：生成器赢）
+    var rasterBox = true
+    /// 伪元素的装饰在这里贴不贴（时间分隔行把它们排在字的上下，由调用的一边自己画）
+    var rasterDecor = true
+    @Environment(\.phRaster) private var raster
 
     func body(content: Content) -> some View {
         if style.hidden == true {
             EmptyView()
         } else {
             let shape = CssBoxShape(style, fallback: fallback)
+            let box = rasterBox ? CssRasterDraw.pick(raster, hooks, state: state, kind: .box) : nil
+            let decors = rasterDecor ? CssRasterDraw.decors(raster, hooks, state: state) : []
             content
                 .modifier(PhTextLook(style: style, fallback: fallback))
                 .padding(insets)
@@ -380,8 +405,23 @@ struct PhBox: ViewModifier {
                 .frame(minWidth: style.minWidth.map { CGFloat($0) } ?? fallback.minWidth,
                        minHeight: style.minHeight.map { CGFloat($0) } ?? fallback.minHeight,
                        alignment: fallback.alignment)
-                .background { PhBackground(style: style, fallback: fallback, shape: shape) }
-                .overlay { PhEdges(style: style, fallback: fallback, shape: shape) }
+                .background {
+                    if let box {
+                        // 图还没读出来（或读不到）时照第一步画，不先空一下
+                        CssRasterView(image: box) {
+                            PhBackground(style: style, fallback: fallback, shape: shape)
+                                .overlay { PhEdges(style: style, fallback: fallback, shape: shape) }
+                        }
+                    } else {
+                        PhBackground(style: style, fallback: fallback, shape: shape)
+                    }
+                }
+                .modifier(PhDecors(images: decors.filter(\.below), below: true))
+                .overlay {
+                    // 画好的图里已经有边框、内阴影
+                    if box == nil { PhEdges(style: style, fallback: fallback, shape: shape) }
+                }
+                .modifier(PhDecors(images: decors.filter { !$0.below }, below: false))
                 .opacity(min(1, max(0, style.opacity ?? 1)))
                 .modifier(PhTransform(t: style.transform))
                 .padding(style.margin.map(CssPaint.insets) ?? EdgeInsets())
@@ -636,7 +676,7 @@ private struct PhHook: ViewModifier {
 
     func body(content: Content) -> some View {
         if let skin, skin.has(hooks), let st = skin.resolve(hooks, state) {
-            content.modifier(PhBox(style: st, fallback: fallback))
+            content.modifier(PhBox(style: st, fallback: fallback, hooks: hooks, state: state))
         } else {
             content
         }
@@ -677,7 +717,8 @@ private struct PhButtonBody<Label: View>: View {
     var body: some View {
         let st = skin?.resolve(hooks, pressed ? .pressed : .normal) ?? CssStyle()
         label
-            .modifier(PhBox(style: st, fallback: fallback))
+            // 按下时找 :active 画成的那张，没有就用平时那张
+            .modifier(PhBox(style: st, fallback: fallback, hooks: hooks, state: pressed ? .pressed : .normal))
             // CSS 没写按下的样子时，照 .plain 的习惯淡一点，让人知道按到了
             .opacity(pressed && !hooks.contains { skin?.style($0, .pressed) != nil } ? 0.6 : 1)
             .contentShape(Rectangle())
@@ -693,7 +734,7 @@ struct PhPadded: ViewModifier {
 
     func body(content: Content) -> some View {
         if let skin, skin.has(hooks), let st = skin.resolve(hooks) {
-            content.modifier(PhBox(style: st, fallback: PhFallback(padH: padH, padV: padV)))
+            content.modifier(PhBox(style: st, fallback: PhFallback(padH: padH, padV: padV), hooks: hooks))
         } else {
             content.padding(.horizontal, padH).padding(.vertical, padV)
         }
@@ -761,6 +802,272 @@ struct PhPseudoText: View {
                 .modifier(PhBox(style: style, fallback: PhFallback(fg: color, fontSize: size)))
         } else {
             Text(text).font(.system(size: size)).foregroundStyle(color)
+        }
+    }
+}
+
+// MARK: - 第二步：贴画好的图
+
+/// 找图、摆图的纯计算（测试直接调这些）
+enum CssRasterDraw {
+    /// 按什么次序找一块图：先找这一种状态，没有再找平时的；同一状态里先找「基础钩子 + 具体一边」的变体
+    /// （气泡挂着 bubble 与 bubble-mine：hook bubble、variant bubble-mine），再按钩子从具体到基础各找一次
+    static func candidates(_ hooks: [CssHook], state: CssState = .normal, part: CssPart = .main) -> [CssRasterKey] {
+        guard let base = hooks.first else { return [] }
+        var states = [state]
+        if state != .normal { states.append(.normal) }
+        var out: [CssRasterKey] = []
+        for st in states {
+            for v in hooks.dropFirst().reversed() where v != base {
+                out.append(CssRasterKey(hook: base, state: st.rawValue, part: part.rawValue, variant: v))
+            }
+            for h in hooks.reversed() {
+                out.append(CssRasterKey(hook: h, state: st.rawValue, part: part.rawValue))
+            }
+        }
+        var seen = Set<CssRasterKey>()
+        return out.filter { seen.insert($0).inserted }
+    }
+
+    /// 这几个钩子在这一种状态、这几个部位上画好的某一种图。没有为 nil
+    static func pick(_ set: CssRasterSet?, _ hooks: [CssHook], state: CssState = .normal,
+                     parts: [CssPart] = [.main], kind: CssRasterImage.Kind) -> CssRasterImage? {
+        guard let set, !set.images.isEmpty, !hooks.isEmpty else { return nil }
+        for p in parts {
+            for k in candidates(hooks, state: state, part: p) {
+                if let img = set.images[CssRaster.id(k)], img.kind == kind, !img.imageId.isEmpty { return img }
+            }
+        }
+        return nil
+    }
+
+    /// ::before、::after 画成的装饰（先 before 后 after：after 画在上面，同 CSS）
+    static func decors(_ set: CssRasterSet?, _ hooks: [CssHook], state: CssState = .normal) -> [CssRasterImage] {
+        guard set != nil, !hooks.isEmpty else { return [] }
+        return [CssPart.before, .after].compactMap { pick(set, hooks, state: state, parts: [$0], kind: .decor) }
+    }
+
+    /// 换掉图标的那一张（`.ph-x svg { display: none }` 加伪元素贴图）
+    static func icon(_ set: CssRasterSet?, _ hooks: [CssHook]) -> CssRasterImage? {
+        pick(set, hooks, parts: [.main, .before, .after], kind: .icon)
+    }
+
+    /// 装饰对齐元素的哪个角、哪条边。认不出的按左上
+    static func alignment(_ anchor: String) -> Alignment {
+        switch anchor.lowercased() {
+        case "topleft": return .topLeading
+        case "topright": return .topTrailing
+        case "bottomleft": return .bottomLeading
+        case "bottomright": return .bottomTrailing
+        case "top": return .top
+        case "bottom": return .bottom
+        case "left": return .leading
+        case "right": return .trailing
+        case "center": return .center
+        default: return .topLeading
+        }
+    }
+
+    /// 只看左右：贴在顶上那一条（消息列表的 ::before）用
+    static func horizontal(_ anchor: String) -> Alignment {
+        let a = anchor.lowercased()
+        if a.hasSuffix("left") { return .leading }
+        if a.hasSuffix("right") { return .trailing }
+        return .center
+    }
+
+    /// 从对齐的那个角再挪多少（屏幕坐标，右、下为正；CssRasterPlan.placement 的约定）。
+    /// 随元素拉伸的那一边由 `stretchInsets` 定位，不再挪
+    static func offset(_ img: CssRasterImage) -> CGSize {
+        CGSize(width: img.stretchX ? 0 : fin(img.dx), height: img.stretchY ? 0 : fin(img.dy))
+    }
+
+    private static func fin(_ v: Double) -> CGFloat { v.isFinite ? CGFloat(v) : 0 }
+
+    /// 随元素拉伸的装饰离元素四边的距离（负为伸出元素之外）：左 dx、右 refWidth - dx - width，上 dy、下 refHeight - dy - height。
+    /// 参考尺寸为 0（高度由内容撑开、或旧数据）时两边按对称算。不拉伸的那一边为 0
+    static func stretchInsets(_ img: CssRasterImage) -> EdgeInsets {
+        var e = EdgeInsets()
+        if img.stretchX {
+            let l = fin(img.dx)
+            e.leading = l
+            e.trailing = img.refWidth > 0 ? fin(img.refWidth - img.dx - img.width) : l
+        }
+        if img.stretchY {
+            let t = fin(img.dy)
+            e.top = t
+            e.bottom = img.refHeight > 0 ? fin(img.refHeight - img.dy - img.height) : t
+        }
+        return e
+    }
+
+    /// box 图伸出元素四边多少（正为往外）：图的左上角在元素的 (dx, dy)，溢出时为负；
+    /// 左 -dx、上 -dy、右 width - refWidth + dx、下 height - refHeight + dy。
+    /// 参考尺寸为 0（高度由内容撑开、或旧数据）时那一方向按对称算（下同上、右同左）
+    static func boxOutset(_ img: CssRasterImage) -> EdgeInsets {
+        let left = -fin(img.dx), top = -fin(img.dy)
+        let right = img.refWidth > 0 ? fin(img.width - img.refWidth + img.dx) : left
+        let bottom = img.refHeight > 0 ? fin(img.height - img.refHeight + img.dy) : top
+        return EdgeInsets(top: top, leading: left, bottom: bottom, trailing: right)
+    }
+
+    /// 九宫格四边：负数、非数按 0；同一方向两边加起来超过图的边长时按比例缩，中间至少留 1 点拉伸
+    static func caps(_ img: CssRasterImage) -> EdgeInsets {
+        func c(_ v: Double) -> Double { v.isFinite ? max(0, v) : 0 }
+        let (t, b) = fit(c(img.capTop), c(img.capBottom), c(img.height))
+        let (l, r) = fit(c(img.capLeft), c(img.capRight), c(img.width))
+        return EdgeInsets(top: CGFloat(t), leading: CGFloat(l), bottom: CGFloat(b), trailing: CGFloat(r))
+    }
+
+    static func fit(_ a: Double, _ b: Double, _ total: Double) -> (Double, Double) {
+        let room = max(0, total - 1)
+        let sum = a + b
+        guard sum > room, sum > 0 else { return (a, b) }
+        let k = room / sum
+        return (a * k, b * k)
+    }
+
+    /// 一块图的点尺寸（非数、负数为 0）
+    static func size(_ img: CssRasterImage) -> CGSize {
+        func c(_ v: Double) -> CGFloat { v.isFinite ? CGFloat(max(0, v)) : 0 }
+        return CGSize(width: c(img.width), height: c(img.height))
+    }
+
+    /// 读图时解码到多大：按三倍屏算，图本身更小时按图本身（缩略图不放大）
+    static func maxPixel(_ img: CssRasterImage) -> CGFloat {
+        let s = size(img)
+        return max(1, (max(s.width, s.height) * 3).rounded(.up))
+    }
+
+    /// 解出来的图按画图时的点尺寸定比例：九宫格的四边按点算
+    static func pointImage(_ raw: UIImage, _ img: CssRasterImage) -> UIImage {
+        let w = size(img).width
+        guard let cg = raw.cgImage, w > 0 else { return raw }
+        let scale = CGFloat(cg.width) / w
+        guard scale.isFinite, scale > 0 else { return raw }
+        return UIImage(cgImage: cg, scale: scale, orientation: .up)
+    }
+
+    static func cached(_ img: CssRasterImage) -> UIImage? {
+        Images.cached(img.imageId, maxPixel: maxPixel(img)).map { pointImage($0, img) }
+    }
+
+    static func load(_ img: CssRasterImage) async -> UIImage? {
+        await Images.load(img.imageId, maxPixel: maxPixel(img)).map { pointImage($0, img) }
+    }
+}
+
+/// 一张画好的图。box 按九宫格拉伸，盖住给它的大小再往外伸出阴影、外框溢出的那一圈（`boxOutset`）；
+/// decor、icon 整张缩放到给它的大小（调用的一边定 frame）。图还没读出来、或读不到时画 fallback（不外扩）
+struct CssRasterView<Fallback: View>: View {
+    let image: CssRasterImage
+    let fallback: Fallback
+    @State private var ui: UIImage?
+
+    init(image: CssRasterImage, @ViewBuilder fallback: () -> Fallback) {
+        self.image = image
+        self.fallback = fallback()
+        _ui = State(initialValue: CssRasterDraw.cached(image))
+    }
+
+    var body: some View {
+        Group {
+            if let ui {
+                if image.kind == .box {
+                    let o = CssRasterDraw.boxOutset(image)
+                    Image(uiImage: ui).resizable(capInsets: CssRasterDraw.caps(image), resizingMode: .stretch)
+                        .padding(EdgeInsets(top: -o.top, leading: -o.leading, bottom: -o.bottom, trailing: -o.trailing))
+                } else {
+                    Image(uiImage: ui).resizable()
+                }
+            } else {
+                fallback
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+        .task(id: image.imageId) {
+            if let hit = CssRasterDraw.cached(image) { ui = hit; return }
+            ui = await CssRasterDraw.load(image)
+        }
+    }
+}
+
+extension CssRasterView where Fallback == EmptyView {
+    init(image: CssRasterImage) {
+        self.init(image: image) { EmptyView() }
+    }
+}
+
+/// 一块装饰按自己的大小摆在元素上：对齐 anchor 那个角，再挪 dx、dy；
+/// 随元素拉伸的那一边跟着元素伸缩，离元素两边的距离保持画图时的样子（`stretchInsets`，可为负）
+struct PhDecor: View {
+    let image: CssRasterImage
+
+    var body: some View {
+        let s = CssRasterDraw.size(image)
+        CssRasterView(image: image)
+            .frame(width: image.stretchX ? nil : s.width, height: image.stretchY ? nil : s.height)
+            .frame(maxWidth: image.stretchX ? .infinity : nil, maxHeight: image.stretchY ? .infinity : nil)
+            .padding(CssRasterDraw.stretchInsets(image))
+            .offset(CssRasterDraw.offset(image))
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: CssRasterDraw.alignment(image.anchor))
+            .allowsHitTesting(false)
+    }
+}
+
+/// 装饰排在字的上下（时间分隔行的 ::before / ::after），不叠在元素上。横向拉伸的保持左右两边的距离
+struct PhFlowDecor: View {
+    let image: CssRasterImage
+
+    var body: some View {
+        let s = CssRasterDraw.size(image)
+        let e = CssRasterDraw.stretchInsets(image)
+        CssRasterView(image: image)
+            .frame(width: image.stretchX ? nil : s.width, height: s.height)
+            .frame(maxWidth: image.stretchX ? .infinity : nil)
+            .padding(.leading, e.leading)
+            .padding(.trailing, e.trailing)
+    }
+}
+
+/// 一组装饰：below 的贴在元素底下（背景之下），其余盖在上面。超出元素的部分照样画（气泡的小尾巴），这里不裁。
+/// 一张都没有时原样
+private struct PhDecors: ViewModifier {
+    let images: [CssRasterImage]
+    let below: Bool
+
+    func body(content: Content) -> some View {
+        if images.isEmpty {
+            content
+        } else if below {
+            content.background {
+                ZStack { ForEach(Array(images.enumerated()), id: \.offset) { _, img in PhDecor(image: img) } }
+            }
+        } else {
+            content.overlay {
+                ZStack { ForEach(Array(images.enumerated()), id: \.offset) { _, img in PhDecor(image: img) } }
+            }
+        }
+    }
+}
+
+/// 消息列表（.ph-chat-body）的 ::before 画成的那一条：钉在顶栏下面，不随消息滚动（CSS 的 position: sticky 的近似）。
+/// 没有图时原样
+struct PhStickyTop: ViewModifier {
+    let image: CssRasterImage?
+    var margin: CssEdges?
+
+    func body(content: Content) -> some View {
+        if let image {
+            content.safeAreaInset(edge: .top, spacing: 0) {
+                PhFlowDecor(image: image)
+                    .frame(maxWidth: .infinity, alignment: CssRasterDraw.horizontal(image.anchor))
+                    .padding(margin.map(CssPaint.insets) ?? EdgeInsets())
+                    .allowsHitTesting(false)
+            }
+        } else {
+            content
         }
     }
 }

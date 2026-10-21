@@ -51,6 +51,12 @@ struct CssRasterImage: Equatable, Sendable, Codable {
     /// decor 是否盖住整个元素（left:0 right:0 这类），盖住时宽度随元素拉伸
     var stretchX = false
     var stretchY = false
+    /// 画图时元素本身的参考大小（点）。高度由内容撑开的为 0。
+    /// box：图盖住的是元素加上溢出的阴影、外框，dx / dy 为图的左上角相对元素左上角（溢出时为负），
+    ///   四边溢出 = 左 -dx、上 -dy、右 width - refWidth + dx、下 height - refHeight + dy；九宫格的 cap 已含溢出。
+    /// decor 的 stretchX / stretchY：左（上）边距为 dx（dy），右（下）边距为 refWidth - dx - width（refHeight - dy - height），随元素拉伸时保持这两个边距
+    var refWidth: Double = 0
+    var refHeight: Double = 0
 }
 
 /// 一份美化画出来的全部图片。存在 skins 数据域那一行的 `nativeRaster` 字段里（网页版不认这个字段，写回时原样保留）

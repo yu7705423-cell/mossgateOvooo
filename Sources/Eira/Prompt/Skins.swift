@@ -460,7 +460,24 @@ enum Skins {
         let r = Row.new(prefix: "sk", fields)
         try Database.shared.put(collection, r)
         NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)
+        // 格子表达不了的部分在后台画成图；导入这一刻顺带下载 CSS 里的 https 图片（之后不再联网）
+        if !p.css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            let id = r.id
+            Task { @MainActor in await CssRasterizer.ensure(skinId: id, fetchRemote: true) }
+        }
         return r
+    }
+
+    // MARK: - 画成图片的部分（CssRasterizer，CssRaster.swift）
+
+    /// 这一份存着的画好的图（nativeRaster 字段）。current 为 true 时只认按当前 CSS、当前画图引擎画的那一份，过期的当没有
+    static func raster(_ row: Row?, current: Bool = true) -> CssRasterSet? {
+        guard let row, let v = row["nativeRaster"], v.object != nil, let data = try? v.encoded(),
+              let set = try? JSONDecoder().decode(CssRasterSet.self, from: data) else { return nil }
+        if current {
+            guard set.engine == CssRasterPlan.engine, set.cssHash == CssRasterPlan.hash(row.string("css")) else { return nil }
+        }
+        return set
     }
 }
 

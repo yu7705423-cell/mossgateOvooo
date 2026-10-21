@@ -98,8 +98,9 @@ struct SkinPageView: View {
             Section {
                 Button { picking = true } label: { Label("从文件导入", systemImage: "doc") }
                 NavigationLink { SkinImportView(chatId: chatId) } label: { Label("粘贴导入", systemImage: "doc.on.clipboard") }
+                NavigationLink { SkinImportView(chatId: chatId, mode: .css) } label: { Label("粘贴 CSS", systemImage: "chevron.left.forwardslash.chevron.right") }
             } header: { Text("导入美化包") } footer: {
-                HelpNote("读取网页版导出的美化包：JSON、TXT、DOCX 文件，或复制的一段文字（连同 BEGIN 与 END 两行标记）。导入前列出自定义 CSS 的还原情况；导入后新建一份并挂在这段会话上，不覆盖现有的美化。", title: "导入美化包")
+                HelpNote("读取网页版导出的美化包：JSON、TXT、DOCX 文件，或复制的一段文字（连同 BEGIN 与 END 两行标记）。也可以直接粘贴一段 CSS，作为一份只含自定义 CSS 的美化。导入前列出自定义 CSS 的还原情况；导入后新建一份并挂在这段会话上，不覆盖现有的美化。", title: "导入美化包")
             }
             ShowSection()
         }
@@ -264,19 +265,35 @@ struct SkinEditView: View {
 }
 
 /// 导入一个美化包之前的确认页（网页版 SkinPage 的导入确认，加上自定义 CSS 的还原情况）。
-/// 没带包进来时先粘贴一段文字再读。确认后新建一份（重名加后缀，不覆盖）并挂在这段会话上
+/// 没带包进来时先粘贴一段文字再读：美化包（标记包着的一段或 JSON），或直接一段 CSS（在内存里包成只有 CSS 的一份）。
+/// 确认后新建一份（重名加后缀，不覆盖）并挂在这段会话上，随后在后台把格子表达不了的部分画成图（含下载 CSS 里引用的图片）
 struct SkinImportView: View {
+    enum Mode: String, CaseIterable { case pack, css }
+
     let chatId: String
     var onDone: (() -> Void)?
     @State private var pack: Skins.Pack?
+    @State private var mode: Mode
     @State private var text = ""
+    @State private var cssName = ""
     @State private var problem: String?
     @Environment(\.dismiss) private var dismiss
 
-    init(chatId: String, pack: Skins.Pack? = nil, onDone: (() -> Void)? = nil) {
+    init(chatId: String, pack: Skins.Pack? = nil, mode: Mode = .pack, onDone: (() -> Void)? = nil) {
         self.chatId = chatId
         self.onDone = onDone
         _pack = State(initialValue: pack)
+        _mode = State(initialValue: mode)
+    }
+
+    /// 粘贴的一段 CSS 包成一份美化：名称不填时为「自定义 CSS」，作用于单段会话
+    static func cssPack(name: String, css: String) -> Skins.Pack {
+        var p = Skins.Pack()
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        p.name = n.isEmpty ? "自定义 CSS" : String(n.prefix(80))
+        p.scope = ["chat"]
+        p.css = css
+        return p
     }
 
     var body: some View {
@@ -291,7 +308,7 @@ struct SkinImportView: View {
                 let remote = Skins.remoteRefs(pack.css)
                 if remote > 0 {
                     Section {
-                        Text("该美化引用了 \(remote) 处网络地址。原生版目前不显示美化中的图片，不向这些地址发起请求。")
+                        Text("导入时下载 \(remote) 张网络图片存到本机，之后不再联网。")
                             .font(.footnote).foregroundStyle(Theme.text2)
                     }
                 }
@@ -307,22 +324,44 @@ struct SkinImportView: View {
                 }
             } else {
                 Section {
+                    Picker("内容", selection: $mode) {
+                        Text("美化包").tag(Mode.pack)
+                        Text("粘贴 CSS").tag(Mode.css)
+                    }
+                    .pickerStyle(.segmented)
+                }
+                if mode == .css {
+                    Section {
+                        TextField("自定义 CSS", text: $cssName)
+                    } header: { Text("名称") }
+                }
+                Section {
                     TextEditor(text: $text)
                         .font(.system(size: 13, design: .monospaced))
+                        .autocorrectionDisabled()
+                        .textInputAutocapitalization(.never)
                         .frame(minHeight: 220)
-                } header: { Text("美化包内容") } footer: {
-                    HelpNote("粘贴网页版「复制为文字」得到的一段，或 JSON 原文。标记之外的说明文字不影响读取。", title: "粘贴导入")
+                } header: { Text(mode == .css ? "CSS" : "美化包内容") } footer: {
+                    if mode == .css {
+                        HelpNote("粘贴按网页版美化契约写的 CSS（ph- 开头的类名与 --ph- 开头的变量）。读取后新建一份只含这段 CSS 的美化，作用于单段会话；名称不填时为「自定义 CSS」。", title: "粘贴 CSS")
+                    } else {
+                        HelpNote("粘贴网页版「复制为文字」得到的一段，或 JSON 原文。标记之外的说明文字不影响读取。", title: "粘贴导入")
+                    }
                 }
                 Section {
                     Button("读取") {
-                        do { pack = try Skins.parsePack(text); problem = nil }
-                        catch { problem = error.localizedDescription }
+                        if mode == .css {
+                            pack = Self.cssPack(name: cssName, css: text); problem = nil
+                        } else {
+                            do { pack = try Skins.parsePack(text); problem = nil }
+                            catch { problem = error.localizedDescription }
+                        }
                     }
                     .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
         }
-        .navigationTitle(pack == nil ? "粘贴导入" : "导入美化包")
+        .navigationTitle(pack == nil ? (mode == .css ? "粘贴 CSS" : "粘贴导入") : "导入美化包")
         .navigationBarTitleDisplayMode(.inline)
     }
 
@@ -331,6 +370,7 @@ struct SkinImportView: View {
             let r = try Skins.install(p)
             try Skins.attach(chatId, r.id)
             problem = nil
+            // 格子表达不了的部分由 Skins.install 交给画图的一边在后台画（顺带下载 CSS 里引用的网络图片），这里不再请
             onDone?()
             dismiss()
         } catch {
@@ -339,14 +379,22 @@ struct SkinImportView: View {
     }
 }
 
-/// 一份美化的自定义 CSS 在原生版里的还原情况（美化详情页「查看还原情况」）
+/// 一份美化的自定义 CSS 在原生版里的还原情况（美化详情页「查看还原情况」）：
+/// 读成格子的逐条情况，以及格子表达不了、画成图的那几块（画了几张、哪几块没画成与原因、重新绘制）
 struct SkinCssReportView: View {
     let id: String
+    @State private var tick = 0
+    @State private var drawing = false
+    @State private var problem: String?
+
+    private var row: Row? { _ = tick; return Skins.get(id) }
 
     var body: some View {
         Form {
-            if let row = Skins.get(id) {
+            if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            if let row {
                 if let c = Skins.compiled(row) {
+                    rasterSection(row)
                     CssReportSections(report: c.report)
                 } else {
                     Text("这份美化没有自定义 CSS。").foregroundStyle(Theme.text3)
@@ -357,6 +405,72 @@ struct SkinCssReportView: View {
         }
         .navigationTitle("还原情况")
         .navigationBarTitleDisplayMode(.inline)
+        .onReceive(NotificationCenter.default.publisher(for: .eiraSkinChanged)) { _ in tick += 1 }
+    }
+
+    @ViewBuilder private func rasterSection(_ row: Row) -> some View {
+        let set = Skins.raster(row)
+        Section {
+            if drawing {
+                HStack {
+                    Text("正在绘制")
+                    Spacer()
+                    ProgressView()
+                }
+            } else if let set {
+                LabeledContent("已绘制", value: "\(set.images.count) 张")
+                if !set.remote.isEmpty {
+                    LabeledContent("已下载的网络图片", value: "\(set.remote.count) 张")
+                }
+                LabeledContent("未能绘制", value: "\(set.failures.count) 处")
+            } else {
+                Text("尚未绘制").foregroundStyle(Theme.text3)
+            }
+            Button("重新绘制") { redraw() }
+                .disabled(drawing)
+        } header: { Text("绘制成图片的部分") } footer: {
+            HelpNote("原生元素表达不了的纯视觉部分，例如图片背景、伪元素装饰、替换的图标，导入或打开会话时按 CSS 原样绘制成图片存到本机，之后只读图片。CSS 引用的网络图片在导入时下载一次，打开会话时不联网；「重新绘制」时补下载尚未下载的图片。CSS 改动后自动重新绘制；「重新绘制」按当前的 CSS 重新绘制全部图片。", title: "绘制成图片的部分")
+        }
+        if let set, !set.failures.isEmpty {
+            Section {
+                DisclosureGroup("未能绘制 \(set.failures.count) 处") {
+                    ForEach(set.failures.keys.sorted(), id: \.self) { k in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(k).font(.system(size: 13, design: .monospaced)).foregroundStyle(Theme.text)
+                            Text(set.failures[k] ?? "").font(.caption).foregroundStyle(Theme.text3)
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+        }
+    }
+
+    /// 重新绘制：先把这一份记着的 CSS 哈希清掉（画图的一边据此认定已过期），再请它画。
+    /// 存着的图不删（原生版不删图，规约第 20 条），画好之后换成新的
+    private func redraw() {
+        do {
+            try Skins.update(id) { r in
+                if var o = r["nativeRaster"]?.object {
+                    o["cssHash"] = .string("")
+                    r["nativeRaster"] = .object(o)
+                } else {
+                    r["nativeRaster"] = nil
+                }
+            }
+            problem = nil
+        } catch {
+            problem = "无法重新绘制：\(error.localizedDescription)"
+            return
+        }
+        drawing = true
+        let skinId = id
+        Task { @MainActor in
+            // 用户点的：网络图片已下载过的照用，没下载过的这时下载
+            await CssRasterizer.ensure(skinId: skinId, fetchRemote: true)
+            drawing = false
+            tick += 1
+        }
     }
 }
 
