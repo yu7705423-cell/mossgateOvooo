@@ -2,9 +2,11 @@ import Foundation
 
 // 网页版美化 CSS 读成原生样式（CssStyle.swift 里的格子）。
 //
-// 读法：去注释 → 切成规则（@media 深色、@keyframes、@font-face 记为跳过）→ 每条选择器对到一个钩子
-// （`.ph-bubble`、`.ph-send:active`、`.ph-bubble-mine::after`……）→ 声明按层叠（!important、特异度、先后）
-// 选出最后生效的一条 → 简写展开、var() 展开 → 读成 CssStyle。
+// 读法：去注释 → 切成规则（@font-face 记为跳过；@keyframes 读成关键帧；@media 深色另读一份）→ 每条选择器对到一个钩子
+// （`.ph-bubble`、`.ph-send:active`、`.ph-bubble-mine::after`……；`:where()`/`:is()` 的列表逐项展开；
+// :first-child、:last-child、:nth-child(odd)、`+` 连发这类结构写法读成派生钩子，见 CssStructural）→ 声明按层叠
+// （!important、特异度、先后）选出最后生效的一条 → 简写展开、var() 展开 → 读成 CssStyle。
+// 深色模式：媒体查询里的规则与变量另做一遍层叠，只留深色下与常规不同的那几项，放进 CssCompiled.dark / darkVars。
 // 每一条声明都在 CssReport 里记一笔：用上了、近似、跳过，各写原因（书面语，导入确认页照着列）。
 // 纯函数，不读文件、不联网。值的读法在 CssValues.swift。
 
@@ -83,7 +85,8 @@ extension CssSkin {
     ]
 
     /// 原生版另外认的钩子：一串里最后一条消息、最后一个气泡。
-    /// 由 `.ph-msg-mine:not(:has(~ .ph-msg-mine))` 与 `:last-child`、`:last-of-type` 读出
+    /// 由 `.ph-msg-mine:not(:has(~ .ph-msg-mine))` 与 `:last-child`、`:last-of-type` 读出。
+    /// 第三步起任何钩子都可以接结构后缀（CssStructural.suffixes），这一份只列从前就有的几个
     static let lastHooks: Set<String> = [
         "msg-last", "msg-mine-last", "msg-theirs-last", "bubble-last", "bubble-mine-last", "bubble-theirs-last",
     ]
@@ -136,6 +139,8 @@ struct CssCompiler {
         var spec: Int
         /// 选择器本身是近似读的，写给用户的原因
         var note: String?
+        /// 选择器本身带出来的标记，记进 CssStyle.raw（`.ph-col:has(.ph-quote-in) > .ph-quote` 记 whenQuoteIn）
+        var extraRaw: [String: String] = [:]
     }
 
     /// 层叠里的一条候选
@@ -154,6 +159,16 @@ struct CssCompiler {
         var important: Bool
         var order: Int
         var item: Int
+        /// 写在深色模式的媒体查询里
+        var dark = false
+    }
+
+    /// @keyframes 里的一条声明（只收 opacity 与 transform），等变量读完再读值
+    struct KFrame {
+        var offsets: [Double]
+        var prop: String
+        var value: String
+        var item: Int
     }
 
     struct RawDecl {
@@ -168,15 +183,27 @@ struct CssCompiler {
         var reason: String
     }
 
+    typealias Table = [CssKey: [String: Win]]
+
     var items: [CssReport.Item] = []
     var order = 0
     /// 变量：名字带 `--`
     var varDecls: [String: Win] = [:]
+    /// 深色模式的媒体查询里写的变量
+    var darkVarDecls: [String: Win] = [:]
     var pending: [Pending] = []
-    /// 展开成单项之后的层叠结果
-    var long: [CssKey: [String: Win]] = [:]
-    /// 原文属性名的层叠结果（写进 CssStyle.raw）
-    var raw: [CssKey: [String: Win]] = [:]
+    /// 正在读深色模式的媒体查询
+    var inDark = false
+    /// 正在读「减弱动态效果」的媒体查询
+    var inReducedMotion = false
+    /// 深色模式里记的账（原因前面加「深色模式：」）
+    var darkItems: Set<Int> = []
+    /// @keyframes 原文，按名字；同名的以后写的为准
+    var kfRaw: [String: [KFrame]] = [:]
+    /// @keyframes 读成的帧
+    var frames: [String: [CssKeyframe]] = [:]
+
+    static let darkPrefix = "深色模式："
 
     // MARK: 入口
 
@@ -189,24 +216,76 @@ struct CssCompiler {
             if let v = resolve(w.value, [name]) { vars[String(name.dropFirst(2))] = CssScan.trim(v) }
         }
 
-        for p in pending { apply(p) }
-
-        var styles: [CssKey: CssStyle] = [:]
         var marks: [Mark] = []
-        for key in Set(long.keys).union(raw.keys) {
-            let (st, m) = style(key)
+        buildFrames(&marks)
+
+        // 常规的一份
+        var long: Table = [:], raw: Table = [:]
+        for p in pending where !p.dark { applyTo(p, dark: false, &long, &raw, &marks) }
+        var styles: [CssKey: CssStyle] = [:]
+        for key in Self.sorted(Set(long.keys).union(raw.keys)) {
+            let (st, m) = style(key, long, raw)
             styles[key] = st
             marks += m
         }
+
+        // 深色的一份：深色规则，加上用到的变量在深色下换了值的常规规则；只留与常规不同的那几项
+        var dark: [CssKey: CssStyle] = [:]
+        var darkVars: [String: String] = [:]
+        if pending.contains(where: { $0.dark }) || !darkVarDecls.isEmpty {
+            var dLong: Table = [:], dRaw: Table = [:]
+            var ignored: [Mark] = []
+            for p in pending {
+                if p.dark {
+                    applyTo(p, dark: true, &dLong, &dRaw, &marks)
+                } else if !darkVarDecls.isEmpty, p.value.lowercased().contains("var("),
+                          resolve(p.value, [], dark: true) != resolve(p.value, []) {
+                    applyTo(p, dark: true, &dLong, &dRaw, &ignored)
+                }
+            }
+            dLong = Self.overlay(dLong, over: long)
+            dRaw = Self.overlay(dRaw, over: raw)
+            for key in Self.sorted(Set(dLong.keys).union(dRaw.keys)) {
+                let (st, m) = style(key, dLong, dRaw, under: long)
+                dark[key] = st
+                marks += m.filter { darkItems.contains($0.item) }
+            }
+            for name in Set(varDecls.keys).union(darkVarDecls.keys).sorted() {
+                guard let w = lookup(name, dark: true), let v = resolve(w.value, [name], dark: true) else { continue }
+                let bare = String(name.dropFirst(2))
+                let t = CssScan.trim(v)
+                if darkVarDecls[name] != nil || vars[bare] != t { darkVars[bare] = t }
+            }
+        }
+
         for m in marks { mark(m.item, m.kind, m.reason) }
-        return CssCompiled(styles: styles, vars: vars, report: CssReport(items: items))
+        return CssCompiled(styles: styles, vars: vars, report: CssReport(items: items), dark: dark, darkVars: darkVars)
+    }
+
+    /// 键排个序，结果与记账的先后每次都一样
+    static func sorted(_ keys: Set<CssKey>) -> [CssKey] {
+        keys.sorted { "\($0.hook)|\($0.state.rawValue)|\($0.part.rawValue)" < "\($1.hook)|\($1.state.rawValue)|\($1.part.rawValue)" }
+    }
+
+    /// 深色那一份里，常规那一份压得住的、或者本来就是同一条同一个值的，去掉
+    static func overlay(_ d: Table, over n: Table) -> Table {
+        var out: Table = [:]
+        for (key, props) in d {
+            for (p, w) in props {
+                if let o = n[key]?[p], beats(o, w) || (o.order == w.order && o.value == w.value) { continue }
+                out[key, default: [:]][p] = w
+            }
+        }
+        return out
     }
 
     // MARK: 记账
 
     @discardableResult
     mutating func add(_ kind: Kind, _ selector: String, _ prop: String, _ reason: String) -> Int {
-        items.append(CssReport.Item(kind: kind, selector: selector, property: prop, reason: reason))
+        items.append(CssReport.Item(kind: kind, selector: selector, property: prop,
+                                    reason: inDark ? Self.darkPrefix + reason : reason))
+        if inDark { darkItems.insert(items.count - 1) }
         return items.count - 1
     }
 
@@ -216,7 +295,7 @@ struct CssCompiler {
         let cur = items[i].kind
         if (kind == .skipped && cur != .skipped) || (kind == .approx && cur == .used) {
             items[i].kind = kind
-            items[i].reason = reason
+            items[i].reason = darkItems.contains(i) ? Self.darkPrefix + reason : reason
         }
     }
 
@@ -399,8 +478,23 @@ struct CssCompiler {
             if skip != nil {
                 parseBlock(a, from, to, skip: skip)
             } else if low.contains("prefers-color-scheme") {
-                parseBlock(a, from, to, skip: low.contains("dark") ? "深色模式的规则暂不读取" : nil)
-            } else if low.contains("prefers-reduced-motion") || Self.mediaApplies(low) {
+                let scheme = Self.schemeMedia(low)
+                if !scheme.applies {
+                    parseBlock(a, from, to, skip: "按屏幕尺寸等条件生效的规则原生版暂不读取")
+                } else if scheme.dark {
+                    let was = inDark
+                    inDark = true
+                    parseBlock(a, from, to, skip: nil)
+                    inDark = was
+                } else {
+                    parseBlock(a, from, to, skip: nil)
+                }
+            } else if low.contains("prefers-reduced-motion") {
+                let was = inReducedMotion
+                inReducedMotion = Self.flat(low).contains("prefers-reduced-motion:reduce")
+                parseBlock(a, from, to, skip: nil)
+                inReducedMotion = was
+            } else if Self.mediaApplies(low) {
                 parseBlock(a, from, to, skip: nil)
             } else {
                 parseBlock(a, from, to, skip: "按屏幕尺寸等条件生效的规则原生版暂不读取")
@@ -408,7 +502,7 @@ struct CssCompiler {
         case "@supports", "@layer":
             parseBlock(a, from, to, skip: skip)
         case "@keyframes", "@-webkit-keyframes":
-            add(.skipped, sel, "", "动画原生版暂不读取")
+            if let skip { add(.skipped, sel, "", skip) } else { keyframes(prelude, a, from, to) }
         case "@font-face":
             add(.skipped, sel, "", "自定义字体原生版暂不读取")
         default:
@@ -420,6 +514,131 @@ struct CssCompiler {
     static func mediaApplies(_ low: String) -> Bool {
         let rest = CssScan.words(String(low.dropFirst(6))).filter { !["only", "screen", "all", "and"].contains($0) }
         return rest.isEmpty
+    }
+
+    /// 带 prefers-color-scheme 的 @media：是不是深色，去掉这一条之后其余条件是不是都成立（`screen and` 之类）
+    static func schemeMedia(_ low: String) -> (dark: Bool, applies: Bool) {
+        let a = Array(low.unicodeScalars)
+        var rest: [S] = []
+        var dark = false
+        var i = 0
+        while i < a.count {
+            if a[i] == "(", let close = CssScan.matchParen(a, i) {
+                let group = CssScan.str(a[i...close])
+                if group.contains("prefers-color-scheme") {
+                    if group.contains("dark") { dark = true }
+                    rest.append(" ")
+                    i = close + 1
+                    continue
+                }
+            }
+            rest.append(a[i])
+            i += 1
+        }
+        return (dark, mediaApplies(CssScan.str(rest)))
+    }
+
+    // MARK: @keyframes
+
+    /// `@keyframes 名字 { from {…} 50% {…} to {…} }`。只收 opacity 与 transform，值等变量读完再读（buildFrames）
+    mutating func keyframes(_ prelude: String, _ a: [S], _ from: Int, _ to: Int) {
+        let label = Self.short(prelude)
+        let at = Self.atName(prelude)
+        let name = CssScan.unquote(CssScan.str(prelude.unicodeScalars.dropFirst(at.unicodeScalars.count)))
+        guard !name.isEmpty else {
+            add(.skipped, label, "", "动画没有名字，原生版不读取")
+            return
+        }
+        var out: [KFrame] = []
+        var i = from
+        while i < to {
+            while i < to, CssScan.isSpace(a[i]) { i += 1 }
+            guard i < to else { break }
+            var open = i
+            while open < to, a[open] != "{" { open += 1 }
+            guard open < to else {
+                let tail = CssScan.trim(CssScan.str(a[i..<to]))
+                if !tail.isEmpty { add(.skipped, label, "", "这一段写法不完整，原生版不认") }
+                break
+            }
+            let sels = CssScan.trim(CssScan.str(a[i..<open]))
+            let close = Self.matchBrace(a, open, to)
+            let body = CssScan.str(a[(open + 1)..<max(open + 1, min(close, to))])
+            i = close + 1
+            var offsets: [Double] = []
+            for s in CssScan.split(sels, on: ",") {
+                if let v = Self.frameOffset(s) { offsets.append(v) }
+                else { add(.skipped, label, "", "关键帧的位置 \(Self.short(s)) 原生版不认") }
+            }
+            for d in Self.declarations(body).decls {
+                if d.important {
+                    add(.skipped, label, d.prop, "关键帧里的 !important 不生效")
+                    continue
+                }
+                let prop = d.prop == "-webkit-transform" ? "transform" : d.prop
+                guard prop == "opacity" || prop == "transform" else {
+                    add(.skipped, label, d.prop, "动画里只认透明度与变换，这一项原生版不读取")
+                    continue
+                }
+                guard !offsets.isEmpty else {
+                    add(.skipped, label, d.prop, "关键帧的位置原生版不认")
+                    continue
+                }
+                let idx = add(.used, label, d.prop, "已读取")
+                out.append(KFrame(offsets: offsets, prop: prop, value: d.value, item: idx))
+            }
+        }
+        if let old = kfRaw[name] {
+            for f in old { mark(f.item, .skipped, "后面又写了同名的 @keyframes，以后写的为准") }
+        }
+        kfRaw[name] = out
+    }
+
+    /// from、to、百分数，换成 0...1
+    static func frameOffset(_ s: String) -> Double? {
+        let t = CssScan.trim(s).lowercased()
+        if t == "from" { return 0 }
+        if t == "to" { return 1 }
+        guard let n = CssScan.number(t), n.unit == "%", n.value >= 0, n.value <= 100 else { return nil }
+        return n.value / 100
+    }
+
+    /// 关键帧的值读出来：同一位置写了几次的，后写的为准；按位置排好
+    mutating func buildFrames(_ marks: inout [Mark]) {
+        for name in kfRaw.keys.sorted() {
+            var byAt: [Double: CssKeyframe] = [:]
+            for f in kfRaw[name] ?? [] {
+                guard let v = resolve(f.value, []) else {
+                    marks.append(Mark(item: f.item, kind: .skipped, reason: "用到的变量没有定义"))
+                    continue
+                }
+                if f.prop == "opacity" {
+                    guard let o = CssVal.fraction(v) else {
+                        marks.append(Mark(item: f.item, kind: .skipped, reason: "这个值无法识别"))
+                        continue
+                    }
+                    for at in f.offsets {
+                        var k = byAt[at] ?? CssKeyframe(at: at, opacity: nil, transform: nil)
+                        k.opacity = min(1, max(0, o))
+                        byAt[at] = k
+                    }
+                } else {
+                    guard let t = CssVal.transform(v, CssValueContext()) else {
+                        marks.append(Mark(item: f.item, kind: .skipped, reason: "这个值无法识别"))
+                        continue
+                    }
+                    if t.approx {
+                        marks.append(Mark(item: f.item, kind: .approx, reason: "变换里有原生版不认的部分，按平移、旋转、缩放近似"))
+                    }
+                    for at in f.offsets {
+                        var k = byAt[at] ?? CssKeyframe(at: at, opacity: nil, transform: nil)
+                        k.transform = t.transform
+                        byAt[at] = k
+                    }
+                }
+            }
+            frames[name] = byAt.keys.sorted().compactMap { byAt[$0] }
+        }
     }
 
     // MARK: 切声明
@@ -487,11 +706,24 @@ struct CssCompiler {
         let (decls, nested) = Self.declarations(body)
         if nested { add(.skipped, Self.short(selector), "", "嵌套写法原生版不认") }
         for sel in CssScan.split(selector, on: ",") where !sel.isEmpty {
-            switch target(sel) {
-            case .skip(let reason):
-                add(.skipped, Self.short(sel), "", reason)
-            case .hit(let t):
-                for d in decls { declare(t, Self.short(sel), d) }
+            let label = Self.short(sel)
+            guard let comps = Self.parseSelector(sel) else {
+                add(.skipped, label, "", "这种选择器原生版不认")
+                continue
+            }
+            let spec = Self.spec(comps)
+            // :where()/:is() 里的列表逐项展开，特异度按原选择器算
+            for alt in Self.alternatives(comps) {
+                guard let alt else {
+                    add(.skipped, label, "", "这种选择器原生版不认")
+                    continue
+                }
+                switch target(alt, spec: spec) {
+                case .skip(let reason):
+                    add(.skipped, label, "", reason)
+                case .hit(let t):
+                    for d in decls { declare(t, label, d) }
+                }
             }
         }
     }
@@ -502,11 +734,17 @@ struct CssCompiler {
             let v = Self.varVerdict(d.prop)
             let idx = add(v.kind, sel, d.prop, v.reason)
             let w = Win(value: d.value, important: d.important, spec: 0, order: order, item: idx)
-            if let old = varDecls[d.prop], Self.beats(old, w) { return }
-            varDecls[d.prop] = w
+            if inDark {
+                if let old = darkVarDecls[d.prop], Self.beats(old, w) { return }
+                darkVarDecls[d.prop] = w
+            } else {
+                if let old = varDecls[d.prop], Self.beats(old, w) { return }
+                varDecls[d.prop] = w
+            }
             return
         }
         var prop = d.prop
+        if prop.hasPrefix("-webkit-animation") { prop = String(prop.dropFirst(8)) }
         var v: (kind: Kind, reason: String, keep: Bool)
         switch t.mode {
         case .root:
@@ -531,13 +769,18 @@ struct CssCompiler {
                 return
             }
         case .normal:
+            if inReducedMotion, prop.hasPrefix("animation") {
+                add(.skipped, sel, d.prop, "减弱动态效果时的规则不读取，原生版按系统的减弱动态效果设置处理")
+                return
+            }
             let r = Self.verdict(prop, d.value, t.key.part)
             v = (kind: r.0, reason: r.1, keep: r.2)
             if v.kind == .used, let note = t.note { v = (kind: .approx, reason: note, keep: v.keep) }
         }
         let idx = add(v.kind, sel, d.prop, v.reason)
         guard v.keep else { return }
-        pending.append(Pending(target: t, prop: prop, value: d.value, important: d.important, order: order, item: idx))
+        pending.append(Pending(target: t, prop: prop, value: d.value, important: d.important, order: order, item: idx,
+                               dark: inDark))
     }
 
     /// 变量记成什么
@@ -624,6 +867,15 @@ struct CssCompiler {
 
     static let placeProps: Set<String> = ["top", "left", "right", "bottom", "inset", "z-index"]
 
+    /// animation 的单项（简写展开成这几项）
+    static let animationLonghands = [
+        "animation-name", "animation-duration", "animation-timing-function", "animation-delay",
+        "animation-iteration-count", "animation-direction", "animation-fill-mode",
+    ]
+
+    /// 读成 CssStyle.animations 的（-webkit- 前缀先去掉）
+    static let animationProps: Set<String> = Set(animationLonghands).union(["animation"])
+
     /// 一条声明记成什么：kind、原因、要不要进层叠
     static func verdict(_ prop: String, _ value: String, _ part: CssPart) -> (Kind, String, Bool) {
         let low = CssScan.trim(value).lowercased()
@@ -651,9 +903,10 @@ struct CssCompiler {
         if layoutProps.contains(prop) || prop.hasPrefix("grid-") {
             return (.skipped, "原生版的版式不随这一项改变", false)
         }
-        if prop.hasPrefix("animation") || prop.hasPrefix("transition") || prop.hasPrefix("-webkit-animation")
-            || prop.hasPrefix("-webkit-transition") {
-            return (.skipped, "动画与过渡原生版暂不读取", false)
+        if animationProps.contains(prop) { return (.used, "已读取", true) }
+        if prop == "animation-play-state" { return (.skipped, "动画的播放状态原生版不读取", false) }
+        if prop.hasPrefix("transition") || prop.hasPrefix("-webkit-transition") {
+            return (.skipped, "原生版不按这一项做过渡动画", false)
         }
         return (.skipped, "原生版不认这一项", false)
     }
@@ -819,11 +1072,16 @@ struct CssCompiler {
     }
 
     struct Info {
+        /// 契约里的钩子（还没接结构后缀）
         var hook: String?
+        /// 结构写法读出的后缀（CssStructural.suffixes 之一）
+        var suffix: String?
         var state: CssState = .normal
         var part: CssPart = .main
         var tag: String?
         var note: String?
+        /// 带着 `:has(.ph-quote-in)`
+        var quoteIn = false
     }
 
     enum Analysis {
@@ -835,8 +1093,15 @@ struct CssCompiler {
     static let contextHooks: Set<String> = ["screen", "page", "chat", "chat-body", "html"]
     /// `.ph-X svg` 这类：X 里的图标
     static let iconTags: Set<String> = ["svg", "img", "path", "i", "use", "g", "circle", "rect", "image"]
-    /// 能读出「最后一条」的钩子
-    static let lastable: Set<String> = ["msg", "msg-mine", "msg-theirs", "bubble", "bubble-mine", "bubble-theirs"]
+    /// `A + A` 读成「连发」的钩子
+    static let contHooks: Set<String> = ["msg", "msg-mine", "msg-theirs"]
+    /// 气泡一家
+    static let bubbleHooks: Set<String> = ["bubble", "bubble-mine", "bubble-theirs"]
+    /// `.ph-X:not(.ph-Y)` 认得的几种：键是 "X|Y"，值是等价的钩子
+    static let negations: [String: String] = [
+        "msg|msg-mine": "msg-theirs", "msg|msg-theirs": "msg-mine",
+        "bubble|bubble-mine": "bubble-theirs", "bubble|bubble-theirs": "bubble-mine",
+    ]
 
     static func isRoot(_ c: Compound) -> Bool {
         !c.items.isEmpty && c.items.allSatisfy {
@@ -844,28 +1109,64 @@ struct CssCompiler {
         }
     }
 
-    /// `:not(:has(~ .ph-msg-mine))`：后面再没有同一种消息，即一串里的最后一条
-    static func isLastSibling(_ arg: String) -> Bool {
-        let flat = CssScan.str(arg.lowercased().unicodeScalars.filter { !CssScan.isSpace($0) })
-        return [":has(~.ph-msg-mine)", ":has(~.ph-msg-theirs)", ":has(~.ph-msg)"].contains(flat)
+    /// 小写、去掉空白，便于比对写法
+    static func flat(_ s: String) -> String {
+        CssScan.str(s.lowercased().unicodeScalars.filter { !CssScan.isSpace($0) })
     }
 
-    /// 一个复合选择器对到哪个钩子、哪种状态、哪个部位
-    func analyze(_ c: Compound) -> Analysis {
-        var expanded: [Simple] = []
-        for s in c.items {
-            if s.kind == .pclass, s.name == "is" || s.name == "where" || s.name == "matches", let arg = s.arg,
-               let inner = Self.parseSelector(arg), inner.count == 1,
-               inner[0].items.allSatisfy({ $0.kind == .cls }) {
-                expanded.append(contentsOf: inner[0].items)
-            } else {
-                expanded.append(s)
+    /// `:not(:has(~ .ph-msg-mine))`：后面再没有同一种消息，即一串里的最后一条
+    static func isLastSibling(_ arg: String) -> Bool {
+        [":has(~.ph-msg-mine)", ":has(~.ph-msg-theirs)", ":has(~.ph-msg)"].contains(flat(arg))
+    }
+
+    /// :nth-child() 的参数：只认奇数条与偶数条
+    static func nthSuffix(_ arg: String) -> String? {
+        switch flat(arg) {
+        case "odd", "2n+1", "2n-1": return "-odd"
+        case "even", "2n", "2n+0", "2n-0": return "-even"
+        default: return nil
+        }
+    }
+
+    /// `:not(.ph-x)` 里的钩子名；参数不是单独一个 `.ph-` 类名时为 nil
+    static func negatedHook(_ arg: String) -> String? {
+        guard let c = parseSelector(arg), c.count == 1, c[0].items.count == 1, c[0].items[0].kind == .cls,
+              c[0].items[0].name.hasPrefix("ph-") else { return nil }
+        return String(c[0].items[0].name.dropFirst(3))
+    }
+
+    /// `:where()`、`:is()` 里的列表逐项展开成几条选择器。展开不了的那一项为 nil
+    static func alternatives(_ comps: [Compound], depth: Int = 0) -> [[Compound]?] {
+        for (ci, c) in comps.enumerated() {
+            for (si, s) in c.items.enumerated()
+            where s.kind == .pclass && (s.name == "is" || s.name == "where" || s.name == "matches") {
+                guard let arg = s.arg, depth < 8 else { return [nil] }
+                var out: [[Compound]?] = []
+                for part in CssScan.split(arg, on: ",") {
+                    guard let inner = parseSelector(part), inner.count == 1 else {
+                        out.append(nil)
+                        continue
+                    }
+                    var next = comps
+                    var items = c.items
+                    items.replaceSubrange(si...si, with: inner[0].items)
+                    next[ci].items = items
+                    out += alternatives(next, depth: depth + 1)
+                    if out.count >= 64 { return out }
+                }
+                return out
             }
         }
+        return [comps]
+    }
+
+    /// 一个复合选择器对到哪个钩子、哪种状态、哪个部位、哪种结构位置
+    func analyze(_ c: Compound) -> Analysis {
         var info = Info()
         var hooks: [String] = []
-        var last = false
-        for s in expanded {
+        var negated: [String] = []
+        var suffixes: [String] = []
+        for s in c.items {
             switch s.kind {
             case .cls:
                 if s.name.hasPrefix("ph-") { hooks.append(String(s.name.dropFirst(3))) }
@@ -893,10 +1194,21 @@ struct CssCompiler {
                     info.state = .focused
                     info.note = "按输入框聚焦时处理"
                 case "hover": return .fail("触屏没有悬停状态")
-                case "last-child", "last-of-type": last = true
+                case "first-child", "first-of-type": suffixes.append("-first")
+                case "last-child", "last-of-type": suffixes.append("-last")
+                case "nth-child", "nth-of-type":
+                    guard let arg = s.arg, let sfx = Self.nthSuffix(arg) else {
+                        return .fail("这种 :nth-child 写法原生版不认，只认第奇数条与第偶数条")
+                    }
+                    suffixes.append(sfx)
                 case "not":
-                    guard let arg = s.arg, Self.isLastSibling(arg) else { return .fail("这种选择器原生版不认") }
-                    last = true
+                    guard let arg = s.arg else { return .fail("这种选择器原生版不认") }
+                    if Self.isLastSibling(arg) { suffixes.append("-last") }
+                    else if let n = Self.negatedHook(arg) { negated.append(n) }
+                    else { return .fail("这种选择器原生版不认") }
+                case "has":
+                    guard let arg = s.arg, Self.flat(arg) == ".ph-quote-in" else { return .fail("这种选择器原生版不认") }
+                    info.quoteIn = true
                 default:
                     return .fail("这种选择器原生版不认")
                 }
@@ -904,28 +1216,49 @@ struct CssCompiler {
         }
         var uniq: [String] = []
         for h in hooks where !uniq.contains(h) { uniq.append(h) }
-        let top = uniq.filter { h in !uniq.contains(where: { $0 != h && $0.hasPrefix(h + "-") }) }
+        var top = uniq.filter { h in !uniq.contains(where: { $0 != h && $0.hasPrefix(h + "-") }) }
         if top.count > 1 { info.note = "同时挂了几个钩子，按其中一个处理" }
-        if var h = top.last {
-            guard CssSkin.contractHooks.contains(h) else { return .fail("契约里没有 .ph-\(h)，原生版没有这个元素") }
-            if last {
-                guard Self.lastable.contains(h) else { return .fail("这种选择器原生版不认") }
-                h += "-last"
+        if !negated.isEmpty {
+            guard negated.count == 1, top.count == 1, let r = Self.negations[top[0] + "|" + negated[0]] else {
+                return .fail("这种选择器原生版不认")
             }
+            top = [r]
+        }
+        var sfx: [String] = []
+        for x in suffixes where !sfx.contains(x) { sfx.append(x) }
+        guard sfx.count <= 1 else { return .fail("几种位置条件写在一起，原生版不认") }
+        if let h = top.last {
+            guard CssSkin.contractHooks.contains(h) else { return .fail("契约里没有 .ph-\(h)，原生版没有这个元素") }
             info.hook = h
-        } else if last {
+            info.suffix = sfx.first
+        } else if !sfx.isEmpty || info.quoteIn {
             return .fail("这种选择器原生版不认")
         }
         return .ok(info)
     }
 
-    /// 一条选择器对到哪里
-    func target(_ sel: String) -> Hit {
-        guard let comps = Self.parseSelector(sel) else { return .skip("这种选择器原生版不认") }
-        if comps.contains(where: { $0.comb == "+" || $0.comb == "~" }) {
+    /// 一条选择器（已经切成复合选择器、:where() 已展开）对到哪里。spec 按原选择器算好传进来
+    func target(_ input: [Compound], spec: Int) -> Hit {
+        var comps = input
+        if comps.contains(where: { $0.comb == "~" }) {
             return .skip("按相邻元素选择的写法原生版不认")
         }
-        let spec = Self.spec(comps)
+        // `.ph-msg-mine + .ph-msg-mine`：紧跟在同一侧上一条之后（连发）
+        var cont = false
+        if comps.contains(where: { $0.comb == "+" }) {
+            let n = comps.count
+            guard n >= 2, comps[n - 1].comb == "+", !comps.dropLast().contains(where: { $0.comb == "+" }),
+                  case .ok(let prev) = analyze(comps[n - 2]), case .ok(let subj) = analyze(comps[n - 1]),
+                  let ph = prev.hook, Self.contHooks.contains(ph), ph == subj.hook,
+                  prev.suffix == nil, subj.suffix == nil, prev.state == .normal, prev.part == .main,
+                  prev.tag == nil, !prev.quoteIn else {
+                return .skip("按相邻元素选择的写法原生版不认")
+            }
+            cont = true
+            let prevComb = comps[n - 2].comb
+            comps.remove(at: n - 2)
+            comps[comps.count - 1].comb = prevComb
+        }
         let subject = comps[comps.count - 1]
         var ancestors = Array(comps.dropLast())
         if Self.isRoot(subject) {
@@ -955,21 +1288,45 @@ struct CssCompiler {
                 ancestors.removeLast()
             }
         }
-        guard let hook = info.hook else { return .skip("原生版没有这个元素") }
+        guard var base = info.hook, !info.quoteIn else { return .skip("原生版没有这个元素") }
+        var suffix = info.suffix
+        if cont { suffix = "-cont" }
         var note = info.note
+        var extraRaw: [String: String] = [:]
         for anc in ancestors where !Self.isRoot(anc) {
             switch analyze(anc) {
             case .fail(let reason):
                 return .skip(reason)
             case .ok(let a):
-                guard let h = a.hook, a.part == .main, a.state == .normal, !CssSkin.lastHooks.contains(h) else {
+                guard let h = a.hook, a.part == .main, a.state == .normal, a.suffix == nil else {
                     return .skip("这种选择器原生版不认")
                 }
+                if a.quoteIn {
+                    // 网页版契约写明的写法：气泡里带着引用时，把气泡外面那份引用藏起来
+                    guard h == "col", base == "quote", suffix == nil else { return .skip("这种选择器原生版不认") }
+                    extraRaw["whenQuoteIn"] = "1"
+                    note = "只在气泡里带引用时生效，原生版按近似处理"
+                    continue
+                }
                 if Self.contextHooks.contains(h) { continue }
+                if suffix != nil, Self.bubbleHooks.contains(base) {
+                    // 气泡都在 .ph-col 里：一轮里的最后一个气泡
+                    if h == "col" {
+                        if suffix == "-last" { suffix = "-tail" }
+                        continue
+                    }
+                    // 我方消息里的气泡就是我方气泡
+                    if base == "bubble", h == "msg-mine" || h == "msg-theirs" {
+                        base = h == "msg-mine" ? "bubble-mine" : "bubble-theirs"
+                        continue
+                    }
+                }
                 if note == nil { note = "只按最后一个元素处理，不区分它所在的位置" }
             }
         }
-        return .hit(Target(key: CssKey(hook: hook, state: info.state, part: info.part), mode: mode, spec: spec, note: note))
+        let hook = CssStructural.hook(base, suffix ?? "")
+        return .hit(Target(key: CssKey(hook: hook, state: info.state, part: info.part), mode: mode, spec: spec,
+                           note: note, extraRaw: extraRaw))
     }
 
     // MARK: var()
@@ -982,8 +1339,16 @@ struct CssCompiler {
         return i == 0 || !CssScan.isIdent(a[i - 1])
     }
 
-    /// 展开 var()。变量没定义又没有后备值、或者互相引用成环时返回 nil
-    func resolve(_ value: String, _ visiting: Set<String>, depth: Int = 0) -> String? {
+    /// 一个变量最后生效的声明。dark 为 true 时深色里写的也参加层叠
+    func lookup(_ name: String, dark: Bool) -> Win? {
+        let n = varDecls[name]
+        guard dark, let d = darkVarDecls[name] else { return n }
+        if let n, Self.beats(n, d) { return n }
+        return d
+    }
+
+    /// 展开 var()。变量没定义又没有后备值、或者互相引用成环时返回 nil。dark 为 true 时按深色下的变量展开
+    func resolve(_ value: String, _ visiting: Set<String>, dark: Bool = false, depth: Int = 0) -> String? {
         guard depth < 32 else { return nil }
         guard value.lowercased().contains("var(") else { return value }
         let a = Array(value.unicodeScalars)
@@ -1017,10 +1382,10 @@ struct CssCompiler {
                     }
                 }
                 var rep: String?
-                if let w = varDecls[name], !visiting.contains(name) {
-                    rep = resolve(w.value, visiting.union([name]), depth: depth + 1)
+                if let w = lookup(name, dark: dark), !visiting.contains(name) {
+                    rep = resolve(w.value, visiting.union([name]), dark: dark, depth: depth + 1)
                 }
-                if rep == nil, let fb = fallback { rep = resolve(fb, visiting, depth: depth + 1) }
+                if rep == nil, let fb = fallback { rep = resolve(fb, visiting, dark: dark, depth: depth + 1) }
                 guard let r = rep else { return nil }
                 out.append(contentsOf: r.unicodeScalars)
                 i = close + 1
@@ -1053,16 +1418,24 @@ struct CssCompiler {
 
     // MARK: 简写展开
 
-    mutating func apply(_ p: Pending) {
-        guard let value = resolve(p.value, []) else {
-            mark(p.item, .skipped, "用到的变量没有定义")
+    /// 一条声明展开 var()、展开简写，放进层叠表 long（单项）与 raw（原文属性名）。要改的账记进 marks
+    func applyTo(_ p: Pending, dark: Bool, _ long: inout Table, _ raw: inout Table, _ marks: inout [Mark]) {
+        guard let value = resolve(p.value, [], dark: dark) else {
+            marks.append(Mark(item: p.item, kind: .skipped, reason: "用到的变量没有定义"))
             return
         }
         let key = p.target.key
         let w = Win(value: value, important: p.important, spec: p.target.spec, order: p.order, item: p.item)
-        if p.target.mode == .normal { Self.put(&raw, key, p.prop, w) }
+        if p.target.mode == .normal {
+            Self.put(&raw, key, p.prop, w)
+            for (rp, rv) in p.target.extraRaw.sorted(by: { $0.key < $1.key }) {
+                var ew = w
+                ew.value = rv
+                Self.put(&raw, key, rp, ew)
+            }
+        }
         guard let longs = Self.expand(p.prop, value) else {
-            mark(p.item, .skipped, "这个值无法识别")
+            marks.append(Mark(item: p.item, kind: .skipped, reason: "这个值无法识别"))
             return
         }
         for (lp, lv) in longs {
@@ -1070,10 +1443,12 @@ struct CssCompiler {
             lw.value = lv
             Self.put(&long, key, lp, lw)
             if lp == "background-size" || lp == "background-position" {
-                if lv.contains(",") || lv.lowercased().contains("calc(") { mark(p.item, .approx, "第二步画成图片后还原") }
+                if lv.contains(",") || lv.lowercased().contains("calc(") {
+                    marks.append(Mark(item: p.item, kind: .approx, reason: "第二步画成图片后还原"))
+                }
             }
             if lp == "background-image", key.part != .main, lv.lowercased().contains("url(") {
-                mark(p.item, .approx, "第二步画成图片后还原")
+                marks.append(Mark(item: p.item, kind: .approx, reason: "第二步画成图片后还原"))
             }
         }
     }
@@ -1145,9 +1520,86 @@ struct CssCompiler {
             return [(prop, v.lowercased() == "none" ? "1" : "0")]
         case "-ph-icon-color":
             return [(prop, v)]
+        case "animation":
+            return expandAnimation(v)
+        case "animation-name", "animation-duration", "animation-timing-function", "animation-delay",
+             "animation-iteration-count", "animation-direction", "animation-fill-mode":
+            return [(prop, v)]
         default:
             return visualProps.contains(prop) ? [(prop, v)] : []
         }
+    }
+
+    static let timingWords: Set<String> = ["linear", "ease", "ease-in", "ease-out", "ease-in-out"]
+    static let directionWords: Set<String> = ["normal", "reverse", "alternate", "alternate-reverse"]
+    static let fillWords: Set<String> = ["none", "forwards", "backwards", "both"]
+
+    /// 缓动：关键字原样；cubic-bezier()、steps()、step-start、step-end 为 approx（原文记下，按 ease 近似）
+    static func timing(_ s: String) -> (value: String, approx: Bool)? {
+        let t = CssScan.trim(s)
+        let low = t.lowercased()
+        if timingWords.contains(low) { return (low, false) }
+        if low == "step-start" || low == "step-end" { return (low, true) }
+        if let f = CssScan.function(low), f.name == "cubic-bezier" || f.name == "steps" { return (t, true) }
+        return nil
+    }
+
+    /// 不带单位、不小于 0 的数字（动画次数）
+    static func isCount(_ s: String) -> Bool {
+        guard let n = CssScan.number(s) else { return false }
+        return n.unit.isEmpty && n.value >= 0
+    }
+
+    /// animation 简写：名字、时长、缓动、延迟、次数、方向、填充，可以有几段（逗号分开）。展开成各单项的列表
+    static func expandAnimation(_ v: String) -> [(String, String)]? {
+        var names: [String] = [], durs: [String] = [], timings: [String] = [], delays: [String] = []
+        var counts: [String] = [], dirs: [String] = [], fills: [String] = []
+        for layer in CssScan.split(v, on: ",") {
+            var name: String?, dur: String?, tim: String?, delay: String?, count: String?, dir: String?, fill: String?
+            for w in CssScan.words(layer) {
+                let lw = w.lowercased()
+                if CssVal.time(w) != nil {
+                    if dur == nil { dur = w } else if delay == nil { delay = w } else { return nil }
+                } else if timing(w) != nil {
+                    guard tim == nil else { return nil }
+                    tim = w
+                } else if lw == "infinite" || isCount(lw) {
+                    guard count == nil else { return nil }
+                    count = lw
+                } else if directionWords.contains(lw) {
+                    guard dir == nil else { return nil }
+                    dir = lw
+                } else if lw == "none", name == nil {
+                    name = "none"
+                } else if fillWords.contains(lw) {
+                    guard fill == nil else { return nil }
+                    fill = lw
+                } else if lw == "running" || lw == "paused" {
+                    continue
+                } else if let f = w.unicodeScalars.first, f == "\"" || f == "'" || CssScan.isIdent(f), !CssScan.isDigit(f) {
+                    guard name == nil else { return nil }
+                    name = w
+                } else {
+                    return nil
+                }
+            }
+            names.append(name ?? "none")
+            durs.append(dur ?? "0s")
+            timings.append(tim ?? "ease")
+            delays.append(delay ?? "0s")
+            counts.append(count ?? "1")
+            dirs.append(dir ?? "normal")
+            fills.append(fill ?? "none")
+        }
+        return [
+            ("animation-name", names.joined(separator: ", ")),
+            ("animation-duration", durs.joined(separator: ", ")),
+            ("animation-timing-function", timings.joined(separator: ", ")),
+            ("animation-delay", delays.joined(separator: ", ")),
+            ("animation-iteration-count", counts.joined(separator: ", ")),
+            ("animation-direction", dirs.joined(separator: ", ")),
+            ("animation-fill-mode", fills.joined(separator: ", ")),
+        ]
     }
 
     static let repeatWords: Set<String> = ["repeat", "no-repeat", "repeat-x", "repeat-y", "space", "round"]
@@ -1227,17 +1679,23 @@ struct CssCompiler {
 
     // MARK: 读成 CssStyle
 
-    /// 一个键的全部单项读成样式。按下、聚焦时没写的边框宽度、样式等，取同一钩子平时的
-    func style(_ key: CssKey) -> (CssStyle, [Mark]) {
+    /// 一个键的全部单项读成样式。按下、聚焦时没写的边框宽度、样式等，取同一钩子平时的。
+    /// long、raw 是这一份的层叠表；under 是深色那一份底下的常规表（只有深色那一份传）：
+    /// 只读这一份里写了的那几项，同一组里没写的（边框的样式、背景的其余几层）从 under 补
+    func style(_ key: CssKey, _ long: Table, _ raw: Table, under: Table = [:]) -> (CssStyle, [Mark]) {
         let own = long[key] ?? [:]
-        let base: [String: Win] = key.state == .normal ? [:]
-            : (long[CssKey(hook: key.hook, state: .normal, part: key.part)] ?? [:])
+        let normalKey = CssKey(hook: key.hook, state: .normal, part: key.part)
+        let below = under[key] ?? [:]
+        let base: [String: Win] = key.state == .normal ? [:] : (long[normalKey] ?? [:])
+        let belowBase: [String: Win] = key.state == .normal ? [:] : (under[normalKey] ?? [:])
         var marks: [Mark] = []
         var st = CssStyle()
         var ctx = CssValueContext()
 
         func get(_ p: String) -> Win? { own[p] }
-        func getF(_ p: String) -> Win? { own[p] ?? base[p] }
+        func getF(_ p: String) -> Win? { own[p] ?? below[p] ?? base[p] ?? belowBase[p] }
+        /// 同一组里的别几项：常规那一份只看自己，深色那一份从底下补
+        func getB(_ p: String) -> Win? { own[p] ?? below[p] }
         func fail(_ w: Win) { marks.append(Mark(item: w.item, kind: .skipped, reason: "这个值无法识别")) }
         func approx(_ w: Win, _ reason: String) { marks.append(Mark(item: w.item, kind: .approx, reason: reason)) }
         let black = CssColor(r: 0, g: 0, b: 0, a: 1)
@@ -1296,7 +1754,7 @@ struct CssCompiler {
         let bgProps = ["background-color", "background-image", "background-size", "background-position", "background-repeat"]
         if bgProps.contains(where: { get($0) != nil }) {
             var bg = CssBackground()
-            if let w = get("background-image") {
+            if let w = getB("background-image") {
                 for item in CssScan.split(w.value, on: ",") where !item.isEmpty {
                     if item.lowercased() == "none" { continue }
                     if let u = CssVal.url(item) {
@@ -1311,12 +1769,12 @@ struct CssCompiler {
                     }
                 }
             }
-            if let w = get("background-color") {
+            if let w = getB("background-color") {
                 if let c = CssVal.color(w.value, ctx) { bg.layers.append(.color(c)) } else { fail(w) }
             }
-            if let w = get("background-size") { bg.size = CssScan.trim(w.value) }
-            if let w = get("background-position") { bg.position = CssScan.trim(w.value) }
-            if let w = get("background-repeat") {
+            if let w = getB("background-size") { bg.size = CssScan.trim(w.value) }
+            if let w = getB("background-position") { bg.position = CssScan.trim(w.value) }
+            if let w = getB("background-repeat") {
                 let first = CssScan.words(CssScan.split(w.value, on: ",").first ?? "").first?.lowercased() ?? "repeat"
                 bg.repeatImage = first != "no-repeat"
                 if first != "no-repeat" && first != "repeat" { approx(w, "只朝一个方向重复的背景按铺满处理") }
@@ -1464,6 +1922,53 @@ struct CssCompiler {
                 if c.none { st.hidden = true } else { st.content = c.text }
             } else {
                 approx(w, "content 里只认文字，计数与属性原生版不认")
+            }
+        }
+
+        // 动画：名字对到 @keyframes，其余各项按名字的次序轮着取（同 CSS）
+        if Self.animationLonghands.contains(where: { get($0) != nil }), let nw = getF("animation-name") {
+            func list(_ p: String) -> (win: Win?, values: [String]) {
+                let w = getF(p)
+                return (w, w.map { CssScan.split($0.value, on: ",") } ?? [])
+            }
+            func pick(_ l: [String], _ i: Int, _ def: String) -> String { l.isEmpty ? def : l[i % l.count] }
+            let durs = list("animation-duration"), tims = list("animation-timing-function")
+            let delays = list("animation-delay"), counts = list("animation-iteration-count")
+            let dirs = list("animation-direction"), fills = list("animation-fill-mode")
+            var missing = 0
+            var bad: Set<Int> = []
+            for (i, rawName) in CssScan.split(nw.value, on: ",").enumerated() {
+                let name = CssScan.unquote(rawName)
+                if name.isEmpty || name.lowercased() == "none" { continue }
+                guard let fr = frames[name] else {
+                    missing += 1
+                    continue
+                }
+                var an = CssAnimation(name: name, frames: fr, duration: 0)
+                if let v = CssVal.time(pick(durs.values, i, "0s")) { an.duration = max(0, v) }
+                else if let w = durs.win { bad.insert(w.item) }
+                if let v = CssVal.time(pick(delays.values, i, "0s")) { an.delay = v }
+                else if let w = delays.win { bad.insert(w.item) }
+                if let t = Self.timing(pick(tims.values, i, "ease")) {
+                    an.timing = t.value
+                    if t.approx, let w = tims.win { approx(w, "这种缓动曲线按 ease 近似") }
+                } else if let w = tims.win { bad.insert(w.item) }
+                let count = CssScan.trim(pick(counts.values, i, "1")).lowercased()
+                if count == "infinite" { an.iterations = nil }
+                else if Self.isCount(count), let n = CssScan.number(count) { an.iterations = n.value }
+                else if let w = counts.win { bad.insert(w.item) }
+                let dir = CssScan.trim(pick(dirs.values, i, "normal")).lowercased()
+                if Self.directionWords.contains(dir) { an.direction = dir }
+                else if let w = dirs.win { bad.insert(w.item) }
+                let fill = CssScan.trim(pick(fills.values, i, "none")).lowercased()
+                if Self.fillWords.contains(fill) { an.fillMode = fill }
+                else if let w = fills.win { bad.insert(w.item) }
+                st.animations.append(an)
+            }
+            for item in bad.sorted() { marks.append(Mark(item: item, kind: .skipped, reason: "这个值无法识别")) }
+            if missing > 0 {
+                marks.append(Mark(item: nw.item, kind: st.animations.isEmpty ? .skipped : .approx,
+                                  reason: "找不到同名的 @keyframes，这段动画不读取"))
             }
         }
 

@@ -250,6 +250,16 @@ enum CssVal {
         }
     }
 
+    /// 时间，换成秒。只认 s 与 ms；不带单位的数字不算（animation 简写里那是次数）
+    static func time(_ s: String) -> Double? {
+        guard let n = CssScan.number(s) else { return nil }
+        switch n.unit {
+        case "s": return n.value
+        case "ms": return n.value / 1000
+        default: return nil
+        }
+    }
+
     /// 不带单位的数字，或百分数（换成 0...1 的倍数）
     static func fraction(_ s: String) -> Double? {
         guard let n = CssScan.number(s) else { return nil }

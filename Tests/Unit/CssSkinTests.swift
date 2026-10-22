@@ -416,18 +416,299 @@ final class CssSkinTests: XCTestCase {
         @font-face { font-family: X; src: url(x.woff); }
         .ph-navbar { animation: pop 1s; display: none; }
         """)
+        // 深色模式的规则另读一份，常规那一份里没有
         XCTAssertNil(c.style("send"))
-        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-send" })?.reason, "深色模式的规则暂不读取")
+        assertColor(c.dark[CssKey(hook: "send")]?.color, hex(0xFF0000))
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-send" })?.reason, "深色模式：已读取")
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-send" })?.kind, .used)
         assertColor(c.style("plus")?.color, hex(0xFF0000))
         XCTAssertNil(c.style("back"))
         assertColor(c.style("tab")?.color, hex(0xFF0000))
-        XCTAssertEqual(c.report.items.first(where: { $0.selector.hasPrefix("@keyframes") })?.reason, "动画原生版暂不读取")
+        XCTAssertNil(c.report.items.first(where: { $0.selector.hasPrefix("@keyframes") && $0.kind != .used }))
         XCTAssertEqual(c.report.items.first(where: { $0.selector.hasPrefix("@font-face") })?.reason, "自定义字体原生版暂不读取")
         XCTAssertEqual(c.report.items.first(where: { $0.selector.hasPrefix("@import") })?.kind, .skipped)
-        XCTAssertEqual(items(c, ".ph-navbar", "animation").first?.kind, .skipped)
+        XCTAssertEqual(items(c, ".ph-navbar", "animation").first?.kind, .used)
+        let an = c.style("navbar")?.animations ?? []
+        XCTAssertEqual(an.count, 1)
+        XCTAssertEqual(an.first?.name, "pop")
+        XCTAssertEqual(an.first?.duration, 1)
+        XCTAssertEqual(an.first?.frames.map(\.at), [0, 1])
+        XCTAssertEqual(an.first?.frames.map(\.opacity), [0, 1])
         XCTAssertEqual(c.style("navbar")?.hidden, true)
-        // 只有 .ph-navbar 那两条与 @ 规则进了账，@charset 不记
+        // @charset 不记
         XCTAssertNil(c.report.items.first(where: { $0.selector.hasPrefix("@charset") }))
+    }
+
+    // MARK: 第三步：结构写法
+
+    func testStructuralSelectors() {
+        let c = CssSkin.compileUncached("""
+        .ph-bubble:first-child { color: red; }
+        .ph-msg-theirs:first-of-type { color: red; }
+        .ph-chat-row:last-child { color: red; }
+        .ph-bubble-mine:last-child::after { content: "x"; }
+        .ph-col > .ph-bubble:last-child { color: red; }
+        .ph-col .ph-bubble-mine:last-child { color: blue; }
+        .ph-msg-theirs .ph-col > .ph-bubble:last-child { color: green; }
+        .ph-col > .ph-bubble.ph-bubble-mine:first-child { color: green; }
+        .ph-list-item:nth-child(odd) { color: red; }
+        .ph-list-item:nth-child(2n) { color: blue; }
+        .ph-moment:nth-child(2n + 1) { color: green; }
+        .ph-moment:nth-of-type(even) { color: blue; }
+        .ph-list-title:nth-child(3n+1) { color: red; }
+        .ph-msg-mine + .ph-msg-mine { margin-top: 2px; }
+        .ph-msg-theirs + .ph-msg-theirs { margin-top: 3px; }
+        .ph-chat-body .ph-msg + .ph-msg { margin-top: 4px; }
+        .ph-msg-mine + .ph-msg-theirs { color: red; }
+        .ph-msg-mine ~ .ph-msg-mine { color: red; }
+        .ph-msg:not(.ph-msg-mine) { color: red; }
+        .ph-msg-theirs { color: blue; }
+        .ph-bubble:not(.ph-bubble-mine) { padding: 5px; }
+        .ph-bubble:not(.ph-bubble-theirs) { padding: 6px; }
+        .ph-send:not(.ph-plus) { color: red; }
+        .ph-bubble:first-child:last-child { color: red; }
+        .ph-msg-theirs:last-child .ph-bubble { color: green; }
+        """)
+        assertColor(c.style("bubble-first")?.color, hex(0xFF0000))
+        assertColor(c.style("msg-theirs-first")?.color, hex(0xFF0000))
+        assertColor(c.style("chat-row-last")?.color, hex(0xFF0000))
+        XCTAssertEqual(c.style("bubble-mine-last", .normal, .after)?.content, "x")
+        // 在 .ph-col 里的最后一个气泡：一轮的最后一个
+        assertColor(c.style("bubble-tail")?.color, hex(0xFF0000))
+        assertColor(c.style("bubble-mine-tail")?.color, hex(0x0000FF))
+        assertColor(c.style("bubble-theirs-tail")?.color, hex(0x008000))
+        assertColor(c.style("bubble-mine-first")?.color, hex(0x008000))
+        XCTAssertEqual(items(c, ".ph-col > .ph-bubble:last-child", "color").first?.kind, .used)
+        XCTAssertNil(c.style("bubble-last"))
+        assertColor(c.style("list-item-odd")?.color, hex(0xFF0000))
+        assertColor(c.style("list-item-even")?.color, hex(0x0000FF))
+        assertColor(c.style("moment-odd")?.color, hex(0x008000))
+        assertColor(c.style("moment-even")?.color, hex(0x0000FF))
+        XCTAssertNil(c.style("list-title"))
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-list-title:nth-child(3n+1)" })?.reason,
+                       "这种 :nth-child 写法原生版不认，只认第奇数条与第偶数条")
+        // 连发
+        XCTAssertEqual(c.style("msg-mine-cont")?.margin?.top, 2)
+        XCTAssertEqual(c.style("msg-theirs-cont")?.margin?.top, 3)
+        XCTAssertEqual(c.style("msg-cont")?.margin?.top, 4)
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-msg-mine + .ph-msg-theirs" })?.kind, .skipped)
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-msg-mine ~ .ph-msg-mine" })?.kind, .skipped)
+        // :not(.ph-msg-mine) 即对方；特异度按两个类算，压过后写的 .ph-msg-theirs
+        assertColor(c.style("msg-theirs")?.color, hex(0xFF0000))
+        XCTAssertNil(c.style("msg"))
+        XCTAssertEqual(c.style("bubble-theirs")?.padding?.top, 5)
+        XCTAssertEqual(c.style("bubble-mine")?.padding?.top, 6)
+        XCTAssertNil(c.style("send"))
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-send:not(.ph-plus)" })?.kind, .skipped)
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-bubble:first-child:last-child" })?.reason,
+                       "几种位置条件写在一起，原生版不认")
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-msg-theirs:last-child .ph-bubble" })?.kind, .skipped)
+        // 派生钩子名拆得回去
+        XCTAssertEqual(CssStructural.split("bubble-mine-tail")?.base, "bubble-mine")
+        XCTAssertEqual(CssStructural.split("msg-mine-cont")?.suffix, "-cont")
+    }
+
+    func testWhereIsExpansion() {
+        let c = CssSkin.compileUncached("""
+        .ph-plus { color: blue; }
+        :where(.ph-send, .ph-plus) { color: red; }
+        :is(.ph-tab, .ph-tab-on):active { color: green; }
+        .ph-navbar :is(.ph-back, .ph-nav-title) { font-size: 20px; }
+        :is(.ph-nav-action, .ph-chat .ph-badge) { padding: 7px; }
+        :where(.ph-msg-mine, .ph-msg-theirs):last-child { margin-bottom: 9px; }
+        """)
+        assertColor(c.style("send")?.color, hex(0xFF0000))
+        // :where() 的特异度为 0，压不过前面的 .ph-plus
+        assertColor(c.style("plus")?.color, hex(0x0000FF))
+        assertColor(c.style("tab", .pressed)?.color, hex(0x008000))
+        assertColor(c.style("tab-on", .pressed)?.color, hex(0x008000))
+        XCTAssertEqual(c.style("back")?.fontSize, 20)
+        XCTAssertEqual(c.style("nav-title")?.fontSize, 20)
+        XCTAssertEqual(c.style("nav-action")?.padding?.top, 7)
+        XCTAssertNil(c.style("badge"))
+        XCTAssertTrue(c.report.items.contains(where: {
+            $0.selector == ":is(.ph-nav-action, .ph-chat .ph-badge)" && $0.kind == .skipped && $0.property.isEmpty
+        }))
+        XCTAssertEqual(c.style("msg-mine-last")?.margin?.bottom, 9)
+        XCTAssertEqual(c.style("msg-theirs-last")?.margin?.bottom, 9)
+    }
+
+    func testQuoteInPattern() {
+        let c = CssSkin.compileUncached("""
+        .ph-quote { color: red; }
+        .ph-col:has(.ph-quote-in) > .ph-quote { display: none; }
+        .ph-msg:has(.ph-quote-in) > .ph-quote { color: blue; }
+        .ph-bubble:has(.ph-send) { color: blue; }
+        """)
+        let q = c.style("quote")
+        XCTAssertEqual(q?.hidden, true)
+        XCTAssertEqual(q?.raw["whenQuoteIn"], "1")
+        assertColor(q?.color, hex(0xFF0000))
+        let it = items(c, ".ph-col:has(.ph-quote-in) > .ph-quote", "display").first
+        XCTAssertEqual(it?.kind, .approx)
+        XCTAssertEqual(it?.reason, "只在气泡里带引用时生效，原生版按近似处理")
+        XCTAssertEqual(c.report.items.first(where: { $0.selector == ".ph-msg:has(.ph-quote-in) > .ph-quote" })?.kind, .skipped)
+        XCTAssertNil(c.style("bubble"))
+    }
+
+    // MARK: 第三步：动画
+
+    func testKeyframesParsing() throws {
+        let c = CssSkin.compileUncached("""
+        :root { --lo: 0.2; }
+        @keyframes pop {
+          from { opacity: 0; transform: scale(0.5); }
+          50% { transform: translateY(-4px) rotate(10deg); color: red; }
+          to { opacity: 1; }
+        }
+        @-webkit-keyframes "blink" { 0%, 100% { opacity: 1 } 50% { opacity: var(--lo) } 120% { opacity: 0 } }
+        @keyframes dup { to { opacity: 0.1 } }
+        @keyframes dup { to { opacity: 0.9 } }
+        .ph-send { animation: pop 1s; }
+        .ph-plus { animation: blink 1s; }
+        .ph-back { animation: dup 1s; }
+        """)
+        let pop = try XCTUnwrap(c.style("send")?.animations.first?.frames)
+        XCTAssertEqual(pop.map(\.at), [0, 0.5, 1])
+        XCTAssertEqual(pop[0].opacity, 0)
+        XCTAssertEqual(pop[0].transform?.scaleX, 0.5)
+        XCTAssertEqual(pop[0].transform?.scaleY, 0.5)
+        XCTAssertNil(pop[1].opacity)
+        XCTAssertEqual(pop[1].transform?.dy, -4)
+        XCTAssertEqual(pop[1].transform?.rotate, 10)
+        XCTAssertEqual(pop[2].opacity, 1)
+        XCTAssertNil(pop[2].transform)
+        XCTAssertEqual(items(c, "@keyframes pop", "color").first?.reason, "动画里只认透明度与变换，这一项原生版不读取")
+        XCTAssertEqual(items(c, "@keyframes pop", "opacity").first?.kind, .used)
+
+        // 一帧写几个位置；带引号的名字；越界的位置跳过；变量展开
+        let blink = try XCTUnwrap(c.style("plus")?.animations.first)
+        XCTAssertEqual(blink.name, "blink")
+        XCTAssertEqual(blink.frames.map(\.at), [0, 0.5, 1])
+        XCTAssertEqual(blink.frames.map(\.opacity), [1, 0.2, 1])
+        XCTAssertEqual(c.report.items.first(where: { $0.reason == "关键帧的位置 120% 原生版不认" })?.kind, .skipped)
+
+        // 同名的以后写的为准
+        XCTAssertEqual(c.style("back")?.animations.first?.frames.map(\.opacity), [0.9])
+        XCTAssertEqual(c.report.items.filter({ $0.selector == "@keyframes dup" && $0.kind == .skipped }).count, 1)
+    }
+
+    func testAnimationShorthandVariants() throws {
+        let c = CssSkin.compileUncached("""
+        @keyframes pop { from { opacity: 0 } to { opacity: 1 } }
+        @keyframes blink { 50% { opacity: 0 } }
+        @keyframes dup { to { opacity: 1 } }
+        .ph-send { animation: pop 300ms cubic-bezier(0.2, 0, 0, 1) 0.1s infinite alternate both; }
+        .ph-plus { animation: blink 2s linear infinite, pop .5s ease-out 3 reverse forwards, nothere 1s; }
+        .ph-back { -webkit-animation-name: dup; animation-duration: 1.5s; animation-iteration-count: 2.5; }
+        .ph-tab { animation: nothere 1s; }
+        .ph-tab-on { transition: color .2s; animation: none; }
+        .ph-navbar { animation: pop 1s banana; }
+        @media (prefers-reduced-motion: reduce) { .ph-send { animation: none; } }
+        """)
+        let send = try XCTUnwrap(c.style("send")?.animations)
+        XCTAssertEqual(send.count, 1)
+        XCTAssertEqual(send[0].name, "pop")
+        XCTAssertEqual(send[0].duration, 0.3, accuracy: 0.0001)
+        XCTAssertEqual(send[0].delay, 0.1, accuracy: 0.0001)
+        XCTAssertEqual(send[0].timing, "cubic-bezier(0.2, 0, 0, 1)")
+        XCTAssertNil(send[0].iterations)
+        XCTAssertEqual(send[0].direction, "alternate")
+        XCTAssertEqual(send[0].fillMode, "both")
+        XCTAssertEqual(send[0].frames.count, 2)
+        XCTAssertEqual(items(c, ".ph-send", "animation").first?.kind, .approx)
+        XCTAssertEqual(items(c, ".ph-send", "animation").first?.reason, "这种缓动曲线按 ease 近似")
+        // 减弱动态效果里的不读
+        XCTAssertEqual(items(c, ".ph-send", "animation").last?.kind, .skipped)
+
+        let plus = try XCTUnwrap(c.style("plus")?.animations)
+        XCTAssertEqual(plus.map(\.name), ["blink", "pop"])
+        XCTAssertEqual(plus[0].duration, 2)
+        XCTAssertEqual(plus[0].timing, "linear")
+        XCTAssertNil(plus[0].iterations)
+        XCTAssertEqual(plus[1].duration, 0.5)
+        XCTAssertEqual(plus[1].timing, "ease-out")
+        XCTAssertEqual(plus[1].iterations, 3)
+        XCTAssertEqual(plus[1].direction, "reverse")
+        XCTAssertEqual(plus[1].fillMode, "forwards")
+        XCTAssertEqual(plus[1].delay, 0)
+        XCTAssertEqual(items(c, ".ph-plus", "animation").first?.kind, .approx)
+        XCTAssertEqual(items(c, ".ph-plus", "animation").first?.reason, "找不到同名的 @keyframes，这段动画不读取")
+
+        let back = try XCTUnwrap(c.style("back")?.animations.first)
+        XCTAssertEqual(back.name, "dup")
+        XCTAssertEqual(back.duration, 1.5)
+        XCTAssertEqual(back.iterations, 2.5)
+        XCTAssertEqual(back.timing, "ease")
+        XCTAssertEqual(items(c, ".ph-back", "-webkit-animation-name").first?.kind, .used)
+
+        XCTAssertEqual(c.style("tab")?.animations, [])
+        XCTAssertEqual(items(c, ".ph-tab", "animation").first?.kind, .skipped)
+        XCTAssertEqual(items(c, ".ph-tab-on", "transition").first?.reason, "原生版不按这一项做过渡动画")
+        XCTAssertEqual(c.style("tab-on")?.animations, [])
+        XCTAssertEqual(items(c, ".ph-navbar", "animation").first?.reason, "这个值无法识别")
+
+        XCTAssertEqual(CssVal.time("250ms"), 0.25)
+        XCTAssertEqual(CssVal.time(".5s"), 0.5)
+        XCTAssertNil(CssVal.time("0"))
+    }
+
+    // MARK: 第三步：深色模式
+
+    func testDarkModeOverlay() {
+        let css = """
+        :root { --fg: #111111; --bg: #ffffff; --pad: 4px; }
+        .ph-send { color: var(--fg); background: var(--bg); padding: var(--pad); }
+        .ph-plus { color: red; }
+        .ph-list-item { color: var(--fg); }
+        .ph-list-item { color: blue; }
+        .ph-navbar { color: var(--fg) !important; }
+        @media screen and (prefers-color-scheme: dark) {
+          :root { --fg: #eeeeee; --accent: var(--fg); }
+          .ph-plus { color: var(--accent); }
+          .ph-back { color: var(--missing-dark, #00ff00); }
+          .ph-navbar { color: black; }
+        }
+        @media (prefers-color-scheme: dark) and (max-width: 300px) { .ph-tab { color: red; } }
+        @media (prefers-color-scheme: light) { .ph-tab-on { color: red; } }
+        """
+        let c = CssSkin.compileUncached(css)
+        // 常规那一份不受深色影响
+        assertColor(c.style("send")?.color, hex(0x111111))
+        assertColor(colors(c.style("send")).first, hex(0xFFFFFF))
+        assertColor(c.style("plus")?.color, hex(0xFF0000))
+        XCTAssertEqual(c.vars["fg"], "#111111")
+        XCTAssertNil(c.vars["accent"])
+        // 深色变量：写了的与因此变了值的
+        XCTAssertEqual(c.darkVars["fg"], "#eeeeee")
+        XCTAssertEqual(c.darkVars["accent"], "#eeeeee")
+        XCTAssertNil(c.darkVars["bg"])
+        XCTAssertNil(c.darkVars["pad"])
+        // 深色那一份只有变了的几项
+        let send = c.dark[CssKey(hook: "send")]
+        assertColor(send?.color, hex(0xEEEEEE))
+        XCTAssertNil(send?.background)
+        XCTAssertNil(send?.padding)
+        assertColor(c.dark[CssKey(hook: "plus")]?.color, hex(0xEEEEEE))
+        assertColor(c.dark[CssKey(hook: "back")]?.color, hex(0x00FF00))
+        XCTAssertNil(c.style("back"))
+        // 常规里后写的压过用变量的那条：深色下照样是它，不叠
+        XCTAssertNil(c.dark[CssKey(hook: "list-item")])
+        // !important 的常规规则压过深色里没加 !important 的，取深色变量
+        assertColor(c.dark[CssKey(hook: "navbar")]?.color, hex(0xEEEEEE))
+        // 深色加别的尺寸条件：不读
+        XCTAssertNil(c.dark[CssKey(hook: "tab")])
+        XCTAssertNil(c.style("tab"))
+        assertColor(c.style("tab-on")?.color, hex(0xFF0000))
+        XCTAssertNil(c.dark[CssKey(hook: "tab-on")])
+        // 记账
+        XCTAssertEqual(items(c, ".ph-plus", "color").first?.reason, "已读取")
+        XCTAssertEqual(items(c, ".ph-plus", "color").last?.reason, "深色模式：已读取")
+        XCTAssertEqual(items(c, ".ph-plus", "color").last?.kind, .used)
+        XCTAssertTrue(items(c, ":root", "--fg").last?.reason.hasPrefix("深色模式：") == true)
+        XCTAssertFalse(c.report.items.contains(where: { $0.reason.contains("暂不读取") && $0.selector == ".ph-plus" }))
+        // 缓存里存的是同一份（含深色与动画）
+        XCTAssertEqual(CssSkin.compile(css), c)
     }
 
     // MARK: 读值
