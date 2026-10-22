@@ -23,7 +23,7 @@ const APPS = {
   'CanonViews.swift': '设定集', 'LoreViews.swift': '设定集', 'MemoryViews.swift': '设定集',
   'CardImportView.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系', 'FaceLockViews.swift': '联系', 'AvatarPoolViews.swift': '联系',
   'ChatLookView.swift': '聊天', 'AbilitiesPage.swift': '聊天', 'ChatSettingsView.swift': '聊天', 'ChatMenuPages.swift': '聊天', 'SummaryPage.swift': '聊天', 'ConversationView.swift': '聊天', 'ForwardViews.swift': '聊天',
-  'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'StatusBarViews.swift': '聊天',
+  'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'SkinCompareView.swift': '聊天', 'StatusBarViews.swift': '聊天',
   'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天', 'BondViews.swift': '聊天', 'BadgeDefViews.swift': '聊天', 'CardViews.swift': '聊天',
   'DailyViews.swift': '日常', 'UserSchedViews.swift': '日常', 'DiaryViews.swift': '日记', 'MusicViews.swift': '音乐', 'HomeEditViews.swift': '主屏', 'HomeArrangeViews.swift': '主屏', 'HomeScreen.swift': '主屏', 'CustomWidget.swift': '主屏', 'CustomWidgetData.swift': '主屏',
   'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康', 'TheirsViews.swift': '角色手机',

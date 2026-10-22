@@ -300,6 +300,218 @@ final class CssRasterTests: StoreTestCase {
         XCTAssertTrue(CssRasterPlan.markup(plain).contains("ph-msg ph-msg-mine rz-sib"))
     }
 
+    // MARK: - 第三步：深色
+
+    func testDarkKeyHelpers() {
+        XCTAssertEqual(CssRaster.darkState("normal"), "normal@dark")
+        XCTAssertEqual(CssRaster.darkState("normal@dark"), "normal@dark")
+        XCTAssertTrue(CssRaster.isDark("pressed@dark"))
+        XCTAssertFalse(CssRaster.isDark("pressed"))
+        XCTAssertEqual(CssRaster.baseState("pressed@dark"), "pressed")
+        let k = CssRasterKey(hook: "bubble", part: "after", variant: "bubble-mine")
+        XCTAssertEqual(CssRaster.dark(k), CssRasterKey(hook: "bubble", state: "normal@dark", part: "after", variant: "bubble-mine"))
+        XCTAssertEqual(CssRaster.id(CssRaster.dark(k)), "bubble|normal@dark|after|bubble-mine")
+        let a = CssRasterKey(hook: "send"), b = CssRasterKey(hook: "composer-btn")
+        XCTAssertEqual(CssRaster.withDark([a, b], dark: false), [a, b])
+        XCTAssertEqual(CssRaster.withDark([a, b], dark: true), [CssRaster.dark(a), a, CssRaster.dark(b), b])
+        XCTAssertEqual(CssRaster.structuralKeys("bubble-tail", side: "bubble-mine"),
+                       [CssRasterKey(hook: "bubble-tail", variant: "bubble-mine"), CssRasterKey(hook: "bubble-tail")])
+        XCTAssertEqual(CssRaster.structuralKeys("bubble-mine-tail", side: nil), [CssRasterKey(hook: "bubble-mine-tail")])
+    }
+
+    func testDarkTextAndTouches() {
+        let css = """
+            .ph-send { color: red; }
+            @media screen and (prefers-color-scheme: DARK) { .ph-send { background: url(a.png); } @supports (x: y) { .ph-plus { color: blue; } } }
+            @media (prefers-color-scheme: light) { .ph-composer { color: red; } }
+            :root[data-theme="dark"] .ph-bubble-mine { color: white; }
+            """
+        XCTAssertTrue(CssRasterPlan.hasDark(css))
+        XCTAssertTrue(CssRasterPlan.hasDark(#"html[data-theme=dark] .ph-send{}"#))
+        XCTAssertFalse(CssRasterPlan.hasDark(".ph-send{} @media (prefers-color-scheme: light){.ph-send{}}"))
+        let t = CssRasterPlan.darkText(css)
+        XCTAssertTrue(t.contains(".ph-send { background"))
+        XCTAssertTrue(t.contains(".ph-plus"))
+        XCTAssertFalse(t.contains(".ph-composer"))
+        XCTAssertTrue(t.contains(".ph-bubble-mine"))
+        XCTAssertTrue(CssRasterPlan.darkTouches(["composer-btn", "plus"], text: t, hooks: []))
+        XCTAssertTrue(CssRasterPlan.darkTouches(["bubble", "bubble-mine"], text: t, hooks: []))
+        // .ph-bubble-mine 碰不到只挂着 bubble 的那一块
+        XCTAssertFalse(CssRasterPlan.darkTouches(["bubble"], text: t, hooks: []))
+        XCTAssertFalse(CssRasterPlan.darkTouches(["composer"], text: t, hooks: []))
+        XCTAssertTrue(CssRasterPlan.darkTouches(["composer"], text: "", hooks: ["composer"]))
+    }
+
+    func testSchemeRewrite() {
+        let css = "@media (prefers-color-scheme: dark) { a {} } @media (prefers-color-scheme:light){ b {} }"
+        let dark = CssRasterPlan.schemeCSS(css, dark: true)
+        XCTAssertEqual(dark, "@media (min-width: 0px) { a {} } @media (max-width: 0px){ b {} }")
+        let light = CssRasterPlan.schemeCSS(css, dark: false)
+        XCTAssertEqual(light, "@media (max-width: 0px) { a {} } @media (min-width: 0px){ b {} }")
+        XCTAssertEqual(CssRasterPlan.schemeCSS(".ph-send{}", dark: true), ".ph-send{}")
+    }
+
+    private func style(_ raw: [String: String]) -> CssStyle {
+        var s = CssStyle()
+        s.raw = raw
+        return s
+    }
+
+    private let twoGradients = "linear-gradient(red, blue), linear-gradient(blue, red)"
+
+    func testDarkJobsOnlyForTouchedBlocks() {
+        let css = """
+            .ph-send { background: \(twoGradients); }
+            .ph-composer { background: \(twoGradients); }
+            @media (prefers-color-scheme: dark) { .ph-send { background: \(twoGradients), linear-gradient(#000, #000); } }
+            """
+        let jobs = CssRasterPlan.jobs(CssSkin.compileUncached(css), css: css)
+        let ids = jobs.map { CssRaster.id($0.key) }
+        XCTAssertTrue(ids.contains("send|normal|main|"))
+        XCTAssertTrue(ids.contains("composer|normal|main|"))
+        let dark = try? XCTUnwrap(job(jobs, "send|normal@dark|main|"))
+        XCTAssertEqual(dark?.dark, true)
+        XCTAssertEqual(dark?.state, .normal)
+        XCTAssertFalse(ids.contains("composer|normal@dark|main|"))
+        // 不传原文、解析也没读出深色：不画深色
+        let plain = CssRasterPlan.jobs(CssSkin.compileUncached(".ph-send { background: \(twoGradients); }"))
+        XCTAssertFalse(plain.contains { $0.dark })
+    }
+
+    func testDarkOnlyBoxAndDarkVars() {
+        var c = CssCompiled()
+        c.styles[CssKey(hook: "composer")] = style(["background": "red"])
+        c.styles[CssKey(hook: "send")] = style(["background": twoGradients])
+        c.dark[CssKey(hook: "composer")] = style(["background": twoGradients])
+        var ids = Set(CssRasterPlan.jobs(c).map { CssRaster.id($0.key) })
+        // 深色下才要整块画的：只有深色那张
+        XCTAssertTrue(ids.contains("composer|normal@dark|main|"))
+        XCTAssertFalse(ids.contains("composer|normal|main|"))
+        XCTAssertTrue(ids.contains("send|normal|main|"))
+        XCTAssertFalse(ids.contains("send|normal@dark|main|"))
+        // 深色改了变量：每一块都另画深色
+        c.darkVars["ph-accent"] = "#fff"
+        ids = Set(CssRasterPlan.jobs(c).map { CssRaster.id($0.key) })
+        XCTAssertTrue(ids.contains("send|normal@dark|main|"))
+    }
+
+    func testDarkJobOrderAfterBase() {
+        var c = CssCompiled()
+        c.styles[CssKey(hook: "send")] = style(["background": twoGradients])
+        c.styles[CssKey(hook: "send", state: .pressed)] = style(["background": twoGradients + ", url(x.png)"])
+        c.darkVars["x"] = "1"
+        let jobs = CssRasterPlan.jobs(c)
+        XCTAssertEqual(jobs.map { CssRaster.id($0.key) },
+                       ["send|normal|main|", "send|normal@dark|main|", "send|pressed|main|", "send|pressed@dark|main|"])
+    }
+
+    func testDarkDocument() throws {
+        var c = CssCompiled()
+        c.styles[CssKey(hook: "send")] = style(["background": twoGradients])
+        c.darkVars["x"] = "1"
+        let jobs = CssRasterPlan.jobs(c)
+        let dark = try XCTUnwrap(jobs.first { $0.dark })
+        let light = try XCTUnwrap(jobs.first { !$0.dark })
+        let css = "@media (prefers-color-scheme: dark) { .ph-send { color: red } }"
+        let d = CssRasterPlan.document(dark, css: css, background: "#000000")
+        XCTAssertTrue(d.contains("<html data-theme=\"dark\">"))
+        XCTAssertTrue(d.contains("name=\"color-scheme\" content=\"dark\""))
+        XCTAssertTrue(d.contains("@media (min-width: 0px) { .ph-send"))
+        let l = CssRasterPlan.document(light, css: css, background: "#000000")
+        XCTAssertTrue(l.contains("<html data-theme=\"light\">"))
+        XCTAssertTrue(l.contains("@media (max-width: 0px) { .ph-send"))
+    }
+
+    // MARK: - 第三步：结构写法
+
+    private func sampleJob(_ spec: CssRasterPlan.Spec) -> CssRasterPlan.Job {
+        CssRasterPlan.Job(key: CssRasterKey(hook: spec.hook, variant: spec.variant), kind: .box, spec: spec, state: .normal,
+                          part: .main, width: 120, height: 44, raw: [:])
+    }
+
+    func testStructuralSpecs() {
+        var c = CssCompiled()
+        c.styles[CssKey(hook: "bubble-mine")] = style(["background": twoGradients])
+        c.styles[CssKey(hook: "bubble-tail")] = style(["border-radius": "4px"])
+        c.styles[CssKey(hook: "msg-mine-cont")] = style(["margin-top": "2px"])
+        c.styles[CssKey(hook: "msg-odd", part: .after)] = style(["content": "\"\"", "background": "url(x.png)"])
+        c.styles[CssKey(hook: "nonsense-tail")] = style(["color": "red"])
+        c.styles[CssKey(hook: "msg")] = style(["color": "red"])
+        let specs = CssRasterPlan.specs(c)
+        XCTAssertTrue(specs.contains(CssRasterPlan.Spec(hook: "bubble-tail", variant: "bubble-mine",
+                                                        chain: ["bubble", "bubble-mine", "bubble-tail"])))
+        XCTAssertTrue(specs.contains(CssRasterPlan.Spec(hook: "bubble-tail", variant: "bubble-theirs",
+                                                        chain: ["bubble", "bubble-theirs", "bubble-tail"])))
+        XCTAssertTrue(specs.contains(CssRasterPlan.Spec(hook: "msg-mine-cont", variant: "", chain: ["msg", "msg-mine", "msg-mine-cont"])))
+        XCTAssertTrue(specs.contains { $0.hook == "msg-odd" && $0.chain == ["msg", "msg-odd"] })
+        XCTAssertFalse(specs.contains { $0.hook == "nonsense-tail" })
+        // 原钩子记下同一家写了哪些结构写法
+        let base = specs.first { $0.hook == "bubble" && $0.variant == "bubble-mine" }
+        XCTAssertEqual(base?.avoid, ["-tail"])
+        XCTAssertEqual(Set(specs.first { $0.hook == "msg" }?.avoid ?? []), ["-cont", "-odd"])
+        // 早就认的 -last 一串不算派生
+        XCTAssertFalse(CssRasterPlan.isDerived("bubble-mine-last"))
+        XCTAssertTrue(CssRasterPlan.isDerived("bubble-mine-tail"))
+        XCTAssertFalse(CssRasterPlan.isDerived("bubble-mine"))
+    }
+
+    func testStructuralJobsOnlyOwnPartsAndAfterBase() {
+        var c = CssCompiled()
+        c.styles[CssKey(hook: "bubble")] = style(["background": twoGradients])
+        c.styles[CssKey(hook: "bubble", part: .after)] = style(["content": "\"\"", "position": "absolute", "background": "url(t.png)"])
+        c.styles[CssKey(hook: "bubble-tail")] = style(["border-radius": "4px"])
+        let jobs = CssRasterPlan.jobs(c)
+        let ids = jobs.map { CssRaster.id($0.key) }
+        XCTAssertTrue(ids.contains("bubble-tail|normal|main|"))
+        // 派生钩子只改了整块：小尾巴照原钩子那张
+        XCTAssertFalse(ids.contains("bubble-tail|normal|after|"))
+        XCTAssertTrue(ids.contains("bubble|normal|after|"))
+        let firstDerived = ids.firstIndex { $0.hasPrefix("bubble-tail|") } ?? 0
+        let lastBase = ids.lastIndex { $0.hasPrefix("bubble|") } ?? Int.max
+        XCTAssertLessThan(lastBase, firstDerived)
+    }
+
+    func testStructuralMarkupSiblings() {
+        typealias S = CssRasterPlan.Spec
+        let tail = CssRasterPlan.markup(sampleJob(S(hook: "bubble-tail", variant: "bubble-mine", chain: ["bubble", "bubble-mine", "bubble-tail"])))
+        XCTAssertTrue(tail.contains(#"<div class="ph-col rz-anc"><div class="ph-bubble ph-bubble-mine rz-sib"></div><div class="ph-bubble ph-bubble-mine rz-target"></div></div>"#), tail)
+        XCTAssertFalse(tail.contains("ph-bubble-tail"))
+        // 这一轮之后还有一条：不是整段最后一条
+        XCTAssertTrue(tail.contains(#"<div class="ph-msg ph-msg-mine rz-sib"></div>"#))
+
+        let first = CssRasterPlan.markup(sampleJob(S(hook: "bubble-mine-first", variant: "", chain: ["bubble", "bubble-mine", "bubble-mine-first"])))
+        XCTAssertTrue(first.contains(#"<div class="ph-col rz-anc"><div class="ph-bubble ph-bubble-mine rz-target"></div><div class="ph-bubble ph-bubble-mine rz-sib"></div></div>"#), first)
+
+        let cont = CssRasterPlan.markup(sampleJob(S(hook: "msg-mine-cont", variant: "", chain: ["msg", "msg-mine", "msg-mine-cont"])))
+        XCTAssertTrue(cont.contains(#"<div class="ph-chat-body rz-anc"><div class="ph-msg ph-msg-mine rz-sib"></div><div class="ph-msg ph-msg-mine rz-target"></div><div class="ph-msg ph-msg-mine rz-sib"></div></div>"#), cont)
+
+        // 奇数：第三个，前面两条是另一边的（不命中连发）；偶数：第二个
+        let odd = CssRasterPlan.markup(sampleJob(S(hook: "msg-odd", variant: "msg-theirs", chain: ["msg", "msg-theirs", "msg-odd"])))
+        XCTAssertTrue(odd.contains(#"<div class="ph-chat-body rz-anc"><div class="ph-msg ph-msg-mine rz-sib"></div><div class="ph-msg ph-msg-mine rz-sib"></div><div class="ph-msg ph-msg-theirs rz-target"></div>"#), odd)
+        let even = CssRasterPlan.markup(sampleJob(S(hook: "msg-even", variant: "msg-mine", chain: ["msg", "msg-mine", "msg-even"])))
+        XCTAssertTrue(even.contains(#"<div class="ph-chat-body rz-anc"><div class="ph-msg ph-msg-theirs rz-sib"></div><div class="ph-msg ph-msg-mine rz-target"></div>"#), even)
+
+        // 原钩子避开写了的结构写法：写了 -first 就不当第一个；只写了奇数就摆在偶数位
+        let baseBubble = CssRasterPlan.markup(sampleJob(S(hook: "bubble", variant: "bubble-mine", chain: ["bubble", "bubble-mine"], avoid: ["-first", "-tail"])))
+        XCTAssertTrue(baseBubble.contains(#"<div class="ph-col rz-anc"><div class="ph-bubble ph-bubble-mine rz-sib"></div><div class="ph-bubble ph-bubble-mine rz-target"></div><div class="ph-bubble ph-bubble-mine rz-sib"></div></div>"#), baseBubble)
+        let baseMsg = CssRasterPlan.markup(sampleJob(S(hook: "msg", variant: "msg-mine", chain: ["msg", "msg-mine"], avoid: ["-odd"])))
+        XCTAssertTrue(baseMsg.contains(#"<div class="ph-chat-body rz-anc"><div class="ph-msg ph-msg-theirs rz-sib"></div><div class="ph-msg ph-msg-mine rz-target"></div>"#), baseMsg)
+        let plainMsg = CssRasterPlan.markup(sampleJob(S(hook: "msg", variant: "msg-mine", chain: ["msg", "msg-mine"])))
+        XCTAssertTrue(plainMsg.contains(#"<div class="ph-chat-body rz-anc"><div class="ph-msg ph-msg-mine rz-target"></div><div class="ph-msg ph-msg-mine rz-sib"></div></div>"#), plainMsg)
+    }
+
+    // MARK: - 第三步：引擎版本与上限
+
+    func testEngineBumpRedrawsOldSets() {
+        XCTAssertGreaterThanOrEqual(CssRasterPlan.engine, 2)
+        XCTAssertGreaterThanOrEqual(CssRasterPlan.maxRenders, 60)
+        let css = ".ph-send{color:red}"
+        let old = CssRasterSet(cssHash: CssRasterPlan.hash(css), engine: 1)
+        XCTAssertTrue(CssRasterPlan.isStale(old, css: css, fetchRemote: false))
+        let now = CssRasterSet(cssHash: CssRasterPlan.hash(css), engine: CssRasterPlan.engine)
+        XCTAssertFalse(CssRasterPlan.isStale(now, css: css, fetchRemote: false))
+    }
+
     // MARK: - 像素
 
     func testUnmatteAndBounds() {

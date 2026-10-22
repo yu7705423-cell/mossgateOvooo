@@ -394,6 +394,11 @@ struct SkinCssReportView: View {
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             if let row {
                 if let c = Skins.compiled(row) {
+                    Section {
+                        NavigationLink { SkinCompareView(id: id) } label: { Text("对照") }
+                    } footer: {
+                        HelpNote("同一页示例会话在网页版与原生版中的效果，上下排列或叠加显示，可切换浅色与深色，便于比对还原的差异。", title: "对照")
+                    }
                     rasterSection(row)
                     CssReportSections(report: c.report)
                 } else {
@@ -429,7 +434,7 @@ struct SkinCssReportView: View {
             Button("重新绘制") { redraw() }
                 .disabled(drawing)
         } header: { Text("绘制成图片的部分") } footer: {
-            HelpNote("原生元素表达不了的纯视觉部分，例如图片背景、伪元素装饰、替换的图标，导入或打开会话时按 CSS 原样绘制成图片存到本机，之后只读图片。CSS 引用的网络图片在导入时下载一次，打开会话时不联网；「重新绘制」时补下载尚未下载的图片。CSS 改动后自动重新绘制；「重新绘制」按当前的 CSS 重新绘制全部图片。", title: "绘制成图片的部分")
+            HelpNote("原生元素表达不了的纯视觉部分，例如图片背景、伪元素装饰、替换的图标，导入或打开会话时按 CSS 原样绘制成图片存到本机，之后只读图片；写了深色规则的部分另绘制一份深色的，按结构写的部分（同一轮的第一个或最后一个气泡、连发、奇偶行）另绘制一份。CSS 引用的网络图片在导入时下载一次，打开会话时不联网；「重新绘制」时补下载尚未下载的图片。CSS 改动后自动重新绘制；「重新绘制」按当前的 CSS 重新绘制全部图片。", title: "绘制成图片的部分")
         }
         if let set, !set.failures.isEmpty {
             Section {

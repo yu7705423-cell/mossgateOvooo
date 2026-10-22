@@ -77,3 +77,54 @@ extension CssRaster {
         [k.hook, k.state, k.part, k.variant].joined(separator: "|")
     }
 }
+
+// MARK: - 第三步：深色与结构写法的图（只加不改）
+//
+// 深色：CSS 写了深色规则（`@media (prefers-color-scheme: dark)` 或 `[data-theme="dark"]`），深色下会变的那几块
+// 在深色的样板页里再画一张。键的 state 后面接 "@dark"（"normal@dark"、"pressed@dark"），hook、part、variant 与常规那张相同；
+// 不另起字段（键一经发布不改）。用图的一边在深色下每一个候选键先找带 "@dark" 的那张，没有再找它自己（`withDark`）：
+// 深色下不变的那几块不另画，照用常规那张。
+//
+// 结构写法：派生钩子（`CssStructural`：bubble-tail、msg-mine-cont、msg-odd……）的图，键的 hook 就是派生钩子名。
+// 原钩子不分两边（bubble-tail）而美化分了两边写时，两边各画一张，variant 为那一边（bubble-mine / bubble-theirs）；
+// 原钩子本身已分边（bubble-mine-tail）的 variant 为空（`structuralKeys`）。
+// 派生钩子只在它自己写了的部位上画（只改了圆角的只有整块那张），其余部位照原钩子的图。
+extension CssRaster {
+    static let darkSuffix = "@dark"
+
+    /// 深色那张图的 state："normal" → "normal@dark"。已经是深色的原样返回
+    static func darkState(_ state: String) -> String {
+        isDark(state) ? state : state + darkSuffix
+    }
+
+    static func isDark(_ state: String) -> Bool { state.hasSuffix(darkSuffix) }
+
+    /// 去掉深色后缀的 state
+    static func baseState(_ state: String) -> String {
+        isDark(state) ? String(state.dropLast(darkSuffix.count)) : state
+    }
+
+    /// 同一块在深色下的那张图的键
+    static func dark(_ k: CssRasterKey) -> CssRasterKey {
+        var d = k
+        d.state = darkState(k.state)
+        return d
+    }
+
+    /// 找图的次序：深色时每一个键先找它的深色那张、再找它自己；浅色时原样
+    static func withDark(_ keys: [CssRasterKey], dark: Bool) -> [CssRasterKey] {
+        guard dark else { return keys }
+        return keys.flatMap { [Self.dark($0), $0] }
+    }
+
+    /// 派生钩子的图按什么次序找：先找带这一边的（原钩子不分边、美化分了两边写时画的那张），再找不分边的
+    static func structuralKeys(_ derived: CssHook, side: CssHook?, state: String = CssState.normal.rawValue,
+                               part: String = CssPart.main.rawValue) -> [CssRasterKey] {
+        var out: [CssRasterKey] = []
+        if let side, !side.isEmpty {
+            out.append(CssRasterKey(hook: derived, state: state, part: part, variant: side))
+        }
+        out.append(CssRasterKey(hook: derived, state: state, part: part))
+        return out
+    }
+}

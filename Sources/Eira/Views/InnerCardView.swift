@@ -17,6 +17,8 @@ struct InnerCardView: View {
     @State private var listing = false
     /// 心声那一页的样式（会话菜单「心声」里设的 look.inner.card）
     @State private var cardLook: [String: JSONValue] = [:]
+    /// 会话挂着的美化（.ph-inner-card、.ph-inner-card-text）
+    @Environment(\.phSkin) private var css
 
     /// 这段会话里有心声的角色消息，新的在前（网页版 extras.innerHistory）。who 不为空时只留这一位成员的
     static func history(_ chatId: String, who: String = "") -> [Message] {
@@ -43,8 +45,10 @@ struct InnerCardView: View {
             let p = Self.innerPair(cur, mode: Self.mode)
             Text(p.main).modifier(InnerLookStyle(look: cardLook, size: 17, color: Theme.text))
                 .multilineTextAlignment(.center).lineSpacing(5)
+                .phStyle("inner-card-text", fallback: PhFallback(fontSize: 17))
             if !p.sub.isEmpty {
-                Text(p.sub).font(.system(size: 13)).foregroundStyle(Theme.text3).multilineTextAlignment(.center)
+                Text(p.sub).modifier(PhSurface(hooks: ["trans"], fallback: PhFallback(fg: Theme.text3, fontSize: 13), font: .system(size: 13)))
+                    .multilineTextAlignment(.center)
             }
             // 那一句有译文写译文（只看原文那一档除外），写全、换行，不截断（网页版 4.521、4.570）
             let said = Self.mode == "orig" ? "" : cur.row.string("translation")
@@ -110,12 +114,27 @@ struct InnerCardView: View {
                 .buttonStyle(.plain)
             }
         }
-        .padding(Theme.sp5)
-        .background(Theme.bg)
+        .modifier(CardFrame(css: css))
         .onAppear {
             if let c = try? Repo.chat(chatId) { cardLook = InnerLook.of(c, "card") }
             all = Self.history(chatId, who: who)
             i = max(0, all.firstIndex { $0.id == msgId } ?? 0)
+        }
+    }
+
+    /// 那张卡的外框（.ph-inner-card）：美化写了样式时照着画（原本的内距与底色当作 fallback），没写时照原样
+    private struct CardFrame: ViewModifier {
+        let css: CssCompiled?
+
+        func body(content: Content) -> some View {
+            if let css, css.has(["inner-card"]), let st = css.resolve(["inner-card"]) {
+                content.modifier(PhBox(style: st, fallback: PhFallback(fill: Theme.bg, continuous: false, padH: Theme.sp5, padV: Theme.sp5),
+                                       hooks: ["inner-card"]))
+            } else {
+                content
+                    .padding(Theme.sp5)
+                    .background(Theme.bg)
+            }
         }
     }
 }

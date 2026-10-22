@@ -16,15 +16,20 @@ import WebKit
 // 不跑脚本就量不了位置，所以样板一律摆成已知的固定大小：元素放在画布里 (pad, pad) 处、宽高写死，
 // 画出来之后在像素里找不透明的范围，伪元素在哪儿、多大由像素决定。
 // 透明背景不靠 WebKit：同一页在黑底、白底上各截一张，两张一比就得出每个像素的不透明度（网页截图不一定带透明）。
+//
+// 第三步：写了深色规则的，深色下会变的那几块在深色样板页里再画一张（键见 CssRaster.swift 末尾）；
+// 结构写法的派生钩子（bubble-tail、msg-mine-cont、msg-odd……）另画，样板元素前后摆上藏起来的同类兄弟，
+// 让 :first-child、+、:nth-child、:last-child 在 WebKit 里按真实的兄弟关系命中。
 
 // MARK: - 纯计算
 
 /// 画哪几块、样板多大、贴到哪儿、九宫格留多宽、CSS 里的网络图片。纯函数，不碰 WebKit
 enum CssRasterPlan {
-    /// 画图引擎的版本。画法改了就加一，存着的图一律重画
-    static let engine = 1
-    /// 每份美化最多画几张
-    static let maxRenders = 40
+    /// 画图引擎的版本。画法改了就加一，存着的图一律重画。
+    /// 2：深色另画一张（键的 state 接 "@dark"）、结构写法的派生钩子另画、样板元素前后摆上同类的兄弟
+    static let engine = 2
+    /// 每份美化最多画几张（常规的整块、图标、装饰在前，其后依次为深色、结构写法、按下与聚焦）
+    static let maxRenders = 60
     /// 每一页最多等几秒（第一页要先起 WebKit 的进程，多等一些）
     static let renderTimeout: TimeInterval = 3
     static let firstTimeout: TimeInterval = 10
@@ -141,20 +146,58 @@ enum CssRasterPlan {
         var hook: CssHook
         var variant: String
         var chain: [CssHook]
+        /// 同一家（chain.first）里美化写了的结构写法后缀（"-first"、"-odd"……）。
+        /// 画原钩子时样板元素摆在这些写法都不命中的位置（例如写了 -first 就不当第一个），免得原钩子的图带上它们
+        var avoid: [String] = []
         var family: CssHook { chain.first ?? hook }
+        /// 结构写法的后缀（"-tail"、"-cont"……）；原生版早就认的 -last 一串（CssSkin.lastHooks）也算 "-last"。不是为 nil
+        var suffix: String? {
+            if CssSkin.lastHooks.contains(hook) { return "-last" }
+            return CssRasterPlan.isDerived(hook) ? CssStructural.split(hook)?.suffix : nil
+        }
+    }
+
+    /// 结构写法读成的派生钩子（CssStructural）：后缀拆得开，且不是契约里本来就有的钩子、也不是早就认的 -last 一串
+    static func isDerived(_ h: CssHook) -> Bool {
+        CssStructural.split(h) != nil && !CssSkin.contractHooks.contains(h) && !CssSkin.lastHooks.contains(h)
+    }
+
+    /// 派生钩子的原钩子身上挂着的一串（由泛到具体）。原钩子不是会话页上画的那几个为 nil
+    static func baseChain(_ b: CssHook) -> [CssHook]? {
+        if hooks.contains(b), !CssSkin.lastHooks.contains(b) { return (chains[b] ?? []) + [b] }
+        for fam in variants.keys.sorted() where variants[fam]?.contains(b) == true { return [fam, b] }
+        return nil
     }
 
     static func specs(_ c: CssCompiled) -> [Spec] {
-        let present = Set(c.styles.keys.map(\.hook))
-        var out: [Spec] = []
-        for h in hooks {
-            if let vs = variants[h], vs.contains(where: { present.contains($0) }) {
-                for v in vs { out.append(Spec(hook: h, variant: v, chain: [h, v])) }
-            } else if present.contains(h) {
-                out.append(Spec(hook: h, variant: "", chain: (chains[h] ?? []) + [h]))
+        let present = Set(c.styles.keys.map(\.hook)).union(c.dark.keys.map(\.hook))
+        // 结构写法：每个派生钩子一份（原钩子不分边、美化分了两边写的，两边各一份）
+        var avoid: [CssHook: [String]] = [:]
+        var derived: [Spec] = []
+        for h in present.filter(isDerived).sorted() {
+            guard let sp = CssStructural.split(h), let base = baseChain(sp.base), let fam = base.first else { continue }
+            if !(avoid[fam] ?? []).contains(sp.suffix) { avoid[fam, default: []].append(sp.suffix) }
+            if base.count == 1, let vs = variants[fam], vs.contains(where: { present.contains($0) }) {
+                for v in vs { derived.append(Spec(hook: h, variant: v, chain: [fam, v, h])) }
+            } else {
+                derived.append(Spec(hook: h, variant: "", chain: base + [h]))
             }
         }
-        return out
+        for h in CssSkin.lastHooks.sorted() where present.contains(h) {
+            let fam = h.hasPrefix("msg") ? "msg" : "bubble"
+            if !(avoid[fam] ?? []).contains("-last") { avoid[fam, default: []].append("-last") }
+        }
+        var out: [Spec] = []
+        for h in hooks {
+            let a = avoid[h] ?? []
+            if let vs = variants[h], vs.contains(where: { present.contains($0) }) {
+                for v in vs { out.append(Spec(hook: h, variant: v, chain: [h, v], avoid: a)) }
+            } else if present.contains(h) {
+                let chain = (chains[h] ?? []) + [h]
+                out.append(Spec(hook: h, variant: "", chain: chain, avoid: avoid[chain.first ?? h] ?? []))
+            }
+        }
+        return out + derived
     }
 
     /// 这一串钩子在这一状态、这一部位上合起来的声明（泛的在前、具体的在后；状态叠在常态之上）。一条都没写为 nil
@@ -188,11 +231,47 @@ enum CssRasterPlan {
         var below = false
         /// 这一部位合起来的声明（摆放、九宫格用）
         var raw: [String: String]
+        /// 在深色的样板页里画（键的 state 带 "@dark"）
+        var dark = false
     }
 
-    static func jobs(_ c: CssCompiled) -> [Job] {
+    /// 要画的全部几块，按先后：常规的整块、图标、装饰；它们的深色；结构写法的；它们的深色；按下与聚焦；它们的深色。
+    /// 超过上限时从后往前舍。css 为原文：认深色规则用（解析那一边没读出 dark 时也认得出来）
+    static func jobs(_ c: CssCompiled, css: String? = nil) -> [Job] {
+        let light = groups(c)
+        let textDark = css.map(hasDark) ?? false
+        guard textDark || !c.dark.isEmpty || !c.darkVars.isEmpty else {
+            return light.base + light.structural + light.states
+        }
+        let text = css.map(darkText) ?? ""
+        let darkHooks = Set(c.dark.keys.map(\.hook))
+        // 深色改了变量：哪一块都可能跟着变
+        let allDark = !c.darkVars.isEmpty || text.contains("--")
+        let d = groups(darkOverlay(c))
+        func darkOf(_ dk: [Job], _ lt: [Job]) -> [Job] {
+            // 深色叠上去之后要画的，加上常规要画、深色下也会变的（没有深色那张时会退回常规那张，必须另画）
+            var out: [Job] = []
+            var seen = Set<CssRasterKey>()
+            for j in dk + lt where seen.insert(j.key).inserted {
+                guard allDark || darkTouches(j.spec.chain, text: text, hooks: darkHooks) else { continue }
+                var x = j
+                x.dark = true
+                x.key = CssRaster.dark(j.key)
+                out.append(x)
+            }
+            return out
+        }
+        return light.base + darkOf(d.base, light.base)
+            + light.structural + darkOf(d.structural, light.structural)
+            + light.states + darkOf(d.states, light.states)
+    }
+
+    /// 一份读好的样式按种类分三组：原钩子的整块、图标、装饰；结构写法的；按下与聚焦
+    static func groups(_ c: CssCompiled) -> (base: [Job], structural: [Job], states: [Job]) {
         var boxes: [Job] = [], icons: [Job] = [], decors: [Job] = [], states: [Job] = []
+        var sBoxes: [Job] = [], sIcons: [Job] = [], sDecors: [Job] = []
         for s in specs(c) {
+            let derived = isDerived(s.hook)
             let main = merged(c, s.chain, .normal, .main)
             // 元素本身藏起来了：原生版同样不画，这里也不画
             if let main, val(main, "display") == "none" { continue }
@@ -200,31 +279,127 @@ enum CssRasterPlan {
             func key(_ st: CssState, _ p: CssPart) -> CssRasterKey {
                 CssRasterKey(hook: s.hook, state: st.rawValue, part: p.rawValue, variant: s.variant)
             }
-            if let main, needsBox(main) {
-                boxes.append(Job(key: key(.normal, .main), kind: .box, spec: s, state: .normal, part: .main,
-                                 width: size.width, height: size.height, raw: main))
+            // 派生钩子只画它自己写了的部位，其余部位照原钩子的图
+            func own(_ p: CssPart) -> Bool { !derived || c.style(s.hook, .normal, p) != nil }
+            if let main, own(.main), needsBox(main) {
+                let j = Job(key: key(.normal, .main), kind: .box, spec: s, state: .normal, part: .main,
+                            width: size.width, height: size.height, raw: main)
+                if derived { sBoxes.append(j) } else { boxes.append(j) }
             }
-            for st in [CssState.pressed, .focused] {
-                guard let r = merged(c, s.chain, st, .main), needsBox(r) else { continue }
-                states.append(Job(key: key(st, .main), kind: .box, spec: s, state: st, part: .main,
-                                  width: size.width, height: size.height, raw: r))
+            if !derived {
+                for st in [CssState.pressed, .focused] {
+                    guard let r = merged(c, s.chain, st, .main), needsBox(r) else { continue }
+                    states.append(Job(key: key(st, .main), kind: .box, spec: s, state: st, part: .main,
+                                      width: size.width, height: size.height, raw: r))
+                }
             }
             let iconHidden = main?["iconHidden"] == "1"
-            for part in [CssPart.before, .after] {
+            for part in [CssPart.before, .after] where own(part) {
                 guard let r = merged(c, s.chain, .normal, part), contentOn(r) else { continue }
                 if iconHidden, hasImage(r) {
-                    icons.append(Job(key: key(.normal, part), kind: .icon, spec: s, state: .normal, part: part,
-                                     width: size.width, height: size.height, raw: r))
+                    let j = Job(key: key(.normal, part), kind: .icon, spec: s, state: .normal, part: part,
+                                width: size.width, height: size.height, raw: r)
+                    if derived { sIcons.append(j) } else { icons.append(j) }
                 } else if decorNeeded(r) {
                     let blend = active(r, "mix-blend-mode", none: ["normal"])
                     let z = Int(val(r, "z-index") ?? "") ?? 0
-                    decors.append(Job(key: key(.normal, part), kind: .decor, spec: s, state: .normal, part: part,
-                                      width: size.width, height: size.height, autoHeight: !positioned(r),
-                                      withBackground: blend, below: !blend && z < 0, raw: r))
+                    let j = Job(key: key(.normal, part), kind: .decor, spec: s, state: .normal, part: part,
+                                width: size.width, height: size.height, autoHeight: !positioned(r),
+                                withBackground: blend, below: !blend && z < 0, raw: r)
+                    if derived { sDecors.append(j) } else { decors.append(j) }
                 }
             }
         }
-        return boxes + icons + decors + states
+        return (boxes + icons + decors, sBoxes + sIcons + sDecors, states)
+    }
+
+    // MARK: 深色
+
+    private static let darkQueryRE = try! NSRegularExpression(
+        pattern: #"\(\s*prefers-color-scheme\s*:\s*dark\s*\)"#, options: [.caseInsensitive])
+    private static let lightQueryRE = try! NSRegularExpression(
+        pattern: #"\(\s*prefers-color-scheme\s*:\s*light\s*\)"#, options: [.caseInsensitive])
+    private static let darkThemeRE = try! NSRegularExpression(
+        pattern: #"data-theme\s*[~|^$*]?=\s*["']?dark\b"#, options: [.caseInsensitive])
+
+    private static func matches(_ re: NSRegularExpression, _ s: String) -> Bool {
+        re.firstMatch(in: s, range: NSRange(location: 0, length: (s as NSString).length)) != nil
+    }
+
+    /// CSS 写了深色规则：`@media (prefers-color-scheme: dark)` 或 `[data-theme="dark"]`（网页版深色主题挂在根元素上的属性）
+    static func hasDark(_ css: String) -> Bool {
+        matches(darkQueryRE, css) || matches(darkThemeRE, css)
+    }
+
+    /// 深色规则的原文：深色 @media 块里的全部内容，以及带 data-theme=dark 的那几条（从属性起到这条规则的右花括号）
+    static func darkText(_ css: String) -> String {
+        // 只把 ASCII 字母变小写，字节位置不变
+        let b = Array(css.utf8).map { (65...90).contains($0) ? $0 + 32 : $0 }
+        let at = Array("@media".utf8)
+        var out: [String] = []
+        var i = 0
+        while i < b.count {
+            guard b[i] == 0x40, i + at.count <= b.count, Array(b[i..<(i + at.count)]) == at else { i += 1; continue }
+            guard let open = b[i...].firstIndex(of: 0x7B) else { break }
+            let prelude = String(decoding: b[i..<open], as: UTF8.self)
+            guard matches(darkQueryRE, prelude) else { i = open + 1; continue }
+            var depth = 0
+            var close = b.count
+            for j in open..<b.count {
+                if b[j] == 0x7B { depth += 1 } else if b[j] == 0x7D {
+                    depth -= 1
+                    if depth == 0 { close = j; break }
+                }
+            }
+            out.append(String(decoding: b[(open + 1)..<close], as: UTF8.self))
+            i = close + 1
+        }
+        let ns = css as NSString
+        for m in darkThemeRE.matches(in: css, range: NSRange(location: 0, length: ns.length)) {
+            let rest = NSRange(location: m.range.location, length: ns.length - m.range.location)
+            let end = ns.range(of: "}", options: [], range: rest)
+            let stop = end.location == NSNotFound ? ns.length : end.location
+            out.append(ns.substring(with: NSRange(location: m.range.location, length: stop - m.range.location)).lowercased())
+        }
+        return out.joined(separator: "\n")
+    }
+
+    /// 深色规则碰得到这一串钩子：解析出来的深色样式里有其中一个，或深色原文里写着其中一个的类名（.ph-x，后面不再接字母数字与连字符）
+    static func darkTouches(_ chain: [CssHook], text: String, hooks: Set<CssHook>) -> Bool {
+        if chain.contains(where: { hooks.contains($0) }) { return true }
+        guard !text.isEmpty else { return false }
+        for h in chain {
+            let needle = ".ph-" + h
+            var from = text.startIndex
+            while let r = text.range(of: needle, range: from..<text.endIndex) {
+                guard let next = text[r.upperBound...].unicodeScalars.first else { return true }
+                if !(CharacterSet.alphanumerics.contains(next) || next == "-" || next == "_") { return true }
+                from = r.upperBound
+            }
+        }
+        return false
+    }
+
+    /// 深色样式逐项叠在常规那一份上（只看原文的声明，画图只用这些）
+    static func darkOverlay(_ c: CssCompiled) -> CssCompiled {
+        var o = c
+        for (k, st) in c.dark {
+            var s = c.styles[k] ?? CssStyle()
+            s.raw.merge(st.raw) { _, new in new }
+            o.styles[k] = s
+        }
+        o.vars.merge(c.darkVars) { _, new in new }
+        return o
+    }
+
+    /// 深色、浅色两遍各自把配色的媒体查询定死：本遍的换成恒真的 (min-width: 0px)，另一遍的换成恒假的 (max-width: 0px)。
+    /// 不依赖 WebKit 跟不跟系统外观（另外也把 WKWebView 的外观设成同一种）
+    static func schemeCSS(_ css: String, dark: Bool) -> String {
+        let on = "(min-width: 0px)", off = "(max-width: 0px)"
+        func sub(_ re: NSRegularExpression, _ s: String, _ t: String) -> String {
+            re.stringByReplacingMatches(in: s, range: NSRange(location: 0, length: (s as NSString).length), withTemplate: t)
+        }
+        return sub(lightQueryRE, sub(darkQueryRE, css, dark ? on : off), dark ? off : on)
     }
 
     // MARK: 读声明
@@ -564,15 +739,45 @@ enum CssRasterPlan {
                                            withTemplate: cls)
     }
 
+    /// 一条一条排下来的几种元素：直接排在消息列表里的、排在同一轮那一列（.ph-col）里的。
+    /// 结构写法（:first-child、+、:nth-child、:last-child）在它们身上按真实的兄弟关系命中
+    static let bodyLevel: Set<CssHook> = ["msg", "time-sep", "narration"]
+    static let colLevel: Set<CssHook> = ["bubble", "transfer", "gift", "location"]
+    /// 分两边的几家：另一边的兄弟用它（前面摆另一边的，免得命中「紧跟在同一侧上一条之后」）
+    static let sides: [CssHook: (mine: CssHook, theirs: CssHook)] = [
+        "msg": ("msg-mine", "msg-theirs"), "bubble": ("bubble-mine", "bubble-theirs"),
+        "narration": ("narration-mine", "narration-theirs"),
+    ]
+
+    /// 样板元素前后各摆几个同类的兄弟（藏起来，只为让选择器按结构命中）。
+    /// before 里 true 为同一边、false 为另一边；after 为后面跟几个同一边的
+    static func siblings(_ s: Spec) -> (before: [Bool], after: Int) {
+        switch s.suffix {
+        case "-first": return ([], 1)
+        case "-tail": return ([true], 0)
+        case "-odd": return ([false, false], 1)       // 第三个
+        case "-even": return ([false], 1)             // 第二个
+        case "-cont": return ([true], 1)
+        case "-last": return ([], 0)
+        default:
+            // 原钩子：不当最后一个；写了 -first 就不当第一个；只写了奇或偶的一种，就摆在另一种的位置
+            var n = s.avoid.contains("-first") ? 1 : 0
+            let odd = s.avoid.contains("-odd"), even = s.avoid.contains("-even")
+            if odd && !even && n % 2 == 0 { n += 1 }
+            if even && !odd && n % 2 == 1 { n += 1 }
+            return (Array(repeating: false, count: n), 1)
+        }
+    }
+
     /// 样板元素与它的祖先（照网页版 CHAT_TREE 的层级，类名与网页版一致）
     static func markup(_ job: Job) -> String {
         let s = job.spec
-        let cls = s.chain.filter { !CssSkin.lastHooks.contains($0) }.map { "ph-" + $0 }
+        // -last 一串与结构写法的派生钩子不是真的类名，由兄弟关系表达
+        let cls = s.chain.filter { !CssSkin.lastHooks.contains($0) && !isDerived($0) }.map { "ph-" + $0 }
         var tcls = cls + ["rz-target"]
         if buttons.contains(s.family) || buttons.contains(s.hook) { tcls.append("rz-btn") }
         if job.state == .pressed { tcls.append("rz-active") }
         if job.state == .focused { tcls.append("rz-focus") }
-        let isLast = CssSkin.lastHooks.contains(s.hook)
         let svg = buttons.contains(s.family) || buttons.contains(s.hook)
             ? #"<svg class="rz-svg" width="20" height="20" viewBox="0 0 24 24"></svg>"# : ""
         let target = "<div class=\"\(tcls.joined(separator: " "))\">\(svg)</div>"
@@ -581,7 +786,21 @@ enum CssRasterPlan {
         let msgCls = mine ? "ph-msg ph-msg-mine" : "ph-msg ph-msg-theirs"
         // 后面再接一条同一边的消息：不是一串里的最后一条（:not(:has(~ .ph-msg-mine)) 不命中）
         let sibMsg = "<div class=\"\(msgCls) rz-sib\"></div>"
-        let sibItem = #"<i class="rz-sib"></i>"#
+        // 同类的兄弟：同一边的照样板元素的类名；另一边的把两边的类名对调（没写边的补上另一边）
+        func sib(_ same: Bool) -> String {
+            var c = cls
+            if !same, let sd = sides[s.family] {
+                let mineSide = c.contains("ph-" + sd.mine)
+                c = c.filter { $0 != "ph-" + sd.mine && $0 != "ph-" + sd.theirs }
+                c.append("ph-" + (mineSide ? sd.theirs : sd.mine))
+            }
+            return "<div class=\"\((c + ["rz-sib"]).joined(separator: " "))\"></div>"
+        }
+        let pos = siblings(s)
+        // 一列里的兄弟都在同一边
+        let inColumn = colLevel.contains(s.family)
+        let run = pos.before.map { sib(inColumn || $0) }.joined()
+            + target + String(repeating: sib(true), count: pos.after)
         func page(_ inner: String) -> String { a("ph-screen", a("ph-page", inner)) }
         func chat(_ inner: String) -> String { page(a("ph-chat", inner)) }
         func body(_ inner: String) -> String { chat(a("ph-chat-body", inner)) }
@@ -593,10 +812,9 @@ enum CssRasterPlan {
         // 悬浮返回键（默认开启）：在 .ph-screen 里、.ph-page 外
         case "back": return a("ph-screen", a("ph-page", "") + target)
         case "chat-body", "composer", "panel": return chat(target)
-        case "time-sep", "narration": return body(target)
-        case "msg": return body(target + (isLast ? "" : sibMsg))
-        case "bubble": return inCol(target + (isLast ? "" : sibItem))
-        case "meta", "transfer", "gift", "location": return inCol(target)
+        case _ where bodyLevel.contains(s.family): return body(run)
+        case _ where inColumn: return inCol(run)
+        case "meta": return inCol(target)
         case "stamp", "read": return inCol(a("ph-meta", target))
         case "composer-input", "composer-btn", "send": return chat(a("ph-composer", target))
         default: return chat(target)
@@ -636,15 +854,18 @@ enum CssRasterPlan {
         let base = [
             "*, *::before, *::after { box-sizing: border-box; }",
             "html { -webkit-text-size-adjust: 100%; }",
-            "body { font-family: -apple-system, system-ui, \"PingFang SC\", sans-serif; font-size: 15px; line-height: 1.4; color: #1c1c1e; }",
+            "body { font-family: -apple-system, system-ui, \"PingFang SC\", sans-serif; font-size: 15px; line-height: 1.4; color: \(job.dark ? "#f2f2f2" : "#1c1c1e"); }",
             ":where(.rz-btn) { display: flex; align-items: center; justify-content: center; }",
             ":where(.rz-svg) { display: block; }",
         ].joined(separator: "\n")
-        let user = stateCSS(css, job.state).replacingOccurrences(of: "</style", with: "<\\/style", options: .caseInsensitive)
-        return "<!doctype html><html><head><meta charset=\"utf-8\">"
+        // 深色、浅色两遍各自把配色的媒体查询定死；根元素挂上网页版深色主题的 data-theme
+        let user = stateCSS(schemeCSS(css, dark: job.dark), job.state)
+            .replacingOccurrences(of: "</style", with: "<\\/style", options: .caseInsensitive)
+        let scheme = job.dark ? "dark" : "light"
+        return "<!doctype html><html data-theme=\"\(scheme)\"><head><meta charset=\"utf-8\">"
             + "<meta http-equiv=\"Content-Security-Policy\" content=\"\(csp)\">"
             + "<meta name=\"viewport\" content=\"width=\(Int(g.width.rounded(.up))), initial-scale=1, maximum-scale=1, user-scalable=no\">"
-            + "<meta name=\"color-scheme\" content=\"light\">"
+            + "<meta name=\"color-scheme\" content=\"\(scheme)\">"
             + "<style>\(base)</style><style>\(user)</style><style>\(o.joined(separator: "\n"))</style>"
             + "</head><body class=\"rz-body\"><div class=\"rz-stage\">\(markup(job))</div></body></html>"
     }
@@ -877,7 +1098,7 @@ enum CssRasterizer {
             }
         }
         let prepared = CssRasterPlan.substitute(css, inline)
-        let jobs = CssRasterPlan.jobs(compiled)
+        let jobs = CssRasterPlan.jobs(compiled, css: css)
         guard !jobs.isEmpty else { return out }
         let shot = CssSnapshotter()
         for (i, job) in jobs.enumerated() {
@@ -896,8 +1117,8 @@ enum CssRasterizer {
         return out
     }
 
-    /// 本机存着的图读成 data: 地址
-    private static func dataURI(_ id: String) async -> String? {
+    /// 本机存着的图读成 data: 地址（「对照」页画网页版效果时同样用它换掉网络图片）
+    static func dataURI(_ id: String) async -> String? {
         await Task.detached(priority: .utility) { () -> String? in
             guard let url = MediaStore.url(.images, id: id), let data = try? Data(contentsOf: url), !data.isEmpty else { return nil }
             return "data:\(Images.mediaType(ext: url.pathExtension));base64,\(data.base64EncodedString())"
@@ -908,6 +1129,7 @@ enum CssRasterizer {
         let g = CssRasterPlan.canvas(job)
         let size = CGSize(width: g.width, height: g.height)
         var shots: [UIImage] = []
+        shot.appearance(dark: job.dark)
         for bg in ["#000000", "#ffffff"] {
             let html = CssRasterPlan.document(job, css: css, background: bg, measure: measure)
             guard await shot.load(html, size: size) else { throw StoreError(message: "画图超时，这一块按原生样式显示") }
@@ -1033,6 +1255,12 @@ final class CssSnapshotter: NSObject, WKNavigationDelegate {
         // 背景图解码、排版落定
         try? await Task.sleep(nanoseconds: 60_000_000)
         return true
+    }
+
+    /// 深色那一遍：WebKit 的 prefers-color-scheme 跟着这个外观走。样板页另外把配色查询改写成定值（CssRasterPlan.schemeCSS），
+    /// 两道一起，不依赖其中任何一道单独生效
+    func appearance(dark: Bool) {
+        web.overrideUserInterfaceStyle = dark ? .dark : .light
     }
 
     func snapshot() async -> UIImage? {

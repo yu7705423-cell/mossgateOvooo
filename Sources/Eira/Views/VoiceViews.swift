@@ -34,9 +34,11 @@ struct VoiceBubble: View {
             }
             status(media: media, err: err)
         }
-        .padding(Theme.pad)
-        .foregroundStyle(mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)
-        .background(mine ? Theme.bubbleMine : Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        // 美化里写了 .ph-voice 就照它画，没写照原样（第一步的 PhSurface 两条路）
+        .modifier(PhSurface(hooks: ["voice"], fallback: PhFallback(fill: mine ? Theme.bubbleMine : Theme.bubbleTheirs,
+                                                                    radius: Theme.bubbleRadius, continuous: false,
+                                                                    padH: Theme.pad, padV: Theme.pad,
+                                                                    fg: mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)))
         .task(id: "\(message.id)|\(media)|\(audioId)") {
             synthesizing = media == "pending" && MediaJobs.isRunning(message.id)
             if message.row.number("seconds") == nil && !audioId.isEmpty { length = VoicePlayer.duration(audioId) }

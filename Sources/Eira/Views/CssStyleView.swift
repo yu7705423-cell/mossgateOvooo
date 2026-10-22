@@ -78,6 +78,8 @@ extension CssStyle {
         if let v = top.hidden { out.hidden = v }
         if let v = top.content { out.content = v }
         out.raw.merge(top.raw) { _, b in b }
+        // animation 同 CSS：后写的那一条整个换掉前面的
+        if !top.animations.isEmpty { out.animations = top.animations }
         return out
     }
 
@@ -115,6 +117,95 @@ extension CssCompiled {
     /// 某个钩子的伪元素上写的那句话（::before 优先）
     func pseudoText(_ hooks: [CssHook], _ part: CssPart) -> String? {
         resolve(hooks, .normal, part)?.contentText
+    }
+
+    /// 这一种外观下实际用的那一份（第三步）：深色时把 `dark` 里写了的逐项叠在常规那一份上（同一个键逐个字段，后写的赢），
+    /// `darkVars` 盖过 `vars`。浅色、或没有写深色规则时原样返回
+    func scheme(dark isDark: Bool) -> CssCompiled {
+        guard isDark, !(dark.isEmpty && darkVars.isEmpty) else { return self }
+        var out = self
+        for (k, s) in dark { out.styles[k] = CssStyle.merge(styles[k], s) }
+        out.vars.merge(darkVars) { _, b in b }
+        return out
+    }
+
+    /// 写了深色规则
+    var hasDark: Bool { !(dark.isEmpty && darkVars.isEmpty) }
+}
+
+// MARK: - 第三步：结构写法（派生钩子）
+
+/// 一条消息、一个气泡在列表里的位置。派生钩子（`CssStructural`）按它挑。全为默认值时一个派生钩子都不挂
+struct CssStructCtx: Equatable, Sendable {
+    /// 第一个（消息：整个列表里第一条；气泡：同一条消息里第一个）
+    var first = false
+    /// 同一条消息（.ph-col）里最后一个气泡
+    var tail = false
+    /// 从 0 数的序号，按奇偶挑 -odd / -even（第 0 个即 nth-child(1)，为奇数）。nil 为不按奇偶
+    var index: Int?
+    /// 紧跟在同一侧上一条之后（连发）
+    var cont = false
+    /// 最后一个（消息：整个列表里最后一条；气泡：同一条消息里最后一个）
+    var last = false
+    /// 这一侧第一条、最后一条：挂 -mine / -theirs 的钩子的 -first、-last 按这两项算
+    var firstOfSide = false
+    var lastOfSide = false
+}
+
+extension CssStructural {
+    /// 分了边的钩子（msg-mine、bubble-theirs……）
+    static func sided(_ h: CssHook) -> Bool { h.hasSuffix("-mine") || h.hasSuffix("-theirs") }
+
+    /// 这个后缀此刻挂不挂在这个原钩子上
+    static func applies(_ suffix: String, to base: CssHook, _ c: CssStructCtx) -> Bool {
+        switch suffix {
+        case "-first": return sided(base) ? c.firstOfSide : c.first
+        case "-tail": return c.tail
+        case "-odd": return c.index.map { $0 % 2 == 0 } ?? false
+        case "-even": return c.index.map { $0 % 2 != 0 } ?? false
+        case "-cont": return c.cont
+        case "-last": return sided(base) ? c.lastOfSide : c.last
+        default: return false
+        }
+    }
+
+    /// 层叠的次序：原钩子在前（基础的在前、分边的在后），派生的按 first、tail、odd/even、cont、last 依次接在后面，
+    /// 同一个后缀里仍是基础的在前。交给 `CssCompiled.resolve` 叠，后面的赢
+    static func hooks(_ bases: [CssHook], _ c: CssStructCtx) -> [CssHook] {
+        var out = bases
+        for s in suffixes {
+            for b in bases where applies(s, to: b, c) { out.append(hook(b, s)) }
+        }
+        return out
+    }
+
+    /// 美化里用到了哪几个后缀（常规与深色两份都看）。一个都没有时消息行不算位置，也不因位置变化重画
+    static func used(_ c: CssCompiled?) -> Set<String> {
+        guard let c else { return [] }
+        var out = Set<String>()
+        for k in c.styles.keys { if let s = split(k.hook) { out.insert(s.suffix) } }
+        for k in c.dark.keys { if let s = split(k.hook) { out.insert(s.suffix) } }
+        return out
+    }
+
+    /// 只留美化用到的那几项
+    static func trimmed(_ c: CssStructCtx, used: Set<String>) -> CssStructCtx {
+        var o = c
+        if !used.contains("-first") { o.first = false; o.firstOfSide = false }
+        if !used.contains("-tail") { o.tail = false }
+        if !used.contains("-odd") && !used.contains("-even") { o.index = nil }
+        if !used.contains("-cont") { o.cont = false }
+        if !used.contains("-last") { o.last = false; o.lastOfSide = false }
+        return o
+    }
+
+    /// 一个气泡的位置：同一条消息里第 i 个（从 0 数），共 n 个。first、last、奇偶按它在这一列里的位置算
+    /// （同 CSS 的 :first-child、:last-child、:nth-child 落在 .ph-col 的子元素上）；连发跟着这一条消息
+    static func bubble(_ row: CssStructCtx, at i: Int, of n: Int, used: Set<String>) -> CssStructCtx {
+        let isFirst = i == 0, isLast = i >= n - 1
+        let c = CssStructCtx(first: isFirst, tail: isLast, index: i, cont: row.cont, last: isLast,
+                             firstOfSide: isFirst, lastOfSide: isLast)
+        return trimmed(c, used: used)
     }
 }
 
@@ -390,14 +481,16 @@ struct PhBox: ViewModifier {
     /// 伪元素的装饰在这里贴不贴（时间分隔行把它们排在字的上下，由调用的一边自己画）
     var rasterDecor = true
     @Environment(\.phRaster) private var raster
+    @Environment(\.colorScheme) private var scheme
 
     func body(content: Content) -> some View {
         if style.hidden == true {
             EmptyView()
         } else {
             let shape = CssBoxShape(style, fallback: fallback)
-            let box = rasterBox ? CssRasterDraw.pick(raster, hooks, state: state, kind: .box) : nil
-            let decors = rasterDecor ? CssRasterDraw.decors(raster, hooks, state: state) : []
+            let dark = scheme == .dark
+            let box = rasterBox ? CssRasterDraw.pick(raster, hooks, state: state, kind: .box, dark: dark) : nil
+            let decors = rasterDecor ? CssRasterDraw.decors(raster, hooks, state: state, dark: dark) : []
             content
                 .modifier(PhTextLook(style: style, fallback: fallback))
                 .padding(insets)
@@ -422,8 +515,8 @@ struct PhBox: ViewModifier {
                     if box == nil { PhEdges(style: style, fallback: fallback, shape: shape) }
                 }
                 .modifier(PhDecors(images: decors.filter { !$0.below }, below: false))
-                .opacity(min(1, max(0, style.opacity ?? 1)))
-                .modifier(PhTransform(t: style.transform))
+                // 透明度与变换；挂了动画时由动画接管这两项（第三步）
+                .modifier(PhMotion(style: style))
                 .padding(style.margin.map(CssPaint.insets) ?? EdgeInsets())
         }
     }
@@ -662,6 +755,11 @@ extension View {
         modifier(PhHook(hooks: hooks, state: state, fallback: fallback))
     }
 
+    /// 同上；decor 为 false 时伪元素画成的装饰不在这里贴（由调用的一边自己画，如消息行的「最后一条」那句话）
+    func phStyle(_ hooks: [CssHook], decor: Bool, fallback: PhFallback = PhFallback()) -> some View {
+        modifier(PhHook(hooks: hooks, state: .normal, fallback: fallback, decor: decor))
+    }
+
     /// 按钮：美化给这几个钩子写了样式时换成能读出「按下」的样式（`:active`），否则照旧 `.plain`
     func phButton(_ hooks: [CssHook], fallback: PhFallback = PhFallback()) -> some View {
         modifier(PhButtonIf(hooks: hooks, fallback: fallback))
@@ -672,11 +770,87 @@ private struct PhHook: ViewModifier {
     let hooks: [CssHook]
     let state: CssState
     let fallback: PhFallback
+    var decor = true
     @Environment(\.phSkin) private var skin
 
     func body(content: Content) -> some View {
         if let skin, skin.has(hooks), let st = skin.resolve(hooks, state) {
-            content.modifier(PhBox(style: st, fallback: fallback, hooks: hooks, state: state))
+            content.modifier(PhBox(style: st, fallback: fallback, hooks: hooks, state: state, rasterDecor: decor))
+        } else {
+            content
+        }
+    }
+}
+
+/// 原本自己画了字体、颜色、内距、底色的一小块（引用条、译文、撤回那一行……）：
+/// 美化给这几个钩子写了样式时照 CSS 画（原本的样子当作 fallback）；没写时照原样画，与改之前一个像素都不差。
+/// font 是原本的字体（nil 为原本没设）；fallback 里的 fg、padH / padV、fill、radius、continuous、minWidth / minHeight、alignment
+/// 是原本的颜色、内距、底与圆角。原样那一支不画阴影：原本带阴影的元素不要用它
+struct PhSurface: ViewModifier {
+    let hooks: [CssHook]
+    var fallback = PhFallback()
+    var font: Font? = nil
+    var state: CssState = .normal
+    @Environment(\.phSkin) private var skin
+
+    func body(content: Content) -> some View {
+        if let skin, !hooks.isEmpty, skin.has(hooks), let st = skin.resolve(hooks, state) {
+            content
+                .modifier(PhOptionalFont(font: st.hasFont ? CssFonts.font(st, size: fallback.fontSize ?? 15) : font))
+                .modifier(PhBox(style: st, fallback: fallback, hooks: hooks, state: state))
+        } else {
+            content.modifier(PhPlain(fallback: fallback, font: font))
+        }
+    }
+}
+
+/// 没有美化时的原样：字体、颜色、内距、最小尺寸、底色（按原本的圆角）。fallback 里没写的那几项不加任何修饰
+struct PhPlain: ViewModifier {
+    let fallback: PhFallback
+    var font: Font? = nil
+
+    func body(content: Content) -> some View {
+        content
+            .modifier(PhOptionalFont(font: font))
+            .modifier(PhOptionalForeground(color: fallback.fg))
+            .modifier(PhOptionalPadding(h: fallback.padH, v: fallback.padV))
+            .modifier(PhOptionalMinFrame(minWidth: fallback.minWidth, minHeight: fallback.minHeight, alignment: fallback.alignment))
+            .modifier(PhOptionalFill(fill: fallback.fill, radius: fallback.radius, continuous: fallback.continuous))
+    }
+}
+
+private struct PhOptionalPadding: ViewModifier {
+    let h: CGFloat?
+    let v: CGFloat?
+    func body(content: Content) -> some View {
+        if h == nil && v == nil {
+            content
+        } else {
+            content.padding(.horizontal, h ?? 0).padding(.vertical, v ?? 0)
+        }
+    }
+}
+
+private struct PhOptionalMinFrame: ViewModifier {
+    let minWidth: CGFloat?
+    let minHeight: CGFloat?
+    let alignment: Alignment
+    func body(content: Content) -> some View {
+        if minWidth == nil && minHeight == nil {
+            content
+        } else {
+            content.frame(minWidth: minWidth, minHeight: minHeight, alignment: alignment)
+        }
+    }
+}
+
+private struct PhOptionalFill: ViewModifier {
+    let fill: Color?
+    let radius: CGFloat
+    let continuous: Bool
+    func body(content: Content) -> some View {
+        if let fill {
+            content.background(fill, in: RoundedRectangle(cornerRadius: radius, style: continuous ? .continuous : .circular))
         } else {
             content
         }
@@ -810,31 +984,41 @@ struct PhPseudoText: View {
 
 /// 找图、摆图的纯计算（测试直接调这些）
 enum CssRasterDraw {
-    /// 按什么次序找一块图：先找这一种状态，没有再找平时的；同一状态里先找「基础钩子 + 具体一边」的变体
-    /// （气泡挂着 bubble 与 bubble-mine：hook bubble、variant bubble-mine），再按钩子从具体到基础各找一次
-    static func candidates(_ hooks: [CssHook], state: CssState = .normal, part: CssPart = .main) -> [CssRasterKey] {
-        guard let base = hooks.first else { return [] }
+    /// 按什么次序找一块图：先找这一种状态，没有再找平时的；同一状态里先找派生钩子（第三步，结构写法：
+    /// 后挂上的先找，即 last、cont、odd/even、tail、first 依次，同一后缀里分边的先找；原钩子不分边的派生先找带这一边的那张，
+    /// `CssRaster.structuralKeys`），再找「基础钩子 + 具体一边」的变体（气泡挂着 bubble 与 bubble-mine：hook bubble、variant bubble-mine），
+    /// 再按钩子从具体到基础各找一次。深色时每一个键先找它的深色那张（`CssRaster.withDark`）
+    static func candidates(_ hooks: [CssHook], state: CssState = .normal, part: CssPart = .main, dark: Bool = false) -> [CssRasterKey] {
+        let bases = hooks.filter { CssStructural.split($0) == nil }
+        let derived = hooks.filter { CssStructural.split($0) != nil }
+        guard let base = bases.first ?? hooks.first else { return [] }
         var states = [state]
         if state != .normal { states.append(.normal) }
         var out: [CssRasterKey] = []
         for st in states {
-            for v in hooks.dropFirst().reversed() where v != base {
+            for d in derived.reversed() {
+                let root = CssStructural.split(d)?.base ?? d
+                // 原钩子不分边（bubble-tail）时，带上这一块挂着的那一边（bubble-mine）
+                let side = CssStructural.sided(root) ? nil : bases.first { $0 != root && $0.hasPrefix(root + "-") && CssStructural.sided($0) }
+                out += CssRaster.structuralKeys(d, side: side, state: st.rawValue, part: part.rawValue)
+            }
+            for v in bases.dropFirst().reversed() where v != base {
                 out.append(CssRasterKey(hook: base, state: st.rawValue, part: part.rawValue, variant: v))
             }
-            for h in hooks.reversed() {
+            for h in bases.reversed() {
                 out.append(CssRasterKey(hook: h, state: st.rawValue, part: part.rawValue))
             }
         }
         var seen = Set<CssRasterKey>()
-        return out.filter { seen.insert($0).inserted }
+        return CssRaster.withDark(out.filter { seen.insert($0).inserted }, dark: dark)
     }
 
     /// 这几个钩子在这一种状态、这几个部位上画好的某一种图。没有为 nil
     static func pick(_ set: CssRasterSet?, _ hooks: [CssHook], state: CssState = .normal,
-                     parts: [CssPart] = [.main], kind: CssRasterImage.Kind) -> CssRasterImage? {
+                     parts: [CssPart] = [.main], kind: CssRasterImage.Kind, dark: Bool = false) -> CssRasterImage? {
         guard let set, !set.images.isEmpty, !hooks.isEmpty else { return nil }
         for p in parts {
-            for k in candidates(hooks, state: state, part: p) {
+            for k in candidates(hooks, state: state, part: p, dark: dark) {
                 if let img = set.images[CssRaster.id(k)], img.kind == kind, !img.imageId.isEmpty { return img }
             }
         }
@@ -842,14 +1026,14 @@ enum CssRasterDraw {
     }
 
     /// ::before、::after 画成的装饰（先 before 后 after：after 画在上面，同 CSS）
-    static func decors(_ set: CssRasterSet?, _ hooks: [CssHook], state: CssState = .normal) -> [CssRasterImage] {
+    static func decors(_ set: CssRasterSet?, _ hooks: [CssHook], state: CssState = .normal, dark: Bool = false) -> [CssRasterImage] {
         guard set != nil, !hooks.isEmpty else { return [] }
-        return [CssPart.before, .after].compactMap { pick(set, hooks, state: state, parts: [$0], kind: .decor) }
+        return [CssPart.before, .after].compactMap { pick(set, hooks, state: state, parts: [$0], kind: .decor, dark: dark) }
     }
 
     /// 换掉图标的那一张（`.ph-x svg { display: none }` 加伪元素贴图）
-    static func icon(_ set: CssRasterSet?, _ hooks: [CssHook]) -> CssRasterImage? {
-        pick(set, hooks, parts: [.main, .before, .after], kind: .icon)
+    static func icon(_ set: CssRasterSet?, _ hooks: [CssHook], dark: Bool = false) -> CssRasterImage? {
+        pick(set, hooks, parts: [.main, .before, .after], kind: .icon, dark: dark)
     }
 
     /// 装饰对齐元素的哪个角、哪条边。认不出的按左上
@@ -1068,6 +1252,363 @@ struct PhStickyTop: ViewModifier {
             }
         } else {
             content
+        }
+    }
+}
+
+// MARK: - 第三步：动画（@keyframes）
+
+/// 动画的纯计算（测试直接调这些）。只动透明度与变换，同 `CssKeyframe`
+enum CssAnim {
+    /// t 秒（从元素出现算起）时这一段动画在关键帧上的位置，0...1，已按方向翻过、未套时间曲线。
+    /// nil 为此刻不起作用（还在延迟里且没有 backwards，或已经播完且没有 forwards）。同 CSS 的 animation 时序：
+    /// 延迟、次数（含小数与 infinite）、方向（reverse、alternate、alternate-reverse）、填充（forwards、backwards、both）
+    static func progress(_ a: CssAnimation, at t: Double) -> Double? {
+        let d = a.duration.isFinite ? max(0, a.duration) : 0
+        let local = t - (a.delay.isFinite ? a.delay : 0)
+        let back = a.fillMode == "backwards" || a.fillMode == "both"
+        let fwd = a.fillMode == "forwards" || a.fillMode == "both"
+        if local.isNaN { return nil }
+        if local < 0 { return back ? directed(a.direction, iteration: 0, frac: 0) : nil }
+        if let raw = a.iterations {
+            let n = raw.isFinite ? max(0, raw) : 0
+            if local >= n * d {
+                guard fwd else { return nil }
+                if n == 0 { return directed(a.direction, iteration: 0, frac: 0) }
+                let whole = n.rounded(.down)
+                if n == whole { return directed(a.direction, iteration: n - 1, frac: 1) }
+                return directed(a.direction, iteration: whole, frac: n - whole)
+            }
+        } else if d <= 0 || !local.isFinite {
+            // 无限次：时长为 0 时一开始就算播完；「放到最后」没有终点，按不起作用（停在元素自己的样子）
+            return d <= 0 && fwd ? directed(a.direction, iteration: 0, frac: 1) : nil
+        }
+        let q = local / d
+        let iteration = q.rounded(.down)
+        return directed(a.direction, iteration: iteration, frac: q - iteration)
+    }
+
+    /// 按方向翻：第 iteration 次（从 0 数）里的 frac
+    static func directed(_ direction: String, iteration: Double, frac: Double) -> Double {
+        let f = min(1, max(0, frac))
+        let odd = iteration.truncatingRemainder(dividingBy: 2) != 0
+        switch direction {
+        case "reverse": return 1 - f
+        case "alternate": return odd ? 1 - f : f
+        case "alternate-reverse": return odd ? f : 1 - f
+        default: return f
+        }
+    }
+
+    /// 时间曲线：linear、ease、ease-in、ease-out、ease-in-out、step-start、step-end、cubic-bezier(…)、steps(n[, start|end])。
+    /// 认不出的按 ease
+    static func ease(_ timing: String, _ x: Double) -> Double {
+        let t = timing.trimmingCharacters(in: .whitespaces).lowercased()
+        let v = min(1, max(0, x))
+        switch t {
+        case "linear": return v
+        case "ease-in": return bezier(0.42, 0, 1, 1, v)
+        case "ease-out": return bezier(0, 0, 0.58, 1, v)
+        case "ease-in-out": return bezier(0.42, 0, 0.58, 1, v)
+        case "step-start": return v > 0 ? 1 : 0
+        case "step-end": return v < 1 ? 0 : 1
+        default: break
+        }
+        if t.hasPrefix("cubic-bezier("), t.hasSuffix(")") {
+            let n = t.dropFirst("cubic-bezier(".count).dropLast().split(separator: ",")
+                .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+            if n.count == 4 { return bezier(min(1, max(0, n[0])), n[1], min(1, max(0, n[2])), n[3], v) }
+        }
+        if t.hasPrefix("steps("), t.hasSuffix(")") {
+            let parts = t.dropFirst("steps(".count).dropLast().split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
+            if let first = parts.first, let k = Int(first), k > 0 {
+                let start = parts.count > 1 && (parts[1] == "start" || parts[1] == "jump-start")
+                let n = Double(k)
+                let s = start ? (v * n).rounded(.down) + 1 : (v * n).rounded(.down)
+                return min(1, max(0, s / n))
+            }
+        }
+        return bezier(0.25, 0.1, 0.25, 1, v)
+    }
+
+    /// 三次贝塞尔（起点 0,0、终点 1,1）：先按 x 解出参数，再取 y
+    static func bezier(_ x1: Double, _ y1: Double, _ x2: Double, _ y2: Double, _ x: Double) -> Double {
+        if x <= 0 { return 0 }
+        if x >= 1 { return 1 }
+        func bx(_ u: Double) -> Double { let m = 1 - u; return 3 * m * m * u * x1 + 3 * m * u * u * x2 + u * u * u }
+        func by(_ u: Double) -> Double { let m = 1 - u; return 3 * m * m * u * y1 + 3 * m * u * u * y2 + u * u * u }
+        func dx(_ u: Double) -> Double { let m = 1 - u; return 3 * m * m * x1 + 6 * m * u * (x2 - x1) + 3 * u * u * (1 - x2) }
+        var u = x
+        for _ in 0..<8 {
+            let err = bx(u) - x
+            if abs(err) < 1e-7 { return by(u) }
+            let slope = dx(u)
+            if abs(slope) < 1e-6 { break }
+            u -= err / slope
+        }
+        // 牛顿法不收敛时二分
+        var lo = 0.0, hi = 1.0
+        u = x
+        for _ in 0..<60 {
+            let v = bx(u)
+            if abs(v - x) < 1e-7 { break }
+            if v < x { lo = u } else { hi = u }
+            u = (lo + hi) / 2
+        }
+        return by(u)
+    }
+
+    /// 一个属性在关键帧之间插值。没写在 0% / 100% 上的那一端用元素自己的值（同 CSS 的隐式首尾帧）；
+    /// 每两帧之间各自套一遍时间曲线（同 CSS）
+    static func interp<V>(_ points: [(at: Double, value: V)], _ p: Double, base: V, timing: String,
+                          lerp: (V, V, Double) -> V) -> V? {
+        guard !points.isEmpty else { return nil }
+        var list = points.sorted { $0.at < $1.at }
+        if let f = list.first, f.at > 0 { list.insert((at: 0, value: base), at: 0) }
+        if let l = list.last, l.at < 1 { list.append((at: 1, value: base)) }
+        if p <= list[0].at { return list[0].value }
+        for i in 1..<list.count where p <= list[i].at {
+            let a = list[i - 1], b = list[i]
+            let span = b.at - a.at
+            let f = span > 0 ? (p - a.at) / span : 1
+            return lerp(a.value, b.value, ease(timing, f))
+        }
+        return list[list.count - 1].value
+    }
+
+    static func lerp(_ a: Double, _ b: Double, _ f: Double) -> Double { a + (b - a) * f }
+
+    static func lerp(_ a: CssTransform, _ b: CssTransform, _ f: Double) -> CssTransform {
+        CssTransform(dx: lerp(a.dx, b.dx, f), dy: lerp(a.dy, b.dy, f), rotate: lerp(a.rotate, b.rotate, f),
+                     scaleX: lerp(a.scaleX, b.scaleX, f), scaleY: lerp(a.scaleY, b.scaleY, f))
+    }
+
+    /// 一段动画在 t 秒时给出的透明度与变换（没动到的那一项为 nil）
+    static func sample(_ a: CssAnimation, at t: Double, opacity: Double, transform: CssTransform?)
+        -> (opacity: Double?, transform: CssTransform?) {
+        guard let p = progress(a, at: t) else { return (nil, nil) }
+        let ops = a.frames.compactMap { f in f.opacity.map { (at: f.at, value: $0) } }
+        let tfs = a.frames.compactMap { f in f.transform.map { (at: f.at, value: $0) } }
+        let op = interp(ops, p, base: opacity, timing: a.timing) { (x: Double, y: Double, f: Double) in lerp(x, y, f) }
+        let tf = interp(tfs, p, base: transform ?? CssTransform(), timing: a.timing) { (x: CssTransform, y: CssTransform, f: Double) in lerp(x, y, f) }
+        return (op.map { min(1, max(0, $0)) }, tf)
+    }
+
+    /// 几段动画一起：后写的盖过前面的（同 CSS），都没动到的那一项用元素自己的值
+    static func sampleAll(_ list: [CssAnimation], at t: Double, opacity: Double, transform: CssTransform?)
+        -> (opacity: Double, transform: CssTransform?) {
+        var op = opacity, tf = transform
+        for a in list {
+            let v = sample(a, at: t, opacity: opacity, transform: transform)
+            if let o = v.opacity { op = o }
+            if let x = v.transform { tf = x }
+        }
+        return (op, tf)
+    }
+
+    /// 停下来的样子（「减弱动态效果」打开时、或播完之后）：有限次且 forwards 的停在终点，其余为元素自己的值
+    static func rest(_ list: [CssAnimation], opacity: Double, transform: CssTransform?) -> (opacity: Double, transform: CssTransform?) {
+        sampleAll(list, at: .infinity, opacity: opacity, transform: transform)
+    }
+
+    /// 全部播完要多少秒（从出现算起）。有无限次的为 nil
+    static func total(_ list: [CssAnimation]) -> Double? {
+        var out = 0.0
+        for a in list {
+            guard let n = a.iterations else { return nil }
+            let d = a.duration.isFinite ? max(0, a.duration) : 0
+            out = max(out, max(0, a.delay.isFinite ? a.delay : 0) + max(0, n.isFinite ? n : 0) * d)
+        }
+        return out
+    }
+}
+
+/// 同时在播的无限次动画的名额。一屏的气泡都挂着呼吸、闪烁时，每一个都每帧重画，滑动会卡；
+/// 超出名额的停在元素自己的样子，不播
+final class PhAnimBudget: @unchecked Sendable {
+    static let shared = PhAnimBudget()
+    /// 同时最多播几个无限次的动画
+    static let limit = 12
+
+    private let lock = NSLock()
+    private var used = 0
+    let cap: Int
+
+    init(cap: Int = PhAnimBudget.limit) { self.cap = cap }
+
+    /// 要一个名额；满了为 false
+    func take() -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard used < cap else { return false }
+        used += 1
+        return true
+    }
+
+    func give() {
+        lock.lock(); defer { lock.unlock() }
+        used = max(0, used - 1)
+    }
+
+    var inUse: Int {
+        lock.lock(); defer { lock.unlock() }
+        return used
+    }
+}
+
+/// 透明度与变换。没挂动画时与第二步一样（不经过任何额外的视图）；「减弱动态效果」打开时停在静止的样子
+struct PhMotion: ViewModifier {
+    let style: CssStyle
+    @Environment(\.accessibilityReduceMotion) private var reduce
+
+    func body(content: Content) -> some View {
+        let op = min(1, max(0, style.opacity ?? 1))
+        if style.animations.isEmpty {
+            content
+                .opacity(op)
+                .modifier(PhTransform(t: style.transform))
+        } else if reduce {
+            let v = CssAnim.rest(style.animations, opacity: op, transform: style.transform)
+            content
+                .opacity(v.opacity)
+                .modifier(PhTransform(t: v.transform))
+        } else {
+            content.modifier(PhAnimPlayer(anims: style.animations, opacity: op, transform: style.transform))
+        }
+    }
+}
+
+/// 照着时间播。只在屏幕上时走帧（消息列表是按需建行的，滑出去的那几行 onDisappear 停下）；
+/// 有限次的播完就停、停在终点或元素自己的样子；无限次的要先拿到名额（`PhAnimBudget`）
+private struct PhAnimPlayer: ViewModifier {
+    let anims: [CssAnimation]
+    let opacity: Double
+    let transform: CssTransform?
+    @State private var start: Date?
+    @State private var done = false
+    @State private var visible = false
+    @State private var slot = false
+
+    private var infinite: Bool { CssAnim.total(anims) == nil }
+
+    func body(content: Content) -> some View {
+        let still = done || (infinite && !slot)
+        TimelineView(.animation(minimumInterval: 1.0 / 60, paused: still || !visible)) { tl in
+            let t = still ? Double.infinity : start.map { tl.date.timeIntervalSince($0) } ?? 0
+            let v = CssAnim.sampleAll(anims, at: t, opacity: opacity, transform: transform)
+            content
+                .opacity(v.opacity)
+                .modifier(PhTransform(t: v.transform))
+        }
+        .onAppear {
+            visible = true
+            if start == nil { start = Date() }
+            if infinite && !slot { slot = PhAnimBudget.shared.take() }
+        }
+        .onDisappear {
+            visible = false
+            if slot { PhAnimBudget.shared.give(); slot = false }
+        }
+        .task(id: start) {
+            guard let start, let total = CssAnim.total(anims) else { return }
+            let left = total - Date().timeIntervalSince(start)
+            if left > 0 { try? await Task.sleep(nanoseconds: UInt64((left + 0.03) * 1_000_000_000)) }
+            if !Task.isCancelled { done = true }
+        }
+    }
+}
+
+// MARK: - 第三步：自己画的顶栏
+
+/// 顶栏（.ph-navbar）什么时候自己画：系统顶栏只收一种填充（`PhNavBar`），美化写了它画不出的
+/// （边框、阴影、外框线、圆角、好几层背景、背景图、画好的底图、自定的高度）时，系统顶栏藏起来，自己画一条
+enum PhNavPlan {
+    static func custom(_ s: CssStyle?, hasRaster: Bool, height: CGFloat?) -> Bool {
+        guard let s, s.hidden != true else { return false }
+        if hasRaster || height != nil { return true }
+        if s.border != nil || s.borderTop != nil || s.borderBottom != nil || s.outline != nil { return true }
+        if !(s.shadows ?? []).isEmpty { return true }
+        if s.radius != nil || s.radiusPercent != nil { return true }
+        let layers = s.background?.layers ?? []
+        if layers.count > 1 { return true }
+        if layers.contains(where: { if case .image = $0 { return true }; return false }) { return true }
+        return false
+    }
+}
+
+/// 自己画的顶栏的底：画好的底图按九宫格拉伸，没有图时照格子画（背景、阴影、边框）。调用的一边让它伸到状态栏底下
+struct PhBarBackground: View {
+    let style: CssStyle
+    var image: CssRasterImage?
+    var fill: Color = Theme.bg
+
+    var body: some View {
+        let fb = PhFallback(fill: fill, continuous: false)
+        let shape = CssBoxShape(style, fallback: fb)
+        if let image {
+            CssRasterView(image: image) {
+                PhBackground(style: style, fallback: fb, shape: shape)
+                    .overlay { PhEdges(style: style, fallback: fb, shape: shape) }
+            }
+        } else {
+            PhBackground(style: style, fallback: fb, shape: shape)
+                .overlay { PhEdges(style: style, fallback: fb, shape: shape) }
+        }
+    }
+}
+
+/// 换了返回键、或藏了系统顶栏之后，系统的左缘右滑返回会失效（导航控制器自带的代理按「有没有系统返回键」放行）。
+/// 打开时换上自己的代理：只要这一层不是最底下那一页就放行；离开这一页时换回原来的代理，别的页面不受影响
+struct PhSwipeBack: UIViewControllerRepresentable {
+    var on: Bool
+
+    func makeUIViewController(context: Context) -> Holder { Holder() }
+
+    func updateUIViewController(_ vc: Holder, context: Context) {
+        vc.on = on
+        vc.apply()
+    }
+
+    final class Holder: UIViewController, UIGestureRecognizerDelegate {
+        var on = false
+        private weak var nav: UINavigationController?
+        private weak var saved: UIGestureRecognizerDelegate?
+        private var installed = false
+
+        override func viewDidLoad() {
+            super.viewDidLoad()
+            view.isUserInteractionEnabled = false
+            view.backgroundColor = .clear
+        }
+
+        override func viewDidAppear(_ animated: Bool) {
+            super.viewDidAppear(animated)
+            apply()
+        }
+
+        override func viewWillDisappear(_ animated: Bool) {
+            super.viewWillDisappear(animated)
+            restore()
+        }
+
+        func apply() {
+            guard on, let nc = navigationController, let g = nc.interactivePopGestureRecognizer else { restore(); return }
+            if !installed {
+                saved = g.delegate
+                g.delegate = self
+                nav = nc
+                installed = true
+            }
+            g.isEnabled = true
+        }
+
+        func restore() {
+            guard installed else { return }
+            installed = false
+            if let g = nav?.interactivePopGestureRecognizer, g.delegate === self { g.delegate = saved }
+        }
+
+        func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+            (nav?.viewControllers.count ?? 0) > 1 && nav?.transitionCoordinator == nil
         }
     }
 }

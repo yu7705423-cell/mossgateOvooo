@@ -551,9 +551,8 @@ struct CallCard: View {
             }
             if let problem { Text(problem).font(.caption).foregroundStyle(Theme.danger) }
         }
-        .padding(Theme.pad)
-        .foregroundStyle(Theme.bubbleTheirsText)
-        .background(Theme.bubbleTheirs, in: RoundedRectangle(cornerRadius: Theme.bubbleRadius))
+        .modifier(PhSurface(hooks: ["call"], fallback: PhFallback(fill: Theme.bubbleTheirs, radius: Theme.bubbleRadius, continuous: false,
+                                                                   padH: Theme.pad, padV: Theme.pad, fg: Theme.bubbleTheirsText)))
     }
 
     /// 用户点的，手动一次。

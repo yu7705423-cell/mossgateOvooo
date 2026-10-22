@@ -27,9 +27,10 @@ struct StatusBlockView: View {
                     }
                 }
             }
-            .padding(.horizontal, Theme.sp3).padding(.vertical, Theme.sp2)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.groupFill, in: RoundedRectangle(cornerRadius: Theme.rMd, style: .continuous))
+            // 美化里写了 .ph-status 就照它画，没写照原样
+            .modifier(PhSurface(hooks: ["status"], fallback: PhFallback(fill: Theme.groupFill, radius: Theme.rMd,
+                                                                     padH: Theme.sp3, padV: Theme.sp2, alignment: .leading)))
             .padding(.horizontal, Theme.pad)
             .accessibilityElement(children: .combine)
         }
