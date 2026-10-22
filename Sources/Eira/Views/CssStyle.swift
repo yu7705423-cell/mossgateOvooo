@@ -122,6 +122,8 @@ struct CssStyle: Equatable, Sendable {
     var content: String?
     /// 原文的声明，按属性名，读成上面各字段之后仍留着，第二步画图用
     var raw: [String: String] = [:]
+    /// 第三步：这一块挂的动画（@keyframes 读成的），没有为空
+    var animations: [CssAnimation] = []
 }
 
 /// 一份美化读完的结果
@@ -130,6 +132,9 @@ struct CssCompiled: Equatable, Sendable {
     /// 最后生效的 `--ph-*` 与作者自己的变量（已经展开过 var()）
     var vars: [String: String] = [:]
     var report = CssReport()
+    /// 第三步：深色模式下要叠上去的样式与变量（只有写了的那几项）
+    var dark: [CssKey: CssStyle] = [:]
+    var darkVars: [String: String] = [:]
 
     func style(_ hook: CssHook, _ state: CssState = .normal, _ part: CssPart = .main) -> CssStyle? {
         styles[CssKey(hook: hook, state: state, part: part)]
@@ -153,3 +158,52 @@ struct CssReport: Equatable, Sendable {
     var approx: Int { items.filter { $0.kind == .approx }.count }
     var skipped: Int { items.filter { $0.kind == .skipped }.count }
 }
+
+// MARK: - 第三步：结构写法、动画、深色模式（只加不改）
+
+/// 结构写法读成的派生钩子名：在原钩子名后面接一个后缀（解析与画两边共用这一份约定）。
+///   -last  这一侧（或全体）最后一条            .ph-msg-mine:not(:has(~ .ph-msg-mine))、:last-child、:last-of-type
+///   -first 同一轮里第一个气泡 / 第一条           :first-child、:first-of-type
+///   -tail  同一轮里最后一个气泡                  .ph-col > .ph-bubble:last-child 之类
+///   -odd / -even  第奇数条 / 第偶数条            :nth-child(odd|even|2n+1|2n)
+///   -cont  紧跟在同一侧上一条之后（连发）        .ph-msg-mine + .ph-msg-mine
+/// 画的一边按 base → 派生（first、tail、odd/even、cont、last 依次）叠上去，后面的赢。
+enum CssStructural {
+    static let suffixes = ["-first", "-tail", "-odd", "-even", "-cont", "-last"]
+
+    static func hook(_ base: CssHook, _ suffix: String) -> CssHook { base + suffix }
+
+    /// 派生钩子名拆回原钩子与后缀；不是派生的返回 nil
+    static func split(_ hook: CssHook) -> (base: CssHook, suffix: String)? {
+        for s in suffixes where hook.hasSuffix(s) && hook.count > s.count {
+            return (String(hook.dropLast(s.count)), s)
+        }
+        return nil
+    }
+}
+
+/// @keyframes 里的一帧。只认透明度与变换（平移、旋转、缩放），其余属性记进报告跳过
+struct CssKeyframe: Equatable, Sendable {
+    var at: Double                  // 0...1
+    var opacity: Double?
+    var transform: CssTransform?
+}
+
+/// 一段动画：animation 简写或 animation-* 分写读成的
+struct CssAnimation: Equatable, Sendable {
+    var name: String
+    var frames: [CssKeyframe]
+    var duration: Double            // 秒
+    var delay: Double = 0
+    /// 次数，nil 为 infinite
+    var iterations: Double? = 1
+    /// normal、reverse、alternate、alternate-reverse
+    var direction = "normal"
+    /// linear、ease、ease-in、ease-out、ease-in-out；cubic-bezier 与 steps 记原文、按 ease 近似
+    var timing = "ease"
+    /// forwards、backwards、both、none
+    var fillMode = "none"
+}
+
+// 深色模式：@media (prefers-color-scheme: dark) 里的规则另读一份，放在 CssCompiled.dark / darkVars，只记写了的那几项。
+// 画的时候系统是深色，就把这一份逐项叠在常规那一份上面（同网页版：媒体查询里的规则在深色下生效、后写的赢）。
