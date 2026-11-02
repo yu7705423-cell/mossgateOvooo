@@ -1,0 +1,148 @@
+name: 壳 App（网页版外壳）
+
+# 网页版仓库里的 iPhone 外壳（ios/，包标识 cn.eiraphone.app）在这里编译：本仓库公开，标准 macOS 机器不扣分钟；
+# 网页版仓库私密，代码不进本仓库，编译时用只读钥匙 WEB_REPO_TOKEN 现取一份，用完即删。
+#
+# 推到 dev、提交说明里写着 [shell] 时只编译检查（未签名，不上传）；手动触发（工作流要在 main 上才有按钮）可以选上传。
+# TestFlight 上的测试员会收到每一次上传，所以每次上传都要先经用户同意。
+on:
+  push:
+    branches: [dev]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 网页版的分支或提交（默认开发分支）
+        required: false
+        default: claude/mini-phone-architecture-tqzvig
+      upload:
+        description: 签名并上传到 TestFlight（测试员会收到这一版，先经用户同意）
+        type: boolean
+        default: false
+      version:
+        description: 版本号（显示给测试员看的那个）
+        required: false
+        default: '1.0'
+      app_url:
+        description: 网页地址
+        required: false
+        default: https://eiraphone.cn/
+      test_url:
+        description: 测试版网址，登记进数据保护清单，外壳的功能在测试版上照常可用
+        required: false
+        default: https://eira-test.pages.dev/
+
+concurrency:
+  group: shell-app
+  cancel-in-progress: false
+
+jobs:
+  shell:
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[shell]')
+    runs-on: macos-26
+    env:
+      WEB_REPO_TOKEN: ${{ secrets.WEB_REPO_TOKEN }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+      BUNDLE_ID: cn.eiraphone.app
+    steps:
+      - name: 取网页版代码
+        run: |
+          if [ -z "$WEB_REPO_TOKEN" ]; then echo "::error::没有 WEB_REPO_TOKEN"; exit 1; fi
+          git clone -q --depth 1 --branch "${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}" \
+            "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web \
+            || { git clone -q "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web && git -C web checkout -q "${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}"; }
+          git -C web log --oneline -1
+          echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
+          # 构建号要比 App Store Connect 上已有的大：从前在网页版仓库按运行序号递增，这里改用时刻（年月日时分）
+          echo "BUILD_NUM=$(date -u +%y%m%d%H%M)" >> "$GITHUB_ENV"
+
+      - name: 选一个 Xcode
+        run: |
+          NEWEST="$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)"
+          sudo xcode-select -s "${NEWEST:-/Applications/Xcode.app}"
+          xcodebuild -version
+
+      - name: 只编译检查（未签名）
+        if: ${{ !inputs.upload }}
+        working-directory: web
+        env:
+          APP_URL: ${{ inputs.app_url || 'https://eiraphone.cn/' }}
+          APP_BOUND_EXTRA: ${{ inputs.test_url || 'https://eira-test.pages.dev/' }}
+          VERSION: ${{ inputs.version || '1.0' }}
+        run: ios/build.sh
+
+      - name: 申请证书与描述文件
+        if: ${{ inputs.upload }}
+        working-directory: web
+        run: |
+          missing=""
+          [ -n "$ASC_ISSUER_ID" ] || missing="$missing ASC_ISSUER_ID"
+          [ -n "$ASC_KEY_ID" ] || missing="$missing ASC_KEY_ID"
+          [ -n "$ASC_KEY_P8" ] || missing="$missing ASC_KEY_P8"
+          if [ -n "$missing" ]; then echo "::error::还没放好：$missing"; exit 1; fi
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install -q pyjwt cryptography
+          "$RUNNER_TEMP/venv/bin/python" ios/asc.py prepare "$BUNDLE_ID" "$SIGN_DIR"
+
+      - name: 放进临时钥匙串
+        if: ${{ inputs.upload }}
+        id: keychain
+        run: |
+          KC="$RUNNER_TEMP/eira.keychain-db"
+          PW="$(openssl rand -hex 16)"
+          P12PW="$(openssl rand -hex 16)"
+          /usr/bin/openssl x509 -inform DER -in "$SIGN_DIR/cert.cer" -out "$SIGN_DIR/cert.pem"
+          /usr/bin/openssl pkcs12 -export -inkey "$SIGN_DIR/key.pem" -in "$SIGN_DIR/cert.pem" \
+            -out "$SIGN_DIR/id.p12" -passout "pass:$P12PW"
+          security create-keychain -p "$PW" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$PW" "$KC"
+          curl -fsSL -o "$SIGN_DIR/wwdr.cer" https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
+          security import "$SIGN_DIR/wwdr.cer" -k "$KC" -T /usr/bin/codesign >/dev/null || true
+          security import "$SIGN_DIR/id.p12" -k "$KC" -P "$P12PW" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$PW" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          SHA="$(/usr/bin/openssl x509 -in "$SIGN_DIR/cert.pem" -noout -fingerprint -sha1 | cut -d= -f2 | tr -d ':')"
+          echo "keychain=$KC" >> "$GITHUB_OUTPUT"
+          echo "identity=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: 打包并签名
+        if: ${{ inputs.upload }}
+        working-directory: web
+        env:
+          SIGN: appstore
+          PROFILE: ${{ env.SIGN_DIR }}/profile.mobileprovision
+          IDENTITY: ${{ steps.keychain.outputs.identity }}
+          KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
+          APP_URL: ${{ inputs.app_url }}
+          APP_BOUND_EXTRA: ${{ inputs.test_url }}
+          VERSION: ${{ inputs.version }}
+          DISPLAY_NAME: Eiraphone
+        run: |
+          if [ -f "$SIGN_DIR/ext-profile.mobileprovision" ]; then export EXT_PROFILE="$SIGN_DIR/ext-profile.mobileprovision"; fi
+          if [ -f "$SIGN_DIR/st-monitor-profile.mobileprovision" ]; then export ST_MONITOR_PROFILE="$SIGN_DIR/st-monitor-profile.mobileprovision"; fi
+          if [ -f "$SIGN_DIR/st-shield-profile.mobileprovision" ]; then export ST_SHIELD_PROFILE="$SIGN_DIR/st-shield-profile.mobileprovision"; fi
+          if [ -f "$SIGN_DIR/notify-profile.mobileprovision" ]; then export NOTIFY_PROFILE="$SIGN_DIR/notify-profile.mobileprovision"; fi
+          if [ -f "$SIGN_DIR/widgets-profile.mobileprovision" ]; then export WIDGETS_PROFILE="$SIGN_DIR/widgets-profile.mobileprovision"; fi
+          ios/build.sh
+
+      - name: 上传到 App Store Connect
+        if: ${{ inputs.upload }}
+        id: upload
+        working-directory: web
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s\n' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_$ASC_KEY_ID.p8
+          IPA="$(ls ios/build/phone-*.ipa | head -1)"
+          xcrun altool --upload-app --type ios --file "$IPA" --apiKey "$ASC_KEY_ID" --apiIssuer "$ASC_ISSUER_ID"
+          echo "::notice::已上传，构建号 $BUILD_NUM"
+
+      - name: 收尾
+        if: always()
+        run: |
+          if [ "${{ inputs.upload }}" = "true" ] && [ "${{ steps.upload.outcome }}" != "success" ] && [ -x "$RUNNER_TEMP/venv/bin/python" ]; then
+            (cd web && "$RUNNER_TEMP/venv/bin/python" ios/asc.py cleanup "$SIGN_DIR") || true
+          fi
+          security delete-keychain "$RUNNER_TEMP/eira.keychain-db" 2>/dev/null || true
+          rm -rf "$SIGN_DIR" ~/.appstoreconnect web
