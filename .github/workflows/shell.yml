@@ -48,6 +48,11 @@ jobs:
       # [shell-owo]：传到 owo；其余（手动触发）照输入
       OWO: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[shell-owo]') }}
     steps:
+      # 本仓库只用来读版本号（project.yml），放在 native/ 下，和网页版那份分开
+      - uses: actions/checkout@v4
+        with:
+          path: native
+
       - name: 取网页版代码
         run: |
           if [ -z "$WEB_REPO_TOKEN" ]; then echo "::error::没有 WEB_REPO_TOKEN"; exit 1; fi
@@ -57,7 +62,9 @@ jobs:
           git -C web log --oneline -1
           echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
           if [ "$OWO" = "true" ]; then
+            # 版本号跟原生版 project.yml 的 MARKETING_VERSION 走，同一条版本线上构建号按时刻递增，两边互不挡
             { echo "BUNDLE_ID=cn.eiraphone.native"; echo "DISPLAY_NAME=Eiraowo"; echo "UPLOAD=true"
+              echo "VERSION=$(sed -n 's/^ *MARKETING_VERSION: *\"\{0,1\}\([0-9.]*\).*/\1/p' native/project.yml | head -1)"
               echo "APP_URL=https://eira-test.pages.dev/"; echo "APP_BOUND_EXTRA=https://eira-test.pages.dev/"; } >> "$GITHUB_ENV"
           else
             { echo "BUNDLE_ID=cn.eiraphone.app"; echo "DISPLAY_NAME=Eiraphone"; echo "UPLOAD=${{ inputs.upload && 'true' || 'false' }}"
@@ -77,8 +84,8 @@ jobs:
         if: env.UPLOAD != 'true'
         working-directory: web
         env:
-          VERSION: ${{ inputs.version || '1.0' }}
-        run: ios/build.sh
+          VERSION_IN: ${{ inputs.version || '1.0' }}
+        run: VERSION="${VERSION:-$VERSION_IN}" ios/build.sh
 
       - name: 申请证书与描述文件
         if: env.UPLOAD == 'true'
@@ -123,8 +130,9 @@ jobs:
           PROFILE: ${{ env.SIGN_DIR }}/profile.mobileprovision
           IDENTITY: ${{ steps.keychain.outputs.identity }}
           KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
-          VERSION: ${{ inputs.version || '1.0' }}
+          VERSION_IN: ${{ inputs.version || '1.0' }}
         run: |
+          export VERSION="${VERSION:-$VERSION_IN}"
           if [ -f "$SIGN_DIR/ext-profile.mobileprovision" ]; then export EXT_PROFILE="$SIGN_DIR/ext-profile.mobileprovision"; fi
           if [ -f "$SIGN_DIR/st-monitor-profile.mobileprovision" ]; then export ST_MONITOR_PROFILE="$SIGN_DIR/st-monitor-profile.mobileprovision"; fi
           if [ -f "$SIGN_DIR/st-shield-profile.mobileprovision" ]; then export ST_SHIELD_PROFILE="$SIGN_DIR/st-shield-profile.mobileprovision"; fi

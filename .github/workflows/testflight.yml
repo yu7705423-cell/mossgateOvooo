@@ -39,12 +39,14 @@ jobs:
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
       BUNDLE_ID: cn.eiraphone.native
-      # 构建号要一次比一次大：用这个工作流跑了第几次
-      BUILD_NUM: ${{ github.run_number }}
     steps:
       # 暂放目录不能写在上面 job 的 env 里：那里读不到 runner 这个上下文，整个文件会被判无效
+      # 构建号要一次比一次大。壳 App 的试点（shell.yml 的 [shell-owo]）也传到这个包标识、同一个版本号下，
+      # 两边都用时刻（年月日时分），谁后传谁大；从前的运行序号比它小得多，换过来仍是递增
       - name: 暂放目录
-        run: echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
+        run: |
+          echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
+          echo "BUILD_NUM=$(date -u +%y%m%d%H%M)" >> "$GITHUB_ENV"
 
       - uses: actions/checkout@v4
 
