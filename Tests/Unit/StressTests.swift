@@ -16,8 +16,8 @@ final class StressTests: StoreTestCase {
 
     override func setUpWithError() throws {
         try super.setUpWithError()
-        // 单个测试默认只给 60 秒；这里的两个测试各自要造几十万条数据
-        executionTimeAllowance = 120
+        // 单个测试默认只给 60 秒；这里的两个测试各自要造几十万条数据（A 还要整段拼一次提示词、等标识在后台过完）
+        executionTimeAllowance = 180
     }
 
     // MARK: - 计时
@@ -187,8 +187,25 @@ final class StressTests: StoreTestCase {
             _ = try Database.shared.count(Collections.messages, where: "c0")
             _ = try ChatEngine.lastTurn(chatId: "c0")
         }
-        // 第一次打开导进来的大会话时标识要从头统计一遍（之后只看新的）
-        try timed("A.open.badges-first", under: 60_000, rows: n) { _ = try Badges.sync("c0") }
+        // 第一次打开导进来的大会话时标识要从头统计一遍（之后只看新的）。打开会话不等它：前台只看一眼、交给后台，
+        // 后台分批过完再写回。前台那一下记 A.open.badges-first，后台过完一共多久记 A.open.badges-first.background
+        let badgesDone = expectation(description: "标识后台统计过完")
+        let token = NotificationCenter.default.addObserver(forName: Badges.didFinish, object: nil, queue: nil) { note in
+            if (note.object as? String) == "c0" { badgesDone.fulfill() }
+        }
+        let bgStart = Date()
+        try timed("A.open.badges-first", under: 1_000) { _ = try Badges.sync("c0") }
+        XCTAssertTrue(Badges.passActive("c0"))
+        XCTAssertNil(try Repo.chat("c0")?.row["stats"])
+        wait(for: [badgesDone], timeout: 100)
+        NotificationCenter.default.removeObserver(token)
+        let bgMs = Date().timeIntervalSince(bgStart) * 1000
+        print("STRESS A.open.badges-first.background \(Int(bgMs.rounded()))")
+        print("STRESS A.open.badges-first.background.per-row-us \(String(format: "%.2f", bgMs * 1000 / Double(n)))")
+        XCTAssertLessThan(bgMs, 60_000, "A.open.badges-first.background 用了 \(Int(bgMs)) 毫秒，上限 60000")
+        // 失败的不算（造数据时每 97 条一条失败）
+        let failed = (0..<n).filter { $0 % 97 == 3 }.count
+        XCTAssertEqual(try Repo.chat("c0")?.row["stats"]?["n"]?.number, Double(n - failed))
         try timed("A.open.badges-again", under: 1_000) { _ = try Badges.sync("c0") }
         // 「查看更早的消息」点一次
         try timed("A.open.earlier-page", under: 1_000) {
@@ -206,12 +223,22 @@ final class StressTests: StoreTestCase {
         // 消息列表与未读
         try timed("A.chat-list", under: 1_000) { _ = try chatList() }
 
-        // 拼一次回复的提示词（历史窗口）：现在仍要整段读出来（见报告），这里记下耗时
+        // 拼一次回复的提示词：只读历史窗口那一截（从末尾往前翻页），整段里才查得出来的几件事按字节粗筛。
+        // 改之前整段读出来再拼的做法记 A.prompt.build-reference，两边拼出来的必须一字不差
         let chat = try XCTUnwrap(Repo.chat("c0"))
         let char = try XCTUnwrap(Repo.character("char_c0"))
-        let built = try timed("A.prompt.build", under: 90_000, rows: n) { try ChatPrompt.build(chat: chat, char: char, settings: .load()) }
+        let at = Date()
+        let built = try timed("A.prompt.build", under: 2_000) { try ChatPrompt.build(chat: chat, char: char, settings: .load(), now: at) }
         XCTAssertFalse(built.messages.isEmpty)
         XCTAssertLessThan(built.messages.count, 200)
+        let ref = try timed("A.prompt.build-reference", under: 90_000, rows: n) {
+            try ChatPrompt.buildReference(chat: chat, char: char, settings: .load(), now: at)
+        }
+        XCTAssertEqual(built.system, ref.system)
+        XCTAssertEqual(built.messages, ref.messages)
+        XCTAssertEqual(built.recalled, ref.recalled)
+        // 第二次（库的页缓存是热的）
+        try timed("A.prompt.build.again", under: 1_000) { _ = try ChatPrompt.build(chat: chat, char: char, settings: .load(), now: at) }
 
         // 总结记忆的积压：水位线在末尾附近时只读水位线之后的
         var c = chat

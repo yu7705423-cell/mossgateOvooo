@@ -472,6 +472,12 @@ struct ConversationView: View {
         .onReceive(NotificationCenter.default.publisher(for: .eiraSkinChanged)) { _ in
             applySkin(try? Repo.chat(chatId))
         }
+        // 长会话的互动标识第一次统计在后台分批做（Badges.sync），做完重读一次火花与连续天数
+        .onReceive(NotificationCenter.default.publisher(for: Badges.didFinish)) { n in
+            guard (n.object as? String) == chatId, let c = try? Repo.chat(chatId) else { return }
+            chat = c
+            fire = Badges.shown(c) ? Badges.streak(c) : nil
+        }
         .confirmationDialog("这一轮里有图片", isPresented: $askingImageKeep, titleVisibility: .visible) {
             Button("文字与图片一起重新生成") { generate(regenerate: true, imageKeep: .all) }
             Button("保留图片，只重新生成文字") { generate(regenerate: true, imageKeep: .keep) }

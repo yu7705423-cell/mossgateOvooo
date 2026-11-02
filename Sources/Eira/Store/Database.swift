@@ -198,6 +198,126 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 一条记录在 `all(_:where:)` 那个顺序里的位置：(created, id)。created 为 nil 的那几条排在最前面
+    struct PageKey: Equatable, Sendable {
+        var created: Double?
+        var id: String
+    }
+
+    private static func pageHit(_ stmt: OpaquePointer) throws -> (key: PageKey, row: Row) {
+        let c: Double? = sqlite3_column_type(stmt, 0) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 0)
+        return (PageKey(created: c, id: Self.text(stmt, 1)), try Row(data: Self.blob(stmt, 2)))
+    }
+
+    /// 按查询字段从后往前翻一页：顺序同 `all(_:where:)`，排在 key 之前（不含 key 那一条）的最后 limit 条，按时间升序交回；
+    /// key 为 nil 时从最后一条起。edge 是这一页最早那一条的位置（接着往前翻时传回来），一条都没有时为 nil。
+    /// 交回的不足 limit 条，就是已经翻到头了。拼提示词时只读历史窗口需要的那一截，不必把整段读出来
+    func page(_ collection: String, where value: String, before key: PageKey?, limit: Int) throws -> (rows: [Row], edge: PageKey?) {
+        let n = max(1, limit)
+        return try queue.sync {
+            var out: [(key: PageKey, row: Row)] = []
+            var nullBefore: String?
+            if let k = key, k.created == nil {
+                // key 本身在没有 createdAt 的那一段里：有 createdAt 的都排在它后面，只剩 id 更小的
+                nullBefore = k.id
+            } else if let k = key, let t = k.created {
+                out = try query("""
+                    SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created <= ? AND (created < ? OR id < ?)
+                    ORDER BY created DESC, id DESC LIMIT ?
+                    """, [collection, value, t, t, k.id, n], Self.pageHit)
+            } else {
+                out = try query("""
+                    SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NOT NULL
+                    ORDER BY created DESC, id DESC LIMIT ?
+                    """, [collection, value, n], Self.pageHit)
+            }
+            if out.count < n {
+                if let b = nullBefore {
+                    out += try query("SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NULL AND id < ? ORDER BY id DESC LIMIT ?",
+                                     [collection, value, b, n - out.count], Self.pageHit)
+                } else {
+                    out += try query("SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NULL ORDER BY id DESC LIMIT ?",
+                                     [collection, value, n - out.count], Self.pageHit)
+                }
+            }
+            return (out.reversed().map { $0.row }, out.last?.key)
+        }
+    }
+
+    /// 同上，从前往后翻：排在 key 之后（不含）的 limit 条，按时间升序；key 为 nil 时从第一条起。
+    /// edge 是这一页最后那一条的位置。互动标识第一次从头统计时一批一批读，每批读完就放开队列
+    func page(_ collection: String, where value: String, after key: PageKey?, limit: Int) throws -> (rows: [Row], edge: PageKey?) {
+        let n = max(1, limit)
+        return try queue.sync {
+            var out: [(key: PageKey, row: Row)] = []
+            if let k = key, let t = k.created {
+                out = try query("""
+                    SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created >= ? AND (created > ? OR id > ?)
+                    ORDER BY created, id LIMIT ?
+                    """, [collection, value, t, t, k.id, n], Self.pageHit)
+                return (out.map { $0.row }, out.last?.key)
+            }
+            // 先是没有 createdAt 的那几条
+            if let k = key {
+                out = try query("SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NULL AND id > ? ORDER BY id LIMIT ?",
+                                [collection, value, k.id, n], Self.pageHit)
+            } else {
+                out = try query("SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NULL ORDER BY id LIMIT ?",
+                                [collection, value, n], Self.pageHit)
+            }
+            if out.count < n {
+                out += try query("""
+                    SELECT created, id, json FROM records WHERE collection = ? AND idx = ? AND created IS NOT NULL
+                    ORDER BY created, id LIMIT ?
+                    """, [collection, value, n - out.count], Self.pageHit)
+            }
+            return (out.map { $0.row }, out.last?.key)
+        }
+    }
+
+    /// 按查询字段筛出原文里含有某几段文字的记录：groups 之间是「或」，一组之内是「且」。按 `all(_:where:)` 的顺序，
+    /// newestFirst 时倒过来。只是粗筛（按字节找，不解析 JSON），调用方要把筛出来的逐条按原来的规则再核对一遍。
+    /// 拼提示词时「整段里还有没有挂着的转账」这类问题用它，不必把每一条都解析出来
+    func containing(_ collection: String, where value: String, any groups: [[String]], newestFirst: Bool = false,
+                    limit: Int? = nil) throws -> [Row] {
+        let groups = groups.filter { !$0.isEmpty }
+        guard !groups.isEmpty else { return [] }
+        let cond = groups.map { g in "(" + g.map { _ in "instr(json, ?) > 0" }.joined(separator: " AND ") + ")" }.joined(separator: " OR ")
+        var args: [Any?] = [collection, value]
+        // 按字节比：json 列是 BLOB，两边都是 BLOB 时 instr 逐字节找
+        for g in groups { for s in g { args.append(Data(s.utf8)) } }
+        var sql = "SELECT json FROM records WHERE collection = ? AND idx = ? AND (\(cond)) ORDER BY "
+            + (newestFirst ? "created DESC, id DESC" : "created, id")
+        if let limit {
+            sql += " LIMIT ?"
+            args.append(max(1, limit))
+        }
+        return try queue.sync {
+            try query(sql, args) { try Row(data: Self.blob($0, 0)) }
+        }
+    }
+
+    /// 按查询字段数 createdAt 不早于 since 的有几条
+    func count(_ collection: String, where value: String, since: Double) throws -> Int {
+        try queue.sync {
+            try query("SELECT COUNT(*) FROM records WHERE collection = ? AND idx = ? AND created >= ?", [collection, value, since]) { stmt in
+                Int(sqlite3_column_int64(stmt, 0))
+            }.first ?? 0
+        }
+    }
+
+    /// 原生版自己的小记号（不进备份，不和网页版的 kv 混在一起），比如互动标识第一次统计做到哪一条了
+    func nativeMeta(_ k: String) throws -> String? {
+        try queue.sync { try metaGet(k) }
+    }
+
+    /// v 为 nil 时删掉
+    func setNativeMeta(_ k: String, _ v: String?) throws {
+        try queue.sync {
+            if let v { try metaSet(k, v) } else { try run("DELETE FROM native_meta WHERE k = ?", [k]) }
+        }
+    }
+
     /// 按查询字段数一数有几条（「还有 N 条更早的消息」）
     func count(_ collection: String, where value: String) throws -> Int {
         try queue.sync {

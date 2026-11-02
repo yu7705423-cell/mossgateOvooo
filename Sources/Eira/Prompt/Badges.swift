@@ -261,21 +261,29 @@ enum Badges {
     }
 
     /// 同步一段会话的统计。有变化才写库。返回这一次新解锁的 id。full：整段重算（「重新统计」）
+    ///
+    /// 要过的消息多于 inlineMax 条时（导进来的大会话第一次打开、「重新统计」、落下太多）不在这里过：
+    /// 交给后台分批过（startPass），这一次返回空，界面先显示原来的统计（没有就空着），过完发 didFinish
     @discardableResult
     static func sync(_ chatId: String, full: Bool = false, now: Date = Date()) throws -> [String] {
+        // 后台正在过这一段：不另过一遍（要整段重算的记下来，那边过完这一批就从头来）
+        if passBusy(chatId, full: full) { return [] }
         guard var chat = try Repo.chat(chatId) else { return [] }
-        let nowMs = now.millis
-        let stored = chat.row["stats"]?.object
-        let redo = full || stored == nil || stored?["v"]?.number != version
-        var st = redo ? blank() : stored!
-        var unlocked = redo && full ? [:] : (chat.row["unlocked"]?.object ?? [:])
-        // 重新统计时，手动颁发与模型判断给的那几枚不是按记录算出来的，留着（算不回来）
-        if redo && full {
-            for (k, v) in chat.row["unlocked"]?.object ?? [:] where k.hasPrefix("custom-") && BadgeDefs.get(BadgeDefs.defIdOf(k))?.how != "rule" {
-                unlocked[k] = v
+        // 上一次没过完（中途应用被关掉）：接着过
+        if let p = try savedPass(chatId) {
+            if p.base == fingerprint(chat), p.full || !full {
+                startPass(chatId, full: p.full)
+                return []
             }
+            // 统计已经被别处换掉了（导入、恢复备份）：那份进度作废
+            if p.base != fingerprint(chat) { try Database.shared.setNativeMeta(metaKey(chatId), nil) }
         }
-        var lim = redo && full ? [:] : (chat.row["limited"]?.object ?? [:])
+        let nowMs = now.millis
+        let begin = initial(chat, full: full)
+        let redo = begin.redo
+        var st = begin.st
+        var unlocked = begin.unlocked
+        var lim = begin.lim
         var news: [String] = []
         func got(_ id: String, _ at: Double, _ isLimited: Bool) {
             if isLimited { if lim[id] == nil { lim[id] = .number(at); news.append(id) } }
@@ -284,9 +292,18 @@ enum Badges {
         let c = ctx(chat)
         let upTo = st["upTo"]?.number ?? 0
         var edge = Set((st["edge"]?.array ?? []).compactMap(\.string))
-        // 只读需要的那一段：先读末尾一截，没盖住 upTo 再读整段
+        // 只读需要的那一段：先读末尾一截，没盖住 upTo 再读水位线之后的（upTo 为 0 时整段）；太多就交给后台
         var list = try Repo.messages(chatId: chatId, limit: 300)
-        if list.count >= 300, let first = list.first, first.createdAt > upTo { list = try Repo.messages(chatId: chatId) }
+        if list.count >= 300, let first = list.first, first.createdAt > upTo {
+            let db = Database.shared
+            let left = try upTo > 0 ? db.count(Collections.messages, where: chatId, since: upTo) : db.count(Collections.messages, where: chatId)
+            if left > inlineMax {
+                startPass(chatId, full: full)
+                return []
+            }
+            // 水位线之前的下面也是跳过（t < mark），不读它们结果一样
+            list = try upTo > 0 ? Repo.messages(chatId: chatId, since: upTo) : Repo.messages(chatId: chatId)
+        }
         var moved = false
         var mark = upTo
         for m in list {
@@ -302,7 +319,8 @@ enum Badges {
         st["edge"] = .array(edge.sorted().map { .string($0) })
         tierUnlocks(st, chat: chat, now: nowMs, got)
         // 自定义标识里「按条件」的那几个（网页版 4.320）
-        let cu = BadgeDefs.reached(chat, &st, msgs: { (try? Repo.messages(chatId: chatId)) ?? [] }, now: nowMs)
+        let scanFrom = scanSince(chat, st)
+        let cu = BadgeDefs.reached(chat, &st, msgs: { (try? scanMessages(chatId, since: scanFrom)) ?? [] }, now: nowMs)
         for id in cu.hits { got(id, nowMs, false) }
         if cu.changed { moved = true }
         guard moved || !news.isEmpty || redo else { return [] }
@@ -311,6 +329,270 @@ enum Badges {
         chat.row["limited"] = .object(lim)
         try Repo.save(chat)
         return redo ? [] : news
+    }
+
+    /// 从哪一份统计开始：整段重算或者统计格式变了时从空白开始，否则接着存着的
+    private static func initial(_ chat: Chat, full: Bool) -> (redo: Bool, st: [String: JSONValue], unlocked: [String: JSONValue], lim: [String: JSONValue]) {
+        let stored = chat.row["stats"]?.object
+        let redo = full || stored == nil || stored?["v"]?.number != version
+        let st = redo ? blank() : stored!
+        var unlocked = redo && full ? [:] : (chat.row["unlocked"]?.object ?? [:])
+        // 重新统计时，手动颁发与模型判断给的那几枚不是按记录算出来的，留着（算不回来）
+        if redo && full {
+            for (k, v) in chat.row["unlocked"]?.object ?? [:] where k.hasPrefix("custom-") && BadgeDefs.get(BadgeDefs.defIdOf(k))?.how != "rule" {
+                unlocked[k] = v
+            }
+        }
+        let lim = redo && full ? [:] : (chat.row["limited"]?.object ?? [:])
+        return (redo, st, unlocked, lim)
+    }
+
+    /// 自定义「按条件」里要数消息的那几项从哪一刻往后数（BadgeDefs.measure 只看比各自 upTo 新的）。
+    /// 有一项要从头数（没数过、条件改过）时为 nil：整段都要
+    private static func scanSince(_ chat: Chat, _ st: [String: JSONValue]) -> Double? {
+        let defs = BadgeDefs.defsFor(chat).filter { $0.how == "rule" && BadgeDefs.metric($0.metricId).scan }
+        guard !defs.isEmpty else { return nil }
+        let cx = st["cx"]?.object ?? [:]
+        var from = Double.infinity
+        for d in defs {
+            let c = cx[d.id]?.object
+            // 写法与 BadgeDefs.measure 里的 sig 一致；那边改了写法这里对不上，退回整段读（只是慢，不会算错）
+            guard c?["sig"]?.string == "\(d.metricId)|\(d.who)|\(d.word)|\(d.kind)", let up = c?["upTo"]?.number, up > 0 else { return nil }
+            from = min(from, up)
+        }
+        return from
+    }
+
+    private static func scanMessages(_ chatId: String, since: Double?) throws -> [Message] {
+        if let since { return try Repo.messages(chatId: chatId, since: since) }
+        return try Repo.messages(chatId: chatId)
+    }
+
+    // MARK: - 从头过一遍放到后台
+
+    /// 要过的消息多于这个数时放到后台分批过，打开会话不等它（10 万条从头过一遍要好几秒）
+    nonisolated(unsafe) static var inlineMax = 2000
+    /// 后台一批过多少条。每过完一批记一次进度，应用中途被关掉，下次打开接着过
+    nonisolated(unsafe) static var chunk = 2000
+    /// 后台过完一段会话时发出（在主线程），object 是 chatId；失败时 userInfo["error"] 是原因。界面收到后重读会话
+    static let didFinish = Notification.Name("eira.badges.didFinish")
+
+    private static let passLock = NSLock()
+    nonisolated(unsafe) private static var passRunning: Set<String> = []
+    nonisolated(unsafe) private static var passFullAsked: Set<String> = []
+
+    /// 这段会话的统计是不是正在后台过
+    static func passActive(_ chatId: String) -> Bool { passLock.withLock { passRunning.contains(chatId) } }
+
+    private static func passBusy(_ chatId: String, full: Bool) -> Bool {
+        passLock.withLock {
+            guard passRunning.contains(chatId) else { return false }
+            if full { passFullAsked.insert(chatId) }
+            return true
+        }
+    }
+
+    private static func metaKey(_ chatId: String) -> String { "badges.pass.\(chatId)" }
+
+    /// 存着的统计的指纹。进度记下之后统计被别处换掉了（导入、恢复备份），进度作废
+    private static func fingerprint(_ chat: Chat) -> String {
+        let st = chat.row["stats"]?.object
+        return "\(st?["v"]?.number ?? -1)|\(st?["upTo"]?.number ?? -1)|\(chat.row.created ?? 0)"
+    }
+
+    /// 生日、纪念日这些变了，已经过的那一段按旧的算过，从头来
+    private static func ctxSig(_ c: Ctx) -> String {
+        ([c.charBday, c.myBday, c.love, String(c.loveYear)] + c.days.map { "\($0.id)=\($0.md)" }).joined(separator: "|")
+    }
+
+    /// 后台那一遍的进度（存在原生版自己的记号里，不进备份）
+    private struct Pass: Sendable {
+        var full: Bool
+        var base: String
+        var sig: String
+        var st: [String: JSONValue]
+        var unlocked: [String: JSONValue]
+        var lim: [String: JSONValue]
+        /// 开始时会话上的 unlocked 与 limited：过完写回时，和这期间别处的改动（手动颁发、收回）合在一起
+        var startUnlocked: [String: JSONValue]
+        var startLim: [String: JSONValue]
+        /// 过到哪一条了（含）。nil：从第一条起
+        var cursor: Database.PageKey?
+
+        var json: JSONValue {
+            var cur = JSONValue.null
+            if let k = cursor { cur = .object(["c": k.created.map { JSONValue.number($0) } ?? .null, "id": .string(k.id)]) }
+            return .object(["v": .number(Badges.version), "full": .bool(full), "base": .string(base), "sig": .string(sig),
+                            "st": .object(st), "unlocked": .object(unlocked), "lim": .object(lim),
+                            "su": .object(startUnlocked), "sl": .object(startLim), "cursor": cur])
+        }
+
+        init(full: Bool, base: String, sig: String, st: [String: JSONValue], unlocked: [String: JSONValue], lim: [String: JSONValue],
+             startUnlocked: [String: JSONValue], startLim: [String: JSONValue], cursor: Database.PageKey?) {
+            self.full = full; self.base = base; self.sig = sig; self.st = st; self.unlocked = unlocked; self.lim = lim
+            self.startUnlocked = startUnlocked; self.startLim = startLim; self.cursor = cursor
+        }
+
+        init?(_ v: JSONValue) {
+            guard let o = v.object, o["v"]?.number == Badges.version, let st = o["st"]?.object else { return nil }
+            full = o["full"]?.bool ?? false
+            base = o["base"]?.string ?? ""
+            sig = o["sig"]?.string ?? ""
+            self.st = st
+            unlocked = o["unlocked"]?.object ?? [:]
+            lim = o["lim"]?.object ?? [:]
+            startUnlocked = o["su"]?.object ?? [:]
+            startLim = o["sl"]?.object ?? [:]
+            if let c = o["cursor"]?.object, let id = c["id"]?.string { cursor = Database.PageKey(created: c["c"]?.number, id: id) }
+            else { cursor = nil }
+        }
+    }
+
+    private static func savedPass(_ chatId: String) throws -> Pass? {
+        guard let s = try Database.shared.nativeMeta(metaKey(chatId)) else { return nil }
+        guard let v = try? JSONValue.parse(Data(s.utf8)) else { return nil }
+        return Pass(v)
+    }
+
+    /// 有没有存着一份没过完的进度（测试用）
+    static func passSaved(_ chatId: String) -> Bool { ((try? savedPass(chatId)) ?? nil) != nil }
+
+    private static func savePass(_ chatId: String, _ p: Pass) throws {
+        try Database.shared.setNativeMeta(metaKey(chatId), String(decoding: try p.json.encoded(), as: UTF8.self))
+    }
+
+    private enum PassResult { case done(Pass), stopped, gone }
+
+    /// 放到后台过。已经在过了就不另起；要整段重算的记下来，那边过完这一批从头来
+    private static func startPass(_ chatId: String, full: Bool) {
+        let fresh: Bool = passLock.withLock {
+            if full { passFullAsked.insert(chatId) }
+            return passRunning.insert(chatId).inserted
+        }
+        guard fresh else { return }
+        let size = chunk
+        Task.detached(priority: .utility) {
+            var failure: String?
+            do {
+                while true {
+                    let wantFull = passLock.withLock { passFullAsked.remove(chatId) != nil }
+                    let r = try compute(chatId, full: wantFull, now: nil, size: size,
+                                        stop: { passLock.withLock { passFullAsked.contains(chatId) } })
+                    if case .stopped = r { continue }
+                    if case .done(let p) = r {
+                        // 写回会话在主线程做：和界面上别的改会话的写入排成一队，不互相盖掉
+                        try await MainActor.run { try apply(p, chatId: chatId) }
+                    }
+                    break
+                }
+            } catch {
+                failure = error.localizedDescription
+                Diagnostics.shared.record("badges-sync-failed", ["error": error.localizedDescription])
+            }
+            passLock.withLock {
+                passRunning.remove(chatId)
+                passFullAsked.remove(chatId)
+            }
+            let info: [String: String]? = failure.map { ["error": $0] }
+            await MainActor.run { NotificationCenter.default.post(name: didFinish, object: chatId, userInfo: info) }
+        }
+    }
+
+    /// 在当前线程过完（或过 maxChunks 批就记下进度停下），过完写回。返回是否过完。
+    /// 后台那一遍与这里是同一份做法；测试直接调它
+    @discardableResult
+    static func runPass(_ chatId: String, full: Bool = false, now: Date? = nil, chunk size: Int? = nil, maxChunks: Int? = nil) throws -> Bool {
+        var n = 0
+        let r = try compute(chatId, full: full, now: now, size: size ?? chunk, stop: {
+            n += 1
+            return maxChunks.map { n >= $0 } ?? false
+        })
+        switch r {
+        case .done(let p):
+            try apply(p, chatId: chatId)
+            return true
+        case .stopped: return false
+        case .gone: return true
+        }
+    }
+
+    /// 一批一批从前往后过（键集分页，每批读完就放开库），每批之后记进度、问一次 stop。
+    /// 过法与 sync 里的一模一样：同样的起点、同样的跳过规则、同样的 step，最后同样补上档位与自定义标识
+    private static func compute(_ chatId: String, full: Bool, now: Date?, size: Int, stop: () -> Bool) throws -> PassResult {
+        guard let chat = try Repo.chat(chatId) else {
+            try Database.shared.setNativeMeta(metaKey(chatId), nil)
+            return .gone
+        }
+        let c = ctx(chat)
+        let sig = ctxSig(c)
+        var p: Pass
+        if let saved = try savedPass(chatId), saved.base == fingerprint(chat), saved.sig == sig, saved.full || !full {
+            p = saved
+        } else {
+            let begin = initial(chat, full: full)
+            let upTo = begin.st["upTo"]?.number ?? 0
+            // 水位线之前的过的时候也是跳过（t < mark），从水位线那一刻起读
+            p = Pass(full: full, base: fingerprint(chat), sig: sig, st: begin.st, unlocked: begin.unlocked, lim: begin.lim,
+                     startUnlocked: chat.row["unlocked"]?.object ?? [:], startLim: chat.row["limited"]?.object ?? [:],
+                     cursor: upTo > 0 ? Database.PageKey(created: upTo, id: "") : nil)
+        }
+        var unlocked = p.unlocked
+        var lim = p.lim
+        func got(_ id: String, _ at: Double, _ isLimited: Bool) {
+            if isLimited { if lim[id] == nil { lim[id] = .number(at) } }
+            else if unlocked[id] == nil { unlocked[id] = .number(at) }
+        }
+        var mark = p.st["upTo"]?.number ?? 0
+        var edge = Set((p.st["edge"]?.array ?? []).compactMap(\.string))
+        let n = max(1, size)
+        while true {
+            let page = try Database.shared.page(Collections.messages, where: chatId, after: p.cursor, limit: n)
+            for m in page.rows.map(Message.init(row:)) where m.kind != "typing" {
+                let t = m.createdAt
+                if t < mark || (t == mark && edge.contains(m.id)) { continue }
+                if m.role != .user && m.role != .char { continue }
+                step(&p.st, m, c, got)
+                if t > mark { mark = t; edge.removeAll() }
+                edge.insert(m.id)
+            }
+            if let e = page.edge { p.cursor = e }
+            p.st["upTo"] = .number(mark)
+            p.st["edge"] = .array(edge.sorted().map { .string($0) })
+            p.unlocked = unlocked
+            p.lim = lim
+            if page.rows.count < n { break }
+            try savePass(chatId, p)
+            if stop() { return .stopped }
+        }
+        let nowMs = (now ?? Date()).millis
+        // 档位与自定义标识按过完那一刻的会话算（这期间改过的定义、在一起的日子以它为准）
+        let latest = try Repo.chat(chatId) ?? chat
+        tierUnlocks(p.st, chat: latest, now: nowMs, got)
+        let scanFrom = scanSince(latest, p.st)
+        let cu = BadgeDefs.reached(latest, &p.st, msgs: { (try? scanMessages(chatId, since: scanFrom)) ?? [] }, now: nowMs)
+        for id in cu.hits { got(id, nowMs, false) }
+        p.unlocked = unlocked
+        p.lim = lim
+        return .done(p)
+    }
+
+    /// 过完写回会话。这期间别处加上、改过、去掉的那几枚照别处的
+    private static func apply(_ p: Pass, chatId: String) throws {
+        guard var chat = try Repo.chat(chatId) else {
+            try Database.shared.setNativeMeta(metaKey(chatId), nil)
+            return
+        }
+        func merged(_ mine: [String: JSONValue], start: [String: JSONValue], now: [String: JSONValue]) -> [String: JSONValue] {
+            var out = mine
+            for (k, v) in now where start[k] != v { out[k] = v }
+            for k in start.keys where now[k] == nil { out[k] = nil }
+            return out
+        }
+        chat.row["stats"] = .object(p.st)
+        chat.row["unlocked"] = .object(merged(p.unlocked, start: p.startUnlocked, now: chat.row["unlocked"]?.object ?? [:]))
+        chat.row["limited"] = .object(merged(p.lim, start: p.startLim, now: chat.row["limited"]?.object ?? [:]))
+        try Repo.save(chat)
+        try Database.shared.setNativeMeta(metaKey(chatId), nil)
     }
 
     // MARK: - 读

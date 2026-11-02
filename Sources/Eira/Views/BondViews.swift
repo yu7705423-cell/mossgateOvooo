@@ -288,6 +288,12 @@ struct BadgesView: View {
         }
         .navigationTitle("互动标识")
         .navigationBarTitleDisplayMode(.inline)
+        // 长会话在后台统计，做完刷新；统计失败写在屏幕上
+        .onReceive(NotificationCenter.default.publisher(for: Badges.didFinish)) { n in
+            guard (n.object as? String) == chatId else { return }
+            if let e = n.userInfo?["error"] as? String { problem = "统计失败：\(e)" }
+            reload()
+        }
         .onAppear {
             do { try Badges.sync(chatId) } catch { problem = "统计失败：\(error.localizedDescription)" }
             reload()

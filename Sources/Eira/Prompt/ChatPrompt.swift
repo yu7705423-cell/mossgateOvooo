@@ -21,13 +21,29 @@ enum ChatPrompt {
     /// call：通话时的两段规则（通话规则、语音台本）。给了就按「通话」那一份条目顺序拼，聊天记录后面不挂此刻的状态与召回。
     static func build(chat chat0: Chat, char: Character, settings s: AppSettings, now: Date = Date(),
                       excludeTurn: String? = nil, call: (rule: String, script: String)? = nil) throws -> Built {
+        try buildChat(chat: chat0, char: char, settings: s, now: now, excludeTurn: excludeTurn, call: call, loadAll: false)
+    }
+
+    /// 同 build，只是先把整段聊天记录读出来再拼（只读一截之前的读法）。只给测试核对两种读法拼出来的一字不差
+    static func buildReference(chat chat0: Chat, char: Character, settings s: AppSettings, now: Date = Date(),
+                               excludeTurn: String? = nil, call: (rule: String, script: String)? = nil) throws -> Built {
+        try buildChat(chat: chat0, char: char, settings: s, now: now, excludeTurn: excludeTurn, call: call, loadAll: true)
+    }
+
+    private static func buildChat(chat chat0: Chat, char: Character, settings s: AppSettings, now: Date,
+                                  excludeTurn: String?, call: (rule: String, script: String)?, loadAll: Bool) throws -> Built {
         var chat = chat0
         // 通话里不让模型在台词后面夹译文：拼提示词时把这段对话的翻译摘掉（网页版 call.js 的 plain）
         if call != nil { chat.row["translateTo"] = .string("") }
+        // 线下那几场的正文按时间排进历史，一起算条数与轮次（网页版 4.375）
+        let beats = Scenes.beatsAsMessages(chatId: chat.id)
         // 我发的被角色拒收的不进历史（网页版 ties.keepDelivered）
         // 自动回复停止的提示只给你看；自动回的那几条带 [自动回复]（网页版 4.586）
-        let all = Ties.keepDelivered(chat, try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) && (excludeTurn == nil || $0.turnId != excludeTurn) })
-            .map(AutoReply.forPrompt)
+        // 只读末尾够用的那一截（见 source）；整段里才查得出来的几件事另外查（见 chatFacts）
+        let src = try source(chat: chat, excludeTurn: excludeTurn, ties: true, beats: beats, settings: s, loadAll: loadAll)
+        let all = src.msgs
+        let facts = try chatFacts(src, chat: chat, excludeTurn: excludeTurn, ties: true,
+                                  wantStatus: call == nil && statusCarries(chat))
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let charName = char.name.isEmpty ? "对方" : char.name
@@ -68,14 +84,14 @@ enum ChatPrompt {
         P["gender"] = gender
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
         P["rules"] = Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s)
-        P["caps"] = capabilities(char: char, chat: chat, msgs: all, settings: s)
+        P["caps"] = capabilities(char: char, chat: chat, msgs: all, facts: facts, settings: s)
         let core = char.core.trimmingCharacters(in: .whitespacesAndNewlines)
         if !core.isEmpty { P["core"] = Templates.render("skeleton.core", ["core": core], settings: s) }
         P["ban"] = banPiece(s)
         P["genderTail"] = gender
         P["inner"] = InnerVoice.piece(chat, settings: s)
         // 状态栏：开着、有要模型写的栏目时才出现（网页版 4.399）。通话里没有
-        if call == nil { P["status"] = StatusBar.piece(chat, msgs: all, names: names, settings: s) }
+        if call == nil { P["status"] = StatusBar.piece(chat, msgs: facts.status, names: names, settings: s) }
         if let call {
             P["call"] = call.rule
             P["callScript"] = call.script
@@ -88,8 +104,9 @@ enum ChatPrompt {
         if call == nil && memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
         if let t = translateTail(chat, settings: s) { tailParts.append(t) }
 
-        let (messages, seen) = history(all, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
-                                       tailDepth: max(1, memoryDepth), lore: lore.deep)
+        let (messages, seen) = try history(src, beats: beats, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
+                                           tailDepth: max(1, memoryDepth), lore: lore.deep,
+                                           older: olderLookup(src, chat: chat, excludeTurn: excludeTurn, ties: true))
         return Built(system: arranged.system, messages: messages, recalled: recalled.map(\.id),
                      seenImages: seen)
     }
@@ -140,21 +157,15 @@ enum ChatPrompt {
 
     /// group：群聊时成员 id 对应群里显示的名字。成员说的话都算 assistant，前面带着名字 ——
     /// 和它要写出来的格式一模一样，历史就是示范（网页版 buildGroupHistory）。
-    private static func history(_ all: [Message], chat: Chat, char: Character, settings s: AppSettings,
+    /// older：读到的那一截里没有的消息按 id 去库里找（引用了很早的一条时）
+    private static func history(_ src: Source, beats: [Message], chat: Chat, char: Character, settings s: AppSettings,
                                 tail: String, tailDepth: Int, lore: [(Int, String)],
-                                group: [String: String]? = nil) -> ([AIMessage], [String]) {
+                                group: [String: String]? = nil, older: @escaping (String) throws -> Message?) throws -> ([AIMessage], [String]) {
+        let all = src.msgs
         // 线下那几场的正文按时间排进来，一起算条数与轮次（网页版 4.375）。场外指示不进
-        let beats = Scenes.beatsAsMessages(chatId: chat.id)
-        let timeline = beats.isEmpty ? all : (all + beats).enumerated().sorted { a, b in
-            a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
-        }.map(\.element)
-        let window: [Message]
-        if s.raw["historyMode"]?.string == "turn" {
-            window = takeTurns(timeline, Int(s.num("historyTurns", 10)))
-        } else {
-            let limit = Int(s.num("historyLimit", 20))
-            window = limit > 0 ? Array(timeline.suffix(limit)) : timeline
-        }
+        let timeline = timelineOf(src, beats: beats)
+        // source 读到够用才停，这里一定盖得住；万一盖不住，按读到的那一截算
+        let window = windowOf(timeline, settings: s, complete: src.complete) ?? timeline
         let meName: String = {
             let ps = (try? Repo.personas()) ?? []
             let me = ps.first { $0.id == chat.personaId } ?? ((try? Repo.activePersona(s)) ?? nil)
@@ -162,6 +173,11 @@ enum ChatPrompt {
         }()
         let stampOn = Clock.enabled(s)
         let byId = Dictionary(all.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
+        func quoted(_ id: String) throws -> Message? {
+            if let m = byId[id] { return m }
+            if id.isEmpty { return nil }
+            return try older(id)
+        }
 
         // 识图交给聊天模型时：只带当前这一轮（用户连着发、角色还没回的那几条）里还没被看过的图。
         // 一张图看过一次就不再重传：每轮都传，越聊越慢也越聊越贵（网页版 engine.js 的 imagesFor）
@@ -206,7 +222,7 @@ enum ChatPrompt {
             if prev?.kind == "beat" { out.append(AIMessage(role: .user, content: Templates.get("skeleton.phone-mark", settings: s))) }
             // 正则替换里「发给角色的」那一份（存着的原文不动）
             let m = RegexRules.promptMessage(raw, chat: chat, settings: s)
-            var text = (stampOn ? timeLine(m, prev) : "") + withQuote(m, byId)
+            var text = try (stampOn ? timeLine(m, prev) : "") + withQuote(m, quoted)
             // 分享的歌带上歌词（「用量与上限」里可以关、可以只带前几句）
             if m.kind == "song" { text += songLyric(m, s) }
             // 文件：只有最近一份带正文，更早的只带文件名（网页版 4.271）
@@ -266,18 +282,160 @@ enum ChatPrompt {
     }
 
     /// 从后往前数轮：一轮从「前一条不是用户」的那条用户消息开始。0 表示全部。
-    private static func takeTurns(_ msgs: [Message], _ n: Int) -> [Message] {
-        guard n > 0 else { return msgs }
+    /// complete 为 false 时 msgs 只是末尾一截：最前面那条之前是什么不知道，数不够、或者要看它才分得出时为 nil（再往前读）
+    private static func takeTurns(_ msgs: [Message], _ n: Int, complete: Bool = true) -> [Message]? {
+        guard n > 0 else { return complete ? msgs : nil }
         var count = 0
         var i = msgs.count - 1
         while i >= 0 {
-            if msgs[i].role == .user && (i == 0 || msgs[i - 1].role != .user) {
-                count += 1
-                if count == n { return Array(msgs[i...]) }
+            if msgs[i].role == .user {
+                let starts = i > 0 ? msgs[i - 1].role != .user : complete
+                if i == 0 && !complete { return nil }
+                if starts {
+                    count += 1
+                    if count == n { return Array(msgs[i...]) }
+                }
             }
             i -= 1
         }
-        return msgs
+        return complete ? msgs : nil
+    }
+
+    /// 历史窗口：最近 N 条，或最近 N 轮，或全部（预设里的历史范围）。时间线只是末尾一截、还不够定下窗口时为 nil
+    private static func windowOf(_ timeline: [Message], settings s: AppSettings, complete: Bool) -> [Message]? {
+        if s.raw["historyMode"]?.string == "turn" {
+            return takeTurns(timeline, Int(s.num("historyTurns", 10)), complete: complete)
+        }
+        let limit = Int(s.num("historyLimit", 20))
+        guard limit > 0 else { return complete ? timeline : nil }
+        return complete || timeline.count >= limit ? Array(timeline.suffix(limit)) : nil
+    }
+
+    /// 线上消息与线下正文按时间排在一起（时间相同时线上的在前，同从前 all + beats 的稳定排序）。
+    /// 只读了末尾一截时，只取不早于那一截第一条的正文：更早的正文排在没读到的消息之间，不在这一截的时间线里
+    private static func timelineOf(_ src: Source, beats: [Message]) -> [Message] {
+        guard !beats.isEmpty else { return src.msgs }
+        let from = src.complete ? -Double.infinity : (src.msgs.first?.createdAt ?? Double.infinity)
+        let bs = src.complete ? beats : beats.filter { $0.createdAt >= from }
+        return (src.msgs + bs).enumerated().sorted { a, b in
+            a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
+        }.map(\.element)
+    }
+
+    // MARK: - 只读需要的那一截（10 万条的会话从前每回一次都要整段读出来）
+
+    /// 拼提示词用到的那一截消息：已经滤过（失败的、只给你看的、重新生成时去掉的那一轮、被拒收的）、改写过（自动回复补标记）。
+    /// 是从前整段（all）末尾的一截；complete 为 true 时就是整段
+    struct Source {
+        var msgs: [Message] = []
+        var complete = false
+    }
+
+    /// 整段里才查得出来的几件事：还欠着的约定、挂着的转账礼物外卖、状态栏上一次存下的值
+    struct Facts {
+        var openPact = false
+        var pending: Set<String> = []
+        /// 交给 StatusBar.piece 的那几条：整段里最后一条带 sbar 的在这里面（整段都没有就没有）
+        var status: [Message] = []
+    }
+
+    private static let pendingKinds = ["transfer", "gift", "takeout"]
+
+    /// 一条消息进不进提示词、进的话写成什么样。从前对整段做的那几步都是逐条的，对一截做结果一样。
+    /// ties：一对一时滤掉我发的被角色拒收的（群聊里没有这一步）
+    private static func keep(_ list: [Message], chat: Chat, excludeTurn: String?, ties: Bool) -> [Message] {
+        let kept = list.filter { $0.kind != "typing" && !$0.isError && !AutoReply.localOnly($0) && (excludeTurn == nil || $0.turnId != excludeTurn) }
+        return (ties ? Ties.keepDelivered(chat, kept) : kept).map(AutoReply.forPrompt)
+    }
+
+    /// 窗口设成「全部」（历史条数或轮数为 0、扫描窗口为 0）时整段都要：那是用户自己选的（第 13 条）
+    private static func needsAll(_ s: AppSettings) -> Bool {
+        if Int(s.num("scanWindow", 6)) <= 0 { return true }
+        if s.raw["historyMode"]?.string == "turn" { return Int(s.num("historyTurns", 10)) <= 0 }
+        return Int(s.num("historyLimit", 20)) <= 0
+    }
+
+    /// 读到的这一截够不够：历史窗口、扫描窗口、能力那一段看的最近 8 条、当前这一轮从哪儿起（要有一条角色说的）、
+    /// 最近两句我说的（锁屏密码）。都盖住了才算够
+    private static func covered(_ src: Source, beats: [Message], settings s: AppSettings) -> Bool {
+        if src.complete { return true }
+        let msgs = src.msgs
+        guard msgs.count >= max(8, Int(s.num("scanWindow", 6))) else { return false }
+        guard msgs.contains(where: { $0.role == .char }) else { return false }
+        var users = 0
+        for m in msgs.reversed() where m.role == .user {
+            users += 1
+            if users >= 2 { break }
+        }
+        guard users >= 2 else { return false }
+        return windowOf(timelineOf(src, beats: beats), settings: s, complete: false) != nil
+    }
+
+    /// 从最后一条往前一页一页读（每页翻倍），读到 covered 为止或读到头。loadAll：一次读整段（buildReference）
+    private static func source(chat: Chat, excludeTurn: String?, ties: Bool, beats: [Message], settings s: AppSettings,
+                               loadAll: Bool) throws -> Source {
+        if loadAll || needsAll(s) {
+            return Source(msgs: keep(try Repo.messages(chatId: chat.id), chat: chat, excludeTurn: excludeTurn, ties: ties), complete: true)
+        }
+        // 第一页按窗口估：一轮大约几条，再留一倍余量给滤掉的。设得很大时也不溢出
+        func clamp(_ v: Double) -> Int { Int(min(max(v, 0), Double(1 << 20))) }
+        let want = s.raw["historyMode"]?.string == "turn" ? clamp(s.num("historyTurns", 10)) * 6 : clamp(s.num("historyLimit", 20))
+        var size = min(1 << 20, max(64, 2 * max(want, clamp(s.num("scanWindow", 6)), 8)))
+        var src = Source()
+        var key: Database.PageKey?
+        while true {
+            let page = try Database.shared.page(Collections.messages, where: chat.id, before: key, limit: size)
+            src.msgs = keep(page.rows.map(Message.init(row:)), chat: chat, excludeTurn: excludeTurn, ties: ties) + src.msgs
+            if page.rows.count < size { src.complete = true }
+            key = page.edge
+            if covered(src, beats: beats, settings: s) { return src }
+            size = min(1 << 20, size * 2)
+        }
+    }
+
+    /// 状态栏要不要上一次存下的值（开着、有要模型写的栏目、沿用上一次）。不要时不必去找那一条
+    private static func statusCarries(_ chat: Chat) -> Bool {
+        let cfg = StatusBar.config(chat)
+        return cfg.on && cfg.carry && cfg.items.contains { $0.on && $0.writtenByModel }
+    }
+
+    /// 整段里才查得出来的那几件事。读了整段时就在读到的里面找；只读了一截时，先在那一截里找，
+    /// 更早的按字节粗筛出候选（「"pending"」「"pact"」与「"open"」「"sbar"」），候选再照原来的规则逐条核对
+    private static func chatFacts(_ src: Source, chat: Chat, excludeTurn: String?, ties: Bool, wantStatus: Bool) throws -> Facts {
+        var f = Facts()
+        func look(_ m: Message) {
+            if m.kind == "pact" && m.row.string("pact") == Space.pactOpen { f.openPact = true }
+            for k in pendingKinds where m.kind == k && m.row.string(k) == "pending" { f.pending.insert(k) }
+        }
+        for m in src.msgs { look(m) }
+        f.status = src.msgs
+        guard !src.complete else { return f }
+        let db = Database.shared
+        let rows = try db.containing(Collections.messages, where: chat.id, any: [["\"pending\""], ["\"pact\"", "\"\(Space.pactOpen)\""]])
+        for m in keep(rows.map(Message.init(row:)), chat: chat, excludeTurn: excludeTurn, ties: ties) { look(m) }
+        if wantStatus && !src.msgs.contains(where: { $0.row["sbar"]?.object != nil }) {
+            func latest(_ limit: Int?) throws -> (hit: Message?, rows: Int) {
+                let rows = try db.containing(Collections.messages, where: chat.id, any: [["\"sbar\""]], newestFirst: true, limit: limit)
+                let hit = keep(rows.map(Message.init(row:)), chat: chat, excludeTurn: excludeTurn, ties: ties)
+                    .first { $0.row["sbar"]?.object != nil }
+                return (hit, rows.count)
+            }
+            var got = try latest(64)
+            if got.hit == nil && got.rows >= 64 { got = try latest(nil) }
+            if let hit = got.hit { f.status = [hit] }
+        }
+        return f
+    }
+
+    /// 引用了读到的那一截之前的消息：按 id 去库里取，照同样的规则滤过（不在这段会话里、或者本来就不进提示词的为 nil）
+    private static func olderLookup(_ src: Source, chat: Chat, excludeTurn: String?, ties: Bool) -> (String) throws -> Message? {
+        if src.complete { return { _ in nil } }
+        return { id in
+            guard let row = try Database.shared.get(Collections.messages, id: id) else { return nil }
+            let m = Message(row: row)
+            guard m.chatId == chat.id else { return nil }
+            return keep([m], chat: chat, excludeTurn: excludeTurn, ties: ties).first
+        }
     }
 
     /// 历史里的时间（网页版 engine.js 的 timeLine）：按我的时区写，虚拟时间时整条时间线一起平移
@@ -304,13 +462,13 @@ enum ChatPrompt {
         return "\n[歌词]\n" + (n > 0 ? Array(lines.prefix(n)) : lines).joined(separator: "\n")
     }
 
-    private static func withQuote(_ m: Message, _ byId: [String: Message]) -> String {
+    private static func withQuote(_ m: Message, _ lookup: (String) throws -> Message?) throws -> String {
         // 封到某一天才能拆的信：那天之前只有信封（网页版 4.336）
         if Space.sealed(m) { return Space.sealedText(m) }
         let qid = m.row.string("quoteId")
         let qtext = m.row.string("quoteText")
         guard !qid.isEmpty || !qtext.isEmpty else { return m.content }
-        let src = byId[qid]?.content ?? qtext
+        let src = try lookup(qid)?.content ?? qtext
         return "[引用：\(excerpt(src, 40))]\n\(m.content)"
     }
 
@@ -411,7 +569,8 @@ enum ChatPrompt {
 
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties"]
 
-    private static func capabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
+    /// msgs 是读到的那一截（至少最近 8 条、最近两句我说的）；整段里才查得出来的看 facts
+    private static func capabilities(char: Character, chat: Chat, msgs: [Message], facts: Facts, settings s: AppSettings) -> String {
         let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
         let lean = s.raw["promptLean"]?.bool ?? true
         let recent = msgs.suffix(8)
@@ -479,7 +638,7 @@ enum ChatPrompt {
             Templates.get("skeleton.agenda", settings: s)
         }
         // 约定（网页版 capabilities.js 的 pact）：还欠着约定就一直给全文，它得知道「完成」怎么写才标得掉
-        let openPact = msgs.contains { $0.kind == "pact" && $0.row.string("pact") == Space.pactOpen }
+        let openPact = facts.openPact
         cap("pact", on: char.row["canPact"]?.bool != false, hot: used(#"^pact$|[\[【]约定"#) || openPact,
             line: "Make a promise: write a line on its own, [约定：the thing]; when it is fulfilled, write [约定完成：the thing]") {
             Templates.get("skeleton.pact", settings: s)
@@ -498,7 +657,7 @@ enum ChatPrompt {
             line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
             Templates.get("skeleton.quote", settings: s)
         }
-        func pending(_ kind: String) -> Bool { msgs.contains { $0.kind == kind && $0.row.string(kind) == "pending" } }
+        func pending(_ kind: String) -> Bool { facts.pending.contains(kind) }
         cap("transfer", on: char.row["canTransfer"]?.bool != false, hot: used(#"^transfer$|[\[【]转账"#) || pending("transfer"),
             line: "Send money: write a line on its own, [转账：amount note]; on receiving money, write [收款] or [退回]") {
             let label = Interact.currencyLabel(s)
@@ -1091,9 +1250,22 @@ extension ChatPrompt {
     /// 设定区分两层：全群一份（世界书取各人的并集、你是谁、时间）；每人一份（人设、情境、示例、核心设定、关系、钉住的、最近记下的、本轮召回）。
     static func buildGroup(chat: Chat, members: [Character], settings s: AppSettings, now: Date = Date(),
                            excludeTurn: String? = nil) throws -> Built {
+        try buildGroupChat(chat: chat, members: members, settings: s, now: now, excludeTurn: excludeTurn, loadAll: false)
+    }
+
+    /// 同 buildGroup，先把整段读出来再拼（只读一截之前的读法）。只给测试核对用
+    static func buildGroupReference(chat: Chat, members: [Character], settings s: AppSettings, now: Date = Date(),
+                                    excludeTurn: String? = nil) throws -> Built {
+        try buildGroupChat(chat: chat, members: members, settings: s, now: now, excludeTurn: excludeTurn, loadAll: true)
+    }
+
+    private static func buildGroupChat(chat: Chat, members: [Character], settings s: AppSettings, now: Date,
+                                       excludeTurn: String?, loadAll: Bool) throws -> Built {
         guard let lead = members.first else { throw StoreError(message: "群里没有成员") }
-        let all = try Repo.messages(chatId: chat.id).filter { !$0.isError && !AutoReply.localOnly($0) && (excludeTurn == nil || $0.turnId != excludeTurn) }
-            .map(AutoReply.forPrompt)
+        let beats = Scenes.beatsAsMessages(chatId: chat.id)
+        let src = try source(chat: chat, excludeTurn: excludeTurn, ties: false, beats: beats, settings: s, loadAll: loadAll)
+        let all = src.msgs
+        let facts = try chatFacts(src, chat: chat, excludeTurn: excludeTurn, ties: false, wantStatus: false)
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let userName = (me?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "对方"
@@ -1132,7 +1304,7 @@ extension ChatPrompt {
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
         P["groupRules"] = Templates.render("skeleton.group-rules", ["userName": userName, "example": lead.name], settings: s)
         P["rules"] = Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s)
-        P["caps"] = capabilities(char: lead, chat: chat, msgs: all, settings: s)
+        P["caps"] = capabilities(char: lead, chat: chat, msgs: all, facts: facts, settings: s)
         P["inner"] = InnerVoice.piece(chat, settings: s)
         P["ban"] = banPiece(s)
         // 性别锚点：人多，放在贴着输出的末尾
@@ -1153,8 +1325,9 @@ extension ChatPrompt {
         if !called.isEmpty { tail.append(Templates.render("skeleton.group-mention", ["names": called.joined(separator: "、")], settings: s)) }
         if let t = translateTail(chat, settings: s) { tail.append(t) }
 
-        let (messages, seen) = history(all, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
-                                       tailDepth: max(1, memoryDepth), lore: deep, group: display)
+        let (messages, seen) = try history(src, beats: beats, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
+                                           tailDepth: max(1, memoryDepth), lore: deep, group: display,
+                                           older: olderLookup(src, chat: chat, excludeTurn: excludeTurn, ties: false))
         return Built(system: arranged.system, messages: messages, recalled: recalledIds, seenImages: seen)
     }
     /// 群聊与多人线下里每人一份：人设、情境、示例、核心设定、关系、钉住的、最近记下的、本轮召回（网页版 memberBlock）。
