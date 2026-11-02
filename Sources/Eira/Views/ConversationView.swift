@@ -1869,11 +1869,13 @@ struct ConversationView: View {
             if let head = g.first { openStacks.insert(head.id) }
         }
         if !messages.contains(where: { $0.id == id }) {
-            guard let all = try? Repo.messages(chatId: chatId), let i = all.firstIndex(where: { $0.id == id }) else {
+            // 从那一条到末尾有几条，库里数一下就够，不必把整段读出来找下标（几十万条时要好几秒）
+            guard let row = try? Database.shared.get(Collections.messages, id: id), Message(row: row).kind != "typing",
+                  let n = try? Database.shared.countFrom(Collections.messages, where: chatId, id: id) else {
                 notice = "这条消息已不存在。"
                 return
             }
-            pageSize = max(pageSize, all.count - i)
+            pageSize = max(pageSize, n)
             reload()
         }
         jumpTo = id

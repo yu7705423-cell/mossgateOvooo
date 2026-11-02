@@ -2,6 +2,8 @@ import SwiftUI
 
 /// 搜索聊天记录（网页版 SearchPage）：一段会话里搜，或者在当前身份的全部会话里搜。正文与译文都算；
 /// 点一条回到那段会话，跳到那一条并闪一下。只在本机找，不调接口。
+///
+/// 找的规则与做法在 ChatSearch。打字时停 0.25 秒再找，期间又改了词就取消上一次；找在后台线程上做，不卡输入。
 struct SearchChatView: View {
     /// nil 为全部会话
     let chatId: String?
@@ -11,13 +13,11 @@ struct SearchChatView: View {
     @State private var hits: [Hit] = []
     @State private var searched = false
     @State private var names: [String: String] = [:]
+    @State private var busy = false
+    @State private var problem: String?
     @FocusState private var focused: Bool
 
-    struct Hit: Identifiable {
-        var id: String { message.id }
-        var message: Message
-        var chatTitle: String
-    }
+    typealias Hit = ChatSearch.Hit
 
     var body: some View {
         List {
@@ -28,9 +28,8 @@ struct SearchChatView: View {
                         .font(.system(size: 15))
                         .focused($focused)
                         .submitLabel(.search)
-                        .onSubmit(run)
                     if !query.isEmpty {
-                        Button { query = ""; hits = []; searched = false } label: { SvgIcon(name: "close", size: 15, color: Theme.text3) }
+                        Button { query = ""; hits = []; searched = false; problem = nil } label: { SvgIcon(name: "close", size: 15, color: Theme.text3) }
                             .buttonStyle(.plain).accessibilityLabel("清空")
                     }
                 }
@@ -40,7 +39,11 @@ struct SearchChatView: View {
                 .listRowInsets(EdgeInsets(top: Theme.sp2, leading: Theme.sp4, bottom: Theme.sp2, trailing: Theme.sp4))
                 .listRowSeparator(.hidden)
             }
-            if searched && hits.isEmpty {
+            if let problem {
+                Text(problem).font(.system(size: 14)).foregroundStyle(Theme.danger).listRowBackground(Color.clear)
+            } else if busy && hits.isEmpty {
+                Text("正在搜索").font(.system(size: 14)).foregroundStyle(Theme.text3).listRowBackground(Color.clear)
+            } else if searched && hits.isEmpty {
                 EmptyState(title: "没有找到", desc: "换一个词试试。正文与译文都会搜到。").listRowBackground(Color.clear)
             }
             if !hits.isEmpty {
@@ -56,7 +59,7 @@ struct SearchChatView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("搜索")
         .navigationBarTitleDisplayMode(.inline)
-        .onChange(of: query) { _, _ in run() }
+        .task(id: query) { await run() }
         .onAppear { focused = true }
     }
 
@@ -92,46 +95,32 @@ struct SearchChatView: View {
         return a
     }
 
-    static func searchable(_ m: Message) -> String {
-        let tr = m.row.string("translation")
-        return tr.isEmpty ? m.content : "\(m.content)\n\(tr)"
-    }
+    static func searchable(_ m: Message) -> String { ChatSearch.searchable(m) }
 
-    /// 本地找：正文或译文里有这个词的，新的在前。撤回的、失败的不算
+    /// 本地找：正文或译文里有这个词的，新的在前。撤回的、失败的不算（ChatSearch.run）
     static func search(_ key: String, chatId: String?) throws -> [Message] {
-        let k = key.trimmingCharacters(in: .whitespaces)
-        guard !k.isEmpty else { return [] }
-        let chats: [Chat]
-        if let chatId {
-            chats = try Repo.chat(chatId).map { [$0] } ?? []
-        } else {
-            let s = AppSettings.load()
-            let active = s.raw["activePersonaId"]?.string ?? ""
-            let all = try Repo.chats()
-            let mine = all.filter { $0.personaId == active }
-            chats = active.isEmpty || mine.isEmpty ? all : mine
-        }
-        var out: [Message] = []
-        for c in chats {
-            out += try Repo.messages(chatId: c.id).filter { m in
-                !m.isError && !m.isRecalled && m.kind != "typing" && searchable(m).range(of: k, options: .caseInsensitive) != nil
-            }
-        }
-        return out.sorted { $0.createdAt > $1.createdAt }
+        try ChatSearch.run(key, chatId: chatId)
     }
 
-    private func run() {
+    /// 词改了就重找：先停一会儿，这期间又改了词，这一次被取消、什么都不做；真正的查找放到后台线程
+    @MainActor private func run() async {
         let k = query.trimmingCharacters(in: .whitespaces)
-        guard !k.isEmpty else { hits = []; searched = false; return }
-        let found = (try? Self.search(k, chatId: chatId)) ?? []
-        let chars = Dictionary(((try? Repo.characters()) ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        names = chars.mapValues(\.displayName)
-        var titles: [String: String] = [:]
-        hits = found.map { m in
-            if titles[m.chatId] == nil, let c = try? Repo.chat(m.chatId) {
-                titles[m.chatId] = c.isGroup ? (c.title.isEmpty ? "群聊" : c.title) : (c.characterIds.first.flatMap { chars[$0]?.displayName } ?? "会话")
-            }
-            return Hit(message: m, chatTitle: titles[m.chatId] ?? "会话")
+        guard !k.isEmpty else { hits = []; searched = false; busy = false; problem = nil; return }
+        do { try await Task.sleep(nanoseconds: 250_000_000) } catch { return }
+        busy = true
+        let scope = chatId
+        let job = Task.detached(priority: .userInitiated) { try ChatSearch.found(k, chatId: scope) }
+        let result = await withTaskCancellationHandler { await job.result } onCancel: { job.cancel() }
+        if Task.isCancelled { return }
+        busy = false
+        switch result {
+        case .success(let f):
+            hits = f.hits
+            names = f.names
+            problem = nil
+        case .failure(let e):
+            hits = []
+            problem = "未能读取聊天记录：\(e.localizedDescription)"
         }
         searched = true
     }

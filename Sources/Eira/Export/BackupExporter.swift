@@ -42,13 +42,35 @@ enum BackupExporter {
 
         var rows = 0
         let collections = try db.collections()
+        // 和数据域同名的头部字段让给数据域（从前是 data[name] = list 盖掉）
+        for name in collections { data[name] = nil }
+        // 库里存的就是每条记录的 JSON 原文：直接接进去，不再解析成对象、整份攒在内存里再序列化一遍。
+        // 几十万条消息时，从前要同时握着原文、解析出来的对象和最后那一份，现在只有最后那一份。
+        // 解析不了的那一条照旧跳过（从前 compactMap 的 try?）
+        var json = try JSONSerialization.data(withJSONObject: data)
+        guard json.last == UInt8(ascii: "}") else { throw StoreError(message: "导出失败：备份头部的格式不对") }
+        json.removeLast()
+        var firstKey = data.isEmpty
         for (i, name) in collections.enumerated() {
-            let list = try db.rawRows(name).compactMap { try? JSONSerialization.jsonObject(with: $0) }
-            data[name] = list
-            rows += list.count
+            if !firstKey { json.append(UInt8(ascii: ",")) }
+            firstKey = false
+            json.append(try JSONSerialization.data(withJSONObject: name, options: [.fragmentsAllowed]))
+            json.append(contentsOf: Array(":[".utf8))
+            var first = true
+            try db.rawRows(name, chunk: 2000) { page in
+                for raw in page {
+                    let ok = autoreleasepool { (try? JSONSerialization.jsonObject(with: raw)) != nil }
+                    guard ok else { continue }
+                    if !first { json.append(UInt8(ascii: ",")) }
+                    first = false
+                    json.append(raw)
+                    rows += 1
+                }
+            }
+            json.append(UInt8(ascii: "]"))
             progress(0.3 * Double(i + 1) / Double(max(collections.count, 1)))
         }
-        let json = try JSONSerialization.data(withJSONObject: data)
+        json.append(UInt8(ascii: "}"))
 
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("eira-export-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

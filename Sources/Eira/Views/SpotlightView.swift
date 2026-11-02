@@ -350,7 +350,7 @@ private struct FindCardEdit: View {
     var body: some View { CharacterEditView(charId: charId, path: $path) }
 }
 
-/// 「在聊天记录中搜索」：带着词在全部会话里找（SearchChatView.search，只在本机找、不调接口），点一条打开那段会话
+/// 「在聊天记录中搜索」：带着词在全部会话里找（ChatSearch.run，只在本机找、不调接口），点一条打开那段会话
 struct ChatHitsView: View {
     let query: String
     let names: [String: String]
@@ -393,7 +393,9 @@ struct ChatHitsView: View {
         .task {
             guard !loaded else { return }
             do {
-                hits = try SearchChatView.search(query, chatId: nil)
+                // 几十万条消息时找一遍要一会儿：放到后台线程，不卡界面（ChatSearch）
+                let q = query
+                hits = try await Task.detached(priority: .userInitiated) { try ChatSearch.run(q, chatId: nil) }.value
                 var t: [String: String] = [:]
                 for id in Set(hits.map(\.chatId)) {
                     if let c = try Repo.chat(id) { t[id] = FindMap.title(c, names: names) }

@@ -22,20 +22,49 @@ enum MemorySummary {
         return at > 0 ? list.filter { $0.createdAt > at } : list
     }
 
-    /// 线上的消息，加上线下各场的正文（按时间排在一起，网页版 4.375）：见面发生的事也要进记忆
-    private static func usable(_ chatId: String) throws -> [Message] {
-        let online = try Repo.messages(chatId: chatId).filter { !$0.isError && !$0.content.isEmpty && !AutoReply.localOnly($0) }.map(AutoReply.forPrompt)
-        let beats = Scenes.beatsAsMessages(chatId: chatId)
+    private static func usableOnline(_ m: Message) -> Bool { !m.isError && !m.content.isEmpty && !AutoReply.localOnly(m) }
+
+    /// 线上的消息，加上线下各场的正文（按时间排在一起，网页版 4.375）：见面发生的事也要进记忆。
+    /// since 给了时线上的只读 createdAt 不早于它的那些（线下的照旧全读，条数少）
+    private static func usable(_ chatId: String, since: Double? = nil, beats given: [Message]? = nil) throws -> [Message] {
+        let raw = try since.map { try Repo.messages(chatId: chatId, since: $0) } ?? Repo.messages(chatId: chatId)
+        let online = raw.filter(usableOnline).map(AutoReply.forPrompt)
+        let beats = given ?? Scenes.beatsAsMessages(chatId: chatId)
         guard !beats.isEmpty else { return online }
         return (online + beats).enumerated().sorted { a, b in
             a.element.createdAt != b.element.createdAt ? a.element.createdAt < b.element.createdAt : a.offset < b.offset
         }.map(\.element)
     }
 
+    /// 积压只可能在这一刻之后：水位线所指的那一条（线上或线下）与 memoryUpToAt 里较早的那个。
+    /// 从这里往后读，再交给 after 按原来的规则切，结果和读整段一样 —— 被略过的都排在水位线之前，after 本来也会切掉。
+    /// 推不出来（没有水位线、所指的那一条没有时间）时为 nil，读整段。
+    private static func pendingFloor(chatId: String, mark: String, at: Double, beats: [Message]) throws -> Double? {
+        guard !mark.isEmpty else { return nil }
+        var found: [Double] = []
+        if let r = try Database.shared.get(Collections.messages, id: mark),
+           Collections.indexValue(Collections.messages, r.fields) == chatId {
+            let m = Message(row: r)
+            if m.kind != "typing" && usableOnline(m) {
+                guard let t = r.created, t > 0 else { return nil }
+                found.append(t)
+            }
+        }
+        if let b = beats.first(where: { $0.id == mark }) {
+            guard b.createdAt > 0 else { return nil }
+            found.append(b.createdAt)
+        }
+        if at > 0 { found.append(at) }
+        return found.min()
+    }
+
     /// 还没总结过的。
     static func pending(chatId: String) throws -> [Message] {
         guard let chat = try Repo.chat(chatId) else { return [] }
-        return after(try usable(chatId), mark: chat.row.string("memoryUpTo"), at: chat.row.number("memoryUpToAt") ?? 0)
+        let mark = chat.row.string("memoryUpTo"), at = chat.row.number("memoryUpToAt") ?? 0
+        let beats = Scenes.beatsAsMessages(chatId: chatId)
+        let since = try pendingFloor(chatId: chatId, mark: mark, at: at, beats: beats)
+        return after(try usable(chatId, since: since, beats: beats), mark: mark, at: at)
     }
 
     /// 上次试过之后积压的。

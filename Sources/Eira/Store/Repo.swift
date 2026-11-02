@@ -31,6 +31,11 @@ enum Repo {
         return rows.map(Message.init(row:)).filter { $0.kind != "typing" }
     }
 
+    /// 一段会话里 createdAt 不早于 since 的消息，按时间升序。水位线之后的积压用，不必把整段读出来
+    static func messages(chatId: String, since: Double) throws -> [Message] {
+        try db.all(Collections.messages, where: chatId, since: since).map(Message.init(row:)).filter { $0.kind != "typing" }
+    }
+
     static func save(_ m: Message) throws { try db.put(Collections.messages, m.row) }
 
     /// 新加一条消息。createdAt 至少比这段会话里最后一条晚一毫秒：消息按 createdAt 排，

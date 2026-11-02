@@ -19,6 +19,11 @@ private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.sel
 /// `created` 取记录的 createdAt，用来排序。
 ///
 /// 所有读写走同一条串行队列，一条连接。
+///
+/// `msgtext` 是消息的搜索索引（「查询消息记录」用）：每条消息一行，存正文与译文折叠大小写之后的那一份，
+/// 搜索时先在这里用 instr 筛出候选，再把候选按原来的规则逐条核对，不必把每一条消息的 JSON 都解析一遍。
+/// 它只是索引，丢了、旧了都能从 `records` 重建；搜索时 JOIN 回 `records`，索引里多出来的行不会冒出来。
+/// 老库第一次打开时没有这份索引，在后台分批补（`maintainSearchIndex`），补完之前搜索照旧逐条读。
 final class Database: @unchecked Sendable {
     /// 测试里会换成临时目录里的一份，见 Tests/Support.swift。
     nonisolated(unsafe) static var shared: Database = {
@@ -37,6 +42,10 @@ final class Database: @unchecked Sendable {
     /// 所有写 kv 与 media 的路径都在本文件里，写的时候一并更新或清掉
     private var kvCache: [String: JSONValue?] = [:]
     private var mediaCache: [String: String?] = [:]
+    /// msgtext 是否已经盖住了全部消息。只在 queue 上读写。false 时搜索走逐条读的老路
+    private var msgtextReady = false
+    /// 后台补索引每一批多少条。一批在 queue 上做完，期间别的读写排队，所以不要太大
+    private static let fillChunk = 2000
 
     init(url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -70,7 +79,29 @@ final class Database: @unchecked Sendable {
                   PRIMARY KEY (kind, id)
                 )
                 """)
+            try exec("""
+                CREATE TABLE IF NOT EXISTS msgtext (
+                  id TEXT PRIMARY KEY,
+                  chat TEXT,
+                  created REAL,
+                  skip INTEGER NOT NULL DEFAULT 0,
+                  fold TEXT NOT NULL
+                )
+                """)
+            try exec("CREATE INDEX IF NOT EXISTS msgtext_chat ON msgtext (chat, created)")
+            // 原生版自己的记号（不进备份，不和网页版的 kv 混在一起）
+            try exec("CREATE TABLE IF NOT EXISTS native_meta (k TEXT PRIMARY KEY, v TEXT NOT NULL)")
+            if try metaGet("msgtext") == "1" {
+                msgtextReady = true
+            } else if try countLocked(Collections.messages) == 0 {
+                // 新库，或者库里还没有消息：索引从第一条起跟着写，现在就算齐
+                try exec("DELETE FROM msgtext")
+                try metaSet("msgtext", "1")
+                msgtextReady = true
+            }
         }
+        // 核对与补齐在后台做，不挡开机
+        DispatchQueue.global(qos: .utility).async { [weak self] in self?.maintainSearchIndex() }
     }
 
     deinit { sqlite3_close_v2(handle) }
@@ -131,10 +162,39 @@ final class Database: @unchecked Sendable {
     }
 
     func count(_ collection: String) throws -> Int {
+        try queue.sync { try countLocked(collection) }
+    }
+
+    /// 按查询字段取 createdAt 不早于 since 的那些，按创建时间排。积压只在水位线之后，不必读整段。
+    func all(_ collection: String, where value: String, since: Double) throws -> [Row] {
         try queue.sync {
-            try query("SELECT COUNT(*) FROM records WHERE collection = ?", [collection]) { stmt in
-                Int(sqlite3_column_int64(stmt, 0))
-            }.first ?? 0
+            try query("SELECT json FROM records WHERE collection = ? AND idx = ? AND created >= ? ORDER BY created, id",
+                      [collection, value, since]) { stmt in
+                try Row(data: Self.blob(stmt, 0))
+            }
+        }
+    }
+
+    /// 从 id 那一条到末尾一共几条（含它自己），顺序同 `all(_:where:)`。跳到很早的一条时用来算要画多少条，
+    /// 不必把整段读出来找下标。那一条不在这里（不存在，或者不属于 value）时为 nil。
+    func countFrom(_ collection: String, where value: String, id: String) throws -> Int? {
+        try queue.sync {
+            let at = try query("SELECT created FROM records WHERE collection = ? AND id = ? AND idx = ?",
+                               [collection, id, value]) { stmt -> Double? in
+                sqlite3_column_type(stmt, 0) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 0)
+            }
+            guard let found = at.first else { return nil }
+            let sql: String
+            let args: [Any?]
+            if let t = found {
+                sql = "SELECT COUNT(*) FROM records WHERE collection = ? AND idx = ? AND (created > ? OR (created = ? AND id >= ?))"
+                args = [collection, value, t, t, id]
+            } else {
+                // 没有 createdAt 的排在最前面
+                sql = "SELECT COUNT(*) FROM records WHERE collection = ? AND idx = ? AND (created IS NOT NULL OR id >= ?)"
+                args = [collection, value, id]
+            }
+            return try query(sql, args) { Int(sqlite3_column_int64($0, 0)) }.first ?? 0
         }
     }
 
@@ -161,6 +221,10 @@ final class Database: @unchecked Sendable {
     func delete(_ collection: String, id: String) throws {
         try queue.sync {
             try run("DELETE FROM records WHERE collection = ? AND id = ?", [collection, id])
+            // 索引里留下的行搜索时 JOIN 不回记录，不会冒出来；删不掉只记着下次开机重建
+            if collection == Collections.messages {
+                do { try run("DELETE FROM msgtext WHERE id = ?", [id]) } catch { searchIndexBroke() }
+            }
         }
     }
 
@@ -168,6 +232,9 @@ final class Database: @unchecked Sendable {
     func deleteAll(_ collection: String, where value: String) throws {
         try queue.sync {
             try run("DELETE FROM records WHERE collection = ? AND idx = ?", [collection, value])
+            if collection == Collections.messages {
+                do { try run("DELETE FROM msgtext WHERE chat = ?", [value]) } catch { searchIndexBroke() }
+            }
         }
     }
 
@@ -182,6 +249,52 @@ final class Database: @unchecked Sendable {
     func rawRows(_ collection: String) throws -> [Data] {
         try queue.sync {
             try query("SELECT json FROM records WHERE collection = ? ORDER BY created, id", [collection]) { Self.blob($0, 0) }
+        }
+    }
+
+    /// 同上，一批一批交出来（顺序同样是 created、id）。几十万条消息时不必整份握在内存里，
+    /// 每一批读完就放开队列，导出期间界面上的读写不必等到整个数据域读完。body 在队列外调用，可以再读库。
+    func rawRows(_ collection: String, chunk: Int, _ body: ([Data]) throws -> Void) throws {
+        let n = max(1, chunk)
+        // 先是没有 createdAt 的（ORDER BY created 时它们排在最前面），按 id 接着取。
+        // INDEXED BY：不写的话查询计划为了省掉排序会沿主键把这个数据域整个扫一遍（这种行通常一条都没有）
+        var lastId: String?
+        while true {
+            let sql: String
+            let args: [Any?]
+            if let lastId {
+                sql = "SELECT id, json FROM records INDEXED BY records_created WHERE collection = ? AND created IS NULL AND id > ? ORDER BY id LIMIT ?"
+                args = [collection, lastId, n]
+            } else {
+                sql = "SELECT id, json FROM records INDEXED BY records_created WHERE collection = ? AND created IS NULL ORDER BY id LIMIT ?"
+                args = [collection, n]
+            }
+            let page: [(id: String, json: Data)] = try queue.sync {
+                try query(sql, args) { (id: Self.text($0, 0), json: Self.blob($0, 1)) }
+            }
+            if !page.isEmpty { try body(page.map(\.json)) }
+            if page.count < n { break }
+            lastId = page.last?.id
+        }
+        // 再是有 createdAt 的，按 (created, id) 接着取
+        var lastKey: (created: Double, id: String)?
+        while true {
+            let page: [(created: Double, id: String, json: Data)] = try queue.sync {
+                let map: (OpaquePointer) -> (created: Double, id: String, json: Data) = {
+                    (created: sqlite3_column_double($0, 0), id: Self.text($0, 1), json: Self.blob($0, 2))
+                }
+                if let k = lastKey {
+                    return try query("""
+                        SELECT created, id, json FROM records WHERE collection = ? AND created >= ? AND (created > ? OR id > ?)
+                        ORDER BY created, id LIMIT ?
+                        """, [collection, k.created, k.created, k.id, n], map)
+                }
+                return try query("SELECT created, id, json FROM records WHERE collection = ? AND created IS NOT NULL ORDER BY created, id LIMIT ?",
+                                 [collection, n], map)
+            }
+            if !page.isEmpty { try body(page.map(\.json)) }
+            if page.count < n { break }
+            if let last = page.last { lastKey = (last.created, last.id) }
         }
     }
 
@@ -208,10 +321,14 @@ final class Database: @unchecked Sendable {
             try exec("BEGIN IMMEDIATE")
             do {
                 try exec("DELETE FROM records")
+                try exec("DELETE FROM msgtext")
                 try exec("DELETE FROM media")
                 try run("DELETE FROM kv WHERE k IN (?, ?)", [KVKey.persona, KVKey.layout])
                 try exec("COMMIT")
                 kvCache = [:]; mediaCache = [:]
+                // 消息一条都不剩，索引也是空的：算齐
+                msgtextReady = true
+                try? metaSet("msgtext", "1")
             } catch {
                 try? exec("ROLLBACK")
                 kvCache = [:]; mediaCache = [:]
@@ -270,17 +387,24 @@ final class Database: @unchecked Sendable {
     /// 中途任何一步失败都整体回滚，库保持导入之前的样子。
     func replaceAll(_ body: (Batch) throws -> Void) throws {
         try queue.sync {
+            let wasReady = msgtextReady
             try exec("BEGIN IMMEDIATE")
             do {
                 try exec("DELETE FROM records")
+                try exec("DELETE FROM msgtext")
                 try exec("DELETE FROM media")
                 kvCache = [:]; mediaCache = [:]
+                // 导进来的每一条消息都由 Batch.put 写上索引，导完就是齐的；中途哪一条索引没写上，indexMessageLocked 会把它改回 false
+                msgtextReady = true
                 try body(Batch(db: self))
                 try exec("COMMIT")
                 kvCache = [:]; mediaCache = [:]
+                if msgtextReady { try? metaSet("msgtext", "1") }
             } catch {
                 try? exec("ROLLBACK")
                 kvCache = [:]; mediaCache = [:]
+                // 回滚之后库与索引都回到导入之前的样子
+                msgtextReady = wasReady
                 throw error
             }
         }
@@ -292,6 +416,10 @@ final class Database: @unchecked Sendable {
         func put(_ collection: String, id: String, json: Data, idx: String?, created: Double?) throws {
             try db.run("INSERT OR REPLACE INTO records (collection, id, idx, created, json) VALUES (?, ?, ?, ?, ?)",
                        [collection, id, idx, created, json])
+            if collection == Collections.messages {
+                let fields = ((try? JSONSerialization.jsonObject(with: json)) as? [String: Any]) ?? [:]
+                db.indexMessageLocked(id: id, chat: idx, created: created, Database.searchParts(any: fields))
+            }
         }
         func setKV(_ key: String, _ value: JSONValue) throws {
             try db.run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", [key, try value.encoded()])
@@ -306,8 +434,153 @@ final class Database: @unchecked Sendable {
 
     private func putLocked(_ collection: String, _ row: Row) throws {
         let json = try row.encoded()
+        let idx = Collections.indexValue(collection, row.fields)
         try run("INSERT OR REPLACE INTO records (collection, id, idx, created, json) VALUES (?, ?, ?, ?, ?)",
-                [collection, row.id, Collections.indexValue(collection, row.fields), row.created, json])
+                [collection, row.id, idx, row.created, json])
+        if collection == Collections.messages {
+            indexMessageLocked(id: row.id, chat: idx, created: row.created, Self.searchParts(row.fields))
+        }
+    }
+
+    private func countLocked(_ collection: String) throws -> Int {
+        try query("SELECT COUNT(*) FROM records WHERE collection = ?", [collection]) { stmt in
+            Int(sqlite3_column_int64(stmt, 0))
+        }.first ?? 0
+    }
+
+    // MARK: - 消息搜索索引
+
+    /// 一条消息里搜索要看的几项。和 ChatSearch 的 searchable 与过滤条件一一对应
+    struct SearchParts {
+        var content = ""
+        var translation = ""
+        var status = ""
+        var kind = ""
+        /// 正文与译文：译文为空时只有正文，否则中间隔一个换行（同 ChatSearch.searchable）
+        var text: String { translation.isEmpty ? content : "\(content)\n\(translation)" }
+        /// 失败的与「正在输入」的永远搜不到
+        var skip: Bool { status == "error" || kind == "typing" }
+    }
+
+    static func searchParts(_ f: [String: JSONValue]) -> SearchParts {
+        SearchParts(content: f["content"]?.string ?? "", translation: f["translation"]?.string ?? "",
+                    status: f["status"]?.string ?? "", kind: f["kind"]?.string ?? "")
+    }
+
+    static func searchParts(any f: [String: Any]) -> SearchParts {
+        SearchParts(content: f["content"] as? String ?? "", translation: f["translation"] as? String ?? "",
+                    status: f["status"] as? String ?? "", kind: f["kind"] as? String ?? "")
+    }
+
+    /// 存进索引、拿来比的那一份：折叠大小写，再拆成标准分解形式。正文和搜索词都这样处理，
+    /// 「不分大小写地包含」就变成了逐字节的包含。只用来筛候选，最后仍按 range(of:options: .caseInsensitive) 核对
+    static func searchFold(_ s: String) -> String {
+        s.folding(options: [.caseInsensitive], locale: nil).decomposedStringWithCanonicalMapping
+    }
+
+    /// 写一条消息的索引。失败不连累消息本身的写入：索引记成不完整，搜索退回逐条读，下次开机重建
+    fileprivate func indexMessageLocked(id: String, chat: String?, created: Double?, _ p: SearchParts) {
+        do {
+            try run("INSERT OR REPLACE INTO msgtext (id, chat, created, skip, fold) VALUES (?, ?, ?, ?, ?)",
+                    [id, chat, created, p.skip ? 1 : 0, Self.searchFold(p.text)])
+        } catch {
+            searchIndexBroke()
+        }
+    }
+
+    /// 索引不再可信：这次运行里搜索退回逐条读；记号写不进去也不要紧，下次开机核对条数时会发现对不上
+    private func searchIndexBroke() {
+        msgtextReady = false
+        try? metaSet("msgtext", "0")
+    }
+
+    /// 在一段会话里用索引筛：正文或译文折叠后包含 needle（已经过 searchFold）的、不是失败也不是「正在输入」的，
+    /// 按 created、id 升序（同 `all(_:where:)`）。索引还没补齐时为 nil，调用方照旧逐条读。
+    /// CROSS JOIN 让 SQLite 从索引这一边走：先在 msgtext 里筛，命中的才回 records 取原文（不写的话它会先把这段会话的每一条记录读出来）
+    func searchMessages(chatId: String, folded needle: String) throws -> [Row]? {
+        try queue.sync {
+            guard msgtextReady else { return nil }
+            return try query("""
+                SELECT r.json FROM msgtext t
+                CROSS JOIN records r ON r.collection = 'messages' AND r.id = t.id AND r.idx = t.chat
+                WHERE t.chat = ? AND t.skip = 0 AND instr(t.fold, ?) > 0
+                ORDER BY r.created, r.id
+                """, [chatId, needle]) { stmt in
+                try Row(data: Self.blob(stmt, 0))
+            }
+        }
+    }
+
+    /// 索引是否已经补齐。测试与诊断用
+    var searchIndexReady: Bool { queue.sync { msgtextReady } }
+
+    /// 开机后在后台跑：核对索引与消息的条数，对不上（比如装过旧版本、在旧版本里写过消息）就清掉重建；
+    /// 没补齐的一批一批补，每批之间放开队列。中途关掉 app 也不要紧，下次从记下的位置接着补。
+    /// 只读 records、只写 msgtext 与 native_meta，消息本身一条都不动。
+    func maintainSearchIndex() {
+        let needFill: Bool = (try? queue.sync { () throws -> Bool in
+            guard handle != nil else { return false }
+            guard msgtextReady else { return true }
+            let a = try countLocked(Collections.messages)
+            let b = try query("SELECT COUNT(*) FROM msgtext", []) { Int(sqlite3_column_int64($0, 0)) }.first ?? 0
+            guard a != b else { return false }
+            msgtextReady = false
+            try metaSet("msgtext", "0")
+            try metaSet("msgtextAt", "0")
+            try exec("DELETE FROM msgtext")
+            return true
+        }) ?? false
+        guard needFill else { return }
+        while true {
+            // 出错就停在这里：搜索继续走逐条读的老路，下次开机再补
+            guard let done = try? queue.sync(execute: { try fillSearchIndexChunk() }), !done else { return }
+        }
+    }
+
+    /// 补一批。返回 true 表示补齐了（或者库已经关了）
+    private func fillSearchIndexChunk() throws -> Bool {
+        guard handle != nil else { return true }
+        if msgtextReady { return true }
+        let saved = try metaGet("msgtextAt") ?? "0"
+        var cursor = Int(saved) ?? 0
+        // 按 rowid 往后走：老记录的 rowid 不会变；这之后新写、改写的消息都已经由 putLocked 带上了索引。
+        // `+collection` 不让查询计划去用以 collection 打头的索引（那样每一批都要把全部消息按 rowid 排一遍），只沿 rowid 往后扫
+        let rows: [(rowid: Int, id: String, idx: String?, created: Double?, json: Data)] = try query(
+            "SELECT rowid, id, idx, created, json FROM records WHERE +collection = ? AND rowid > ? ORDER BY rowid LIMIT ?",
+            [Collections.messages, cursor, Self.fillChunk]) { stmt in
+            (rowid: Int(sqlite3_column_int64(stmt, 0)), id: Self.text(stmt, 1),
+             idx: sqlite3_column_type(stmt, 2) == SQLITE_NULL ? nil : Self.text(stmt, 2),
+             created: sqlite3_column_type(stmt, 3) == SQLITE_NULL ? nil : sqlite3_column_double(stmt, 3),
+             json: Self.blob(stmt, 4))
+        }
+        let finished = rows.count < Self.fillChunk
+        try exec("SAVEPOINT msgtext_fill")
+        do {
+            for r in rows {
+                let fields = ((try? JSONSerialization.jsonObject(with: r.json)) as? [String: Any]) ?? [:]
+                let p = Self.searchParts(any: fields)
+                try run("INSERT OR REPLACE INTO msgtext (id, chat, created, skip, fold) VALUES (?, ?, ?, ?, ?)",
+                        [r.id, r.idx, r.created, p.skip ? 1 : 0, Self.searchFold(p.text)])
+                cursor = r.rowid
+            }
+            try metaSet("msgtextAt", String(cursor))
+            if finished { try metaSet("msgtext", "1") }
+            try exec("RELEASE msgtext_fill")
+        } catch {
+            try? exec("ROLLBACK TO msgtext_fill")
+            try? exec("RELEASE msgtext_fill")
+            throw error
+        }
+        if finished { msgtextReady = true }
+        return finished
+    }
+
+    private func metaGet(_ k: String) throws -> String? {
+        try query("SELECT v FROM native_meta WHERE k = ?", [k]) { Self.text($0, 0) }.first
+    }
+
+    private func metaSet(_ k: String, _ v: String) throws {
+        try run("INSERT OR REPLACE INTO native_meta (k, v) VALUES (?, ?)", [k, v])
     }
 
     private func exec(_ sql: String) throws {
