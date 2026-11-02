@@ -39,8 +39,13 @@ jobs:
           if [ -z "$WEB_REPO_TOKEN" ]; then echo "没有 WEB_REPO_TOKEN，跳过"; exit 0; fi
           git clone -q --depth 1 --branch claude/mini-phone-architecture-tqzvig \
             "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" "$RUNNER_TEMP/web"
-          node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web"
-          node scripts/check-weblogic.mjs
+          # 网页版改了结构（合并、挪动文件）导致打包不出来时不拦这次编译：app 自动退回原生解析，这里只记一条警告
+          if node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web" && node scripts/check-weblogic.mjs; then
+            echo "网页版逻辑已打包"
+          else
+            echo "::warning::网页版逻辑打包失败，这次的 app 用原生解析。看 scripts/sync-weblogic.mjs 的输出，按网页版的新结构调整"
+            rm -f Resources/weblogic/reply.bundle.js
+          fi
           rm -rf "$RUNNER_TEMP/web"
 
       - name: 生成工程

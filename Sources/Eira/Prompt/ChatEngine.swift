@@ -330,7 +330,7 @@ enum ChatEngine {
         // 状态块不落成气泡：拆分之前先摘掉（网页版 statusbar.lift）
         let raw = StatusBar.lift(raw).text
         guard chat.isGroup && chat.characterIds.count > 1 else {
-            let parsed = ReplyParser.split(GroupChat.stripOwnName(raw, char: char, chat: chat), autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
+            let parsed = ReplyParser.splitPreferWeb(GroupChat.stripOwnName(raw, char: char, chat: chat), autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             return (parsed.parts.map { (part: $0, char: char) }, parsed.think, parsed.stamp)
         }
         let members = GroupChat.members(chat)
@@ -343,7 +343,7 @@ enum ChatEngine {
         for (i, seg) in GroupChat.splitSpeakers(raw, members: members, chat: chat, userName: me?.name ?? "",
                                                 fallback: GroupChat.pendingMentions(msgs).first ?? "").enumerated() {
             guard let who = byId[seg.charId] else { continue }
-            let parsed = ReplyParser.split(seg.text, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
+            let parsed = ReplyParser.splitPreferWeb(seg.text, autoSplitAt: Int(AppSettings.load().num("autoSplitAt", 40)))
             if i == 0 { stamp = parsed.stamp }
             out += parsed.parts.map { (part: $0, char: who) }
         }

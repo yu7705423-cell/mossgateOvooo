@@ -130,6 +130,19 @@ enum ReplyParser {
     // MARK: - 入口
 
     /// autoSplitAt：整轮只有一条很长的纯文字时按句子再切的字数（网页版 settings.autoSplitAt，默认 40，0 为不切）
+    /// 回复切分的正式入口：先用网页版的 reply.js（WebLogic：编译时从网页版仓库取来打包进 app，与网页版同一份代码）；
+    /// 包里没有、加载失败或解析抛错时，退回下面原生的这一份，聊天不受影响（docs/jscore-pilot.md）
+    static func splitPreferWeb(_ raw: String, autoSplitAt: Int = 40) -> Result {
+        let t0 = Date()
+        if let r = WebLogic.parseReply(raw, autoSplitAt: autoSplitAt) {
+            // 真机上 app 里的 JavaScriptCore 没有加速，慢的那几次记下来，好知道真机上的实际耗时
+            let ms = Date().timeIntervalSince(t0) * 1000
+            if ms > 30 { Diagnostics.shared.record("weblogic-slow", ["ms": Int(ms), "chars": raw.count]) }
+            return r
+        }
+        return split(raw, autoSplitAt: autoSplitAt)
+    }
+
     static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
         let (stamped, stamp) = stripStamps(MarkFold.splitTrailRecall(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines)))))
