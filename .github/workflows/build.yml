@@ -30,6 +30,19 @@ jobs:
         # 界面上收起来的说明（HelpNote）由 scripts/gen-help.mjs 收进 Resources/help.json；改了说明没重跑就不往下编
         run: node scripts/gen-help.mjs --check
 
+      - name: 取网页版的纯逻辑
+        # 网页版仓库是私密的：网页版的代码不进本仓库（本仓库公开），只在编译时用只读钥匙取一份、打包进这次的 app，用完即删。
+        # 没有钥匙（复刻的仓库）时跳过，相关测试也跳过
+        env:
+          WEB_REPO_TOKEN: ${{ secrets.WEB_REPO_TOKEN }}
+        run: |
+          if [ -z "$WEB_REPO_TOKEN" ]; then echo "没有 WEB_REPO_TOKEN，跳过"; exit 0; fi
+          git clone -q --depth 1 --branch claude/mini-phone-architecture-tqzvig \
+            "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" "$RUNNER_TEMP/web"
+          node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web"
+          node scripts/check-weblogic.mjs
+          rm -rf "$RUNNER_TEMP/web"
+
       - name: 生成工程
         run: |
           brew install xcodegen

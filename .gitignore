@@ -4,3 +4,6 @@ build/
 DerivedData/
 *.ipa
 .DS_Store
+
+# 网页版纯逻辑的打包结果：网页版仓库是私密的，编译时由 scripts/sync-weblogic.mjs 现取现打，不进本仓库
+Resources/weblogic/reply.bundle.js
