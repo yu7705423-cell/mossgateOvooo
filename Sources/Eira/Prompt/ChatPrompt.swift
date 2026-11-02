@@ -36,14 +36,14 @@ enum ChatPrompt {
         // 通话里不让模型在台词后面夹译文：拼提示词时把这段对话的翻译摘掉（网页版 call.js 的 plain）
         if call != nil { chat.row["translateTo"] = .string("") }
         // 线下那几场的正文按时间排进历史，一起算条数与轮次（网页版 4.375）
-        let beats = Scenes.beatsAsMessages(chatId: chat.id)
+        let beats = phase("beats") { Scenes.beatsAsMessages(chatId: chat.id) }
         // 我发的被角色拒收的不进历史（网页版 ties.keepDelivered）
         // 自动回复停止的提示只给你看；自动回的那几条带 [自动回复]（网页版 4.586）
         // 只读末尾够用的那一截（见 source）；整段里才查得出来的几件事另外查（见 chatFacts）
-        let src = try source(chat: chat, excludeTurn: excludeTurn, ties: true, beats: beats, settings: s, loadAll: loadAll)
+        let src = try phase("source") { try source(chat: chat, excludeTurn: excludeTurn, ties: true, beats: beats, settings: s, loadAll: loadAll) }
         let all = src.msgs
-        let facts = try chatFacts(src, chat: chat, excludeTurn: excludeTurn, ties: true,
-                                  wantStatus: call == nil && statusCarries(chat))
+        let facts = try phase("facts") { try chatFacts(src, chat: chat, excludeTurn: excludeTurn, ties: true,
+                                                       wantStatus: call == nil && statusCarries(chat)) }
         let personas = try Repo.personas()
         let me = try personas.first(where: { $0.id == chat.personaId }) ?? Repo.activePersona(s)
         let charName = char.name.isEmpty ? "对方" : char.name
@@ -55,18 +55,18 @@ enum ChatPrompt {
         let budget = Int(s.num("contextBudget", 0))
         // 见面时（4.269）这段会话关掉的、额外挂上的书
         let face = Face.on(chat) && call == nil
-        let lore = activateLore(char: char, scanText: scanText, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0,
-                                books: face ? Face.books(chat) : nil)
-        let memories = try visibleMemories(char: char, chat: chat, rootId: rootId, personas: personas)
+        let lore = phase("lore") { activateLore(char: char, scanText: scanText, budget: budget > 0 ? Int((Double(budget) * 0.4).rounded()) : 0,
+                                                books: face ? Face.books(chat) : nil) }
+        let memories = try phase("memories") { try visibleMemories(char: char, chat: chat, rootId: rootId, personas: personas) }
         let memoryOn = s.raw["memoryEnabled"]?.bool ?? true
         let recent = memoryOn ? recentMemories(memories, limit: Int(s.num("memoryRecent", 10))) : []
-        let recalled = memoryOn ? recall(memories, scanText: scanText, skip: Set(recent.map(\.id)),
-                                         topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s)) : []
+        let recalled: [Memory] = !memoryOn ? [] : phase("recall") { recall(memories, scanText: scanText, skip: Set(recent.map(\.id)),
+                                                                 topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s)) }
 
         // 各段先算出来，先后与开关交给预设的条目顺序（Layout，网页版 4.387）。默认顺序与从前一字不差
         let memoryDepth = Int(s.num("memoryDepth", 1))
-        let blocks = dataBlocks(chat: chat, char: char, me: me, msgs: all, lore: lore, memories: memories, recent: recent,
-                                recalled: recalled, rootId: rootId, settings: s, now: now)
+        let blocks = phase("blocks") { dataBlocks(chat: chat, char: char, me: me, msgs: all, lore: lore, memories: memories, recent: recent,
+                                                  recalled: recalled, rootId: rootId, settings: s, now: now) }
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         // 会话切到线下时（见面模式）：开场换成面对面，带上这一场的地点、时刻、情境
         if face {
@@ -84,19 +84,19 @@ enum ChatPrompt {
         P["gender"] = gender
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
         P["rules"] = Templates.render("skeleton.rules", ["count": countText(Int(s.num("msgMin", 3)), Int(s.num("msgMax", 9)))], settings: s)
-        P["caps"] = capabilities(char: char, chat: chat, msgs: all, facts: facts, settings: s)
+        P["caps"] = phase("caps") { capabilities(char: char, chat: chat, msgs: all, facts: facts, settings: s) }
         let core = char.core.trimmingCharacters(in: .whitespacesAndNewlines)
         if !core.isEmpty { P["core"] = Templates.render("skeleton.core", ["core": core], settings: s) }
         P["ban"] = banPiece(s)
         P["genderTail"] = gender
-        P["inner"] = InnerVoice.piece(chat, settings: s)
+        P["inner"] = phase("inner") { InnerVoice.piece(chat, settings: s) }
         // 状态栏：开着、有要模型写的栏目时才出现（网页版 4.399）。通话里没有
-        if call == nil { P["status"] = StatusBar.piece(chat, msgs: facts.status, names: names, settings: s) }
+        if call == nil { P["status"] = phase("status") { StatusBar.piece(chat, msgs: facts.status, names: names, settings: s) } }
         if let call {
             P["call"] = call.rule
             P["callScript"] = call.script
         }
-        let arranged = Layout.arrange(call == nil ? "chat" : "call", pieces: P, settings: s, names: names)
+        let arranged = phase("arrange") { Layout.arrange(call == nil ? "chat" : "call", pieces: P, settings: s, names: names) }
 
         // 放在历史末尾的那一段：条目里排在聊天记录下面的（默认是「此刻的状态」），再加本轮相关记忆。通话里没有这一段
         var tailParts: [String] = []
@@ -104,46 +104,63 @@ enum ChatPrompt {
         if call == nil && memoryDepth > 0 && !recalled.isEmpty { tailParts.append(recallText(recalled, now: now)) }
         if let t = translateTail(chat, settings: s) { tailParts.append(t) }
 
-        let (messages, seen) = try history(src, beats: beats, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
-                                           tailDepth: max(1, memoryDepth), lore: lore.deep,
-                                           older: olderLookup(src, chat: chat, excludeTurn: excludeTurn, ties: true))
+        let (messages, seen) = try phase("history") {
+            try history(src, beats: beats, chat: chat, char: char, settings: s, tail: tailParts.joined(separator: "\n\n"),
+                        tailDepth: max(1, memoryDepth), lore: lore.deep,
+                        older: olderLookup(src, chat: chat, excludeTurn: excludeTurn, ties: true))
+        }
         return Built(system: arranged.system, messages: messages, recalled: recalled.map(\.id),
                      seenImages: seen)
+    }
+
+    /// 拼提示词各步用了多久（毫秒）。只有测试会设它（StressTests 打印 `STRESS A.prompt.phase.*`），平时为 nil，不计时
+    nonisolated(unsafe) static var phaseTimer: ((String, Double) -> Void)?
+
+    static func phase<T>(_ name: String, _ body: () throws -> T) rethrows -> T {
+        guard let report = phaseTimer else { return try body() }
+        let start = DispatchTime.now().uptimeNanoseconds
+        let out = try body()
+        report(name, Double(DispatchTime.now().uptimeNanoseconds - start) / 1_000_000)
+        return out
     }
 
     /// 设定区里的那些注入区块（线上聊天与线下共用；线下传进来的 char、me 是这一场换过身份的）
     static func dataBlocks(chat: Chat, char: Character, me: Persona?, msgs all: [Message], lore: Lore, memories: [Memory],
                            recent: [Memory], recalled: [Memory], rootId: String, settings s: AppSettings, now: Date) -> [String: String] {
         let memoryDepth = Int(s.num("memoryDepth", 1))
+        // 用户没开的新区块（网页版 4.486）下面整个滤掉，这里也不算：有的区块要读库（节日与纪念日要找第一条消息）
+        func one(_ id: String, _ make: () -> String) -> String {
+            NewFeat.blockOn(id, s) ? phase("block.\(id)", make) : ""
+        }
         var blocks: [String: String] = [
-            "lorebook": loreBlock(lore.before),
-            "bond": bondBlock(char: char, rootId: rootId),
-            "state": stateBlock(char: char, rootId: rootId, memories: memories, settings: s, now: now),
-            "character": characterBlock(char),
-            "loreAfter": loreBlock(lore.after),
-            "user": userBlock(me: me, char: char),
-            "pinned": pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))),
-            "time": timeBlock(char: char, msgs: all, settings: s, now: now),
+            "lorebook": one("lorebook") { loreBlock(lore.before) },
+            "bond": one("bond") { bondBlock(char: char, rootId: rootId) },
+            "state": one("state") { stateBlock(char: char, rootId: rootId, memories: memories, settings: s, now: now) },
+            "character": one("character") { characterBlock(char) },
+            "loreAfter": one("loreAfter") { loreBlock(lore.after) },
+            "user": one("user") { userBlock(me: me, char: char) },
+            "pinned": one("pinned") { pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))) },
+            "time": one("time") { timeBlock(char: char, msgs: all, settings: s, now: now) },
             // 节日与纪念日：当天与之后三天才有（网页版 context/dates.js），不调接口
-            "dates": Holidays.block(char: char, chat: chat, me: me, settings: s, now: now),
-            "recent": recentBlock(recent, now: now),
-            "diary": Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now),
-            "day": DayPlan.block(char, at: now),
-            "music": Netease.block(char, now: now.millis),
-            "moments": Moments.block(char: char, userName: me?.name ?? "对方", now: now),
-            "ties": Ties.block(char, chat: chat, userName: me?.name ?? "the user"),
+            "dates": one("dates") { Holidays.block(char: char, chat: chat, me: me, settings: s, now: now) },
+            "recent": one("recent") { recentBlock(recent, now: now) },
+            "diary": one("diary") { Diary.block(char: char, pid: me?.id ?? "", userName: me?.name ?? "the user", now: now) },
+            "day": one("day") { DayPlan.block(char, at: now) },
+            "music": one("music") { Netease.block(char, now: now.millis) },
+            "moments": one("moments") { Moments.block(char: char, userName: me?.name ?? "对方", now: now) },
+            "ties": one("ties") { Ties.block(char, chat: chat, userName: me?.name ?? "the user") },
             // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
-            "space": Space.block(chat, now: now),
+            "space": one("space") { Space.block(chat, now: now) },
             // 共享位置：会话里开了、两端都填了才有；距离本机算好（网页版 context/geo.js）
-            "geo": Geo.block(chat),
+            "geo": one("geo") { Geo.block(chat) },
             // 互动标识：这段对话开了「让角色知道」才有（默认关）
-            "badges": Badges.block(chat, msgs: all, now: now),
+            "badges": one("badges") { Badges.block(chat, msgs: all, now: now) },
             // 身体状况：你的那一份在「健康 - 设置」里开（默认关），角色那一份跟着它的 healthOn
-            "health": Health.block(char: char, userName: me?.name ?? "", settings: s),
+            "health": one("health") { Health.block(char: char, userName: me?.name ?? "", settings: s) },
             // 你的日程（「日常 - 我的日程」）：没有日程时为空；不给这个角色看的整段不给
             // 代发与手机上的对话（角色手机）：只取有代发参与的那几句
-            "proxy": Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s),
-            "userSched": UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now),
+            "proxy": one("proxy") { Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s) },
+            "userSched": one("userSched") { UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now) },
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -411,7 +428,10 @@ enum ChatPrompt {
         f.status = src.msgs
         guard !src.complete else { return f }
         let db = Database.shared
-        let rows = try db.containing(Collections.messages, where: chat.id, any: [["\"pending\""], ["\"pact\"", "\"\(Space.pactOpen)\""]])
+        let rows = try phase("facts.scan") {
+            try db.containing(Collections.messages, where: chat.id, any: [["\"pending\""], ["\"pact\"", "\"\(Space.pactOpen)\""]])
+        }
+        phaseTimer?("facts.candidates-count", Double(rows.count))
         for m in keep(rows.map(Message.init(row:)), chat: chat, excludeTurn: excludeTurn, ties: ties) { look(m) }
         if wantStatus && !src.msgs.contains(where: { $0.row["sbar"]?.object != nil }) {
             func latest(_ limit: Int?) throws -> (hit: Message?, rows: Int) {
@@ -603,7 +623,7 @@ enum ChatPrompt {
             Templates.get("skeleton.voice", settings: s)
         }
         // 一起听、点歌、分享歌曲与歌单（网页版 capabilities.js 的 listen）。原生版直连网易云，曲库空着也能搜
-        let listening = MusicListen.active(chat.id)
+        let listening = phase("caps.listen") { MusicListen.active(chat.id) }
         // 群里给你发私信（网页版 capabilities.js 的 dm）：群里、而且这个群开着「成员可以给你发私信」时才有（开关在群资料）
         let dmUser = (((try? Repo.personas()) ?? []).first(where: { $0.id == chat.personaId })?.name).flatMap { $0.isEmpty ? nil : $0 } ?? "the user"
         cap("dm", on: chat.isGroup && chat.row["groupDM"]?.bool != false, hot: used(#"[\[【]私信"#),
@@ -643,8 +663,8 @@ enum ChatPrompt {
             line: "Make a promise: write a line on its own, [约定：the thing]; when it is fulfilled, write [约定完成：the thing]") {
             Templates.get("skeleton.pact", settings: s)
         }
-        let stickers = stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
-                                                                   used(#"^sticker$|[\[【]表情"#) ? 60 : 12)))
+        let stickers = phase("caps.stickers") { stickerNames(char: char, limit: Int(s.num(used(#"^sticker$|[\[【]表情"#) ? "stickerHot" : "stickerCold",
+                                                                   used(#"^sticker$|[\[【]表情"#) ? 60 : 12))) }
         cap("sticker", on: !stickers.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.sticker", ["names": stickers], settings: s)
         }
@@ -724,12 +744,12 @@ enum ChatPrompt {
             Templates.get("skeleton.award", settings: s)
         }
         // HTML 卡片（网页版 capabilities.js 的 card）：世界书里的卡片条目，常驻的或这一轮扫到关键词的才有，有就给整段
-        let cardHits = HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s)
+        let cardHits = phase("caps.cards") { HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s) }
         cap("card", on: !cardHits.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.card", ["cards": HtmlCard.promptList(cardHits)], settings: s)
         }
         // 撤回动态那一半（网页版 capabilities.js 的 postLine）：最近一条还挂着的动态是什么。没有就不提
-        let livePost = Moments.by(char.id).first(where: { !$0.recalled })
+        let livePost = phase("caps.posts") { Moments.by(char.id).first(where: { !$0.recalled }) }
         cap("recall", on: char.row["canRecall"]?.bool != false, hot: used(#"[\[【]撤回"#) || recent.contains(where: \.isRecalled),
             line: "Withdraw a message: write [撤回] on its own line directly after that message."
                 + (livePost != nil ? " Take down your latest post: write [撤回动态] on its own line." : "")) {

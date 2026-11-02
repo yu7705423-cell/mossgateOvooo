@@ -193,6 +193,14 @@ final class StressTests: StoreTestCase {
         let token = NotificationCenter.default.addObserver(forName: Badges.didFinish, object: nil, queue: nil) { note in
             if (note.object as? String) == "c0" { badgesDone.fulfill() }
         }
+        // 后台那一遍分步计时（在后台线程上记）
+        final class Tally: @unchecked Sendable {
+            let lock = NSLock()
+            var ms: [String: Double] = [:]
+            func add(_ k: String, _ v: Double) { lock.withLock { ms[k, default: 0] += v } }
+        }
+        let tally = Tally()
+        Badges.passTimer = { name, ms in tally.add(name, ms) }
         let bgStart = Date()
         try timed("A.open.badges-first", under: 1_000) { _ = try Badges.sync("c0") }
         XCTAssertTrue(Badges.passActive("c0"))
@@ -200,6 +208,10 @@ final class StressTests: StoreTestCase {
         wait(for: [badgesDone], timeout: 100)
         NotificationCenter.default.removeObserver(token)
         let bgMs = Date().timeIntervalSince(bgStart) * 1000
+        Badges.passTimer = nil
+        for (k, v) in tally.lock.withLock({ tally.ms }).sorted(by: { $0.key < $1.key }) {
+            print("STRESS A.open.badges-first.background.\(k) \(Int(v.rounded()))")
+        }
         print("STRESS A.open.badges-first.background \(Int(bgMs.rounded()))")
         print("STRESS A.open.badges-first.background.per-row-us \(String(format: "%.2f", bgMs * 1000 / Double(n)))")
         XCTAssertLessThan(bgMs, 60_000, "A.open.badges-first.background 用了 \(Int(bgMs)) 毫秒，上限 60000")
@@ -228,7 +240,18 @@ final class StressTests: StoreTestCase {
         let chat = try XCTUnwrap(Repo.chat("c0"))
         let char = try XCTUnwrap(Repo.character("char_c0"))
         let at = Date()
+        // 各步用了多久：打印 STRESS A.prompt.phase.<名字> <毫秒>（facts.candidates-count 是粗筛出来的条数，不是毫秒）
+        var phases: [(String, Double)] = []
+        ChatPrompt.phaseTimer = { name, ms in phases.append((name, ms)) }
         let built = try timed("A.prompt.build", under: 2_000) { try ChatPrompt.build(chat: chat, char: char, settings: .load(), now: at) }
+        ChatPrompt.phaseTimer = nil
+        var phaseTotal: [String: Double] = [:]
+        var phaseOrder: [String] = []
+        for (name, ms) in phases {
+            if phaseTotal[name] == nil { phaseOrder.append(name) }
+            phaseTotal[name, default: 0] += ms
+        }
+        for name in phaseOrder { print("STRESS A.prompt.phase.\(name) \(String(format: "%.1f", phaseTotal[name] ?? 0))") }
         XCTAssertFalse(built.messages.isEmpty)
         XCTAssertLessThan(built.messages.count, 200)
         let ref = try timed("A.prompt.build-reference", under: 90_000, rows: n) {

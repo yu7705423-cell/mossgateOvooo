@@ -36,6 +36,18 @@ enum Repo {
         try db.all(Collections.messages, where: chatId, since: since).map(Message.init(row:)).filter { $0.kind != "typing" }
     }
 
+    /// 一段会话里第一条有时间的消息（顺序同 messages(chatId:)，不算正在输入）。「第一条消息那一天」的纪念日用，
+    /// 从前一页一页往后找，不必把整段读出来
+    static func firstMessage(chatId: String) throws -> Message? {
+        var key: Database.PageKey?
+        while true {
+            let page = try db.page(Collections.messages, where: chatId, after: key, limit: 32)
+            if let hit = page.rows.map(Message.init(row:)).first(where: { $0.kind != "typing" && $0.createdAt > 0 }) { return hit }
+            guard page.rows.count == 32, let edge = page.edge else { return nil }
+            key = edge
+        }
+    }
+
     static func save(_ m: Message) throws { try db.put(Collections.messages, m.row) }
 
     /// 新加一条消息。createdAt 至少比这段会话里最后一条晚一毫秒：消息按 createdAt 排，

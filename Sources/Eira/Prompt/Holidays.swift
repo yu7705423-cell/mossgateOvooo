@@ -512,8 +512,8 @@ extension Holidays {
                 let s0 = localDay(start)
                 yearly(s0.md, s0.year) { n in "the \(ordinal(n)) anniversary of the day you and \(userName) got together" }
             }
-            let msgs = (try? Repo.messages(chatId: chat.id)) ?? []
-            if let first = msgs.first(where: { $0.createdAt > 0 }) {
+            // 只要第一条：从头往后翻一小页就够，不把整段会话读出来（十万条时每次回复多花两秒多）
+            if let first = (try? Repo.firstMessage(chatId: chat.id)) ?? nil {
                 let s0 = localDay(first.createdAt)
                 yearly(s0.md, s0.year) { n in "the \(ordinal(n)) anniversary of your first message with \(userName)" }
             }

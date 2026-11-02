@@ -377,6 +377,10 @@ enum Badges {
     /// 后台过完一段会话时发出（在主线程），object 是 chatId；失败时 userInfo["error"] 是原因。界面收到后重读会话
     static let didFinish = Notification.Name("eira.badges.didFinish")
 
+    /// 后台那一遍各步用了多久（毫秒：read 读库与解析、step 逐条过、save 记进度）。只有测试会设它，平时为 nil。
+    /// 在后台线程上调用
+    nonisolated(unsafe) static var passTimer: ((String, Double) -> Void)?
+
     private static let passLock = NSLock()
     nonisolated(unsafe) private static var passRunning: Set<String> = []
     nonisolated(unsafe) private static var passFullAsked: Set<String> = []
@@ -471,7 +475,9 @@ enum Badges {
         }
         guard fresh else { return }
         let size = chunk
-        Task.detached(priority: .utility) {
+        // 不用 .utility：模拟器与 M 系列的机器上那一档常被放到能效核，同样的活慢两三倍（CI 上 74 微秒一条，前台 26）。
+        // 打开会话的人在等它出结果，按「用户发起」那一档跑；它不在主线程上，不挡界面
+        Task.detached(priority: .userInitiated) {
             var failure: String?
             do {
                 while true {
@@ -545,9 +551,14 @@ enum Badges {
         var mark = p.st["upTo"]?.number ?? 0
         var edge = Set((p.st["edge"]?.array ?? []).compactMap(\.string))
         let n = max(1, size)
+        func clock() -> Double { Double(DispatchTime.now().uptimeNanoseconds) / 1_000_000 }
         while true {
+            var t0 = clock()
             let page = try Database.shared.page(Collections.messages, where: chatId, after: p.cursor, limit: n)
-            for m in page.rows.map(Message.init(row:)) where m.kind != "typing" {
+            let list = page.rows.map(Message.init(row:))
+            passTimer?("read", clock() - t0)
+            t0 = clock()
+            for m in list where m.kind != "typing" {
                 let t = m.createdAt
                 if t < mark || (t == mark && edge.contains(m.id)) { continue }
                 if m.role != .user && m.role != .char { continue }
@@ -555,13 +566,16 @@ enum Badges {
                 if t > mark { mark = t; edge.removeAll() }
                 edge.insert(m.id)
             }
+            passTimer?("step", clock() - t0)
             if let e = page.edge { p.cursor = e }
             p.st["upTo"] = .number(mark)
             p.st["edge"] = .array(edge.sorted().map { .string($0) })
             p.unlocked = unlocked
             p.lim = lim
             if page.rows.count < n { break }
+            t0 = clock()
             try savePass(chatId, p)
+            passTimer?("save", clock() - t0)
             if stop() { return .stopped }
         }
         let nowMs = (now ?? Date()).millis
