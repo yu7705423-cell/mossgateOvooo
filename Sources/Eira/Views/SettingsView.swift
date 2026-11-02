@@ -546,6 +546,17 @@ struct AppearanceView: View {
             DockLookSection()
             LookPresetsSection()
             ReactStyleSection()
+            Section {
+                // 美化总开关（网页版第 18 条的逃生口）：设置这一页永不套美化，美化写坏了从这里一键关掉
+                Toggle("显示会话美化", isOn: Binding(get: { model.s.raw["skinOff"]?.bool != true }, set: { on in
+                    model.set("skinOff", .bool(!on))
+                    NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)
+                }))
+            } header: {
+                Text("美化")
+            } footer: {
+                HelpNote("关闭后所有会话都不显示美化，已导入的美化保留，重新打开即恢复。某一份美化让会话页无法操作时，在这里关闭。", title: "主题：显示会话美化")
+            }
             RemovedAppsSection()
             ProblemSection(text: model.problem)
         }

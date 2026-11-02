@@ -202,16 +202,23 @@ struct ConversationView: View {
         if let icon = CssRasterDraw.icon(raster, hooks, dark: scheme == .dark) {
             let s = CssRasterDraw.size(icon)
             CssRasterView(image: icon).frame(width: s.width, height: s.height)
-        } else if st.iconHidden {
-            let part: CssPart = css?.pseudoText(hooks, .before) != nil ? .before : .after
-            // 这个伪元素画成了装饰图（字在图里，由 PhBox 贴上）：不再写字
-            if CssRasterDraw.pick(raster, hooks, parts: [part], kind: .decor, dark: scheme == .dark) == nil, let t = css?.pseudoText(hooks, part) {
-                PhPseudoText(text: t, style: css?.resolve(hooks, .normal, part), size: 15, color: st.color?.color ?? color)
-                    .lineLimit(1).fixedSize()
-            }
+        } else if st.iconHidden, CssRasterDraw.pick(raster, hooks, parts: [.before, .after], kind: .decor, dark: scheme == .dark) != nil {
+            // 伪元素画成了装饰图（字在图里，由 PhBox 贴上）：这里不再画东西
+            Color.clear.frame(width: size, height: size)
+        } else if st.iconHidden, let part = [CssPart.before, .after].first(where: { css?.pseudoText(hooks, $0) != nil }),
+                  let t = css?.pseudoText(hooks, part) {
+            PhPseudoText(text: t, style: css?.resolve(hooks, .normal, part), size: 15, color: visible(st.color, color))
+                .lineLimit(1).fixedSize()
         } else {
-            SvgIcon(name: name, size: size, color: st.color?.color ?? color)
+            // CSS 藏了图标、换上的图又没画出来（或还在画）：一律退回原来的图标，按钮不许空着（返回键、会话设置都在这里）
+            SvgIcon(name: name, size: size, color: visible(st.color, color))
         }
+    }
+
+    /// CSS 写的文字颜色；透明或几乎透明（为了藏原来的图标写的 color: transparent）时用原来的颜色
+    private func visible(_ c: CssColor?, _ fallback: Color) -> Color {
+        guard let c, c.a > 0.05 else { return fallback }
+        return c.color
     }
 
     /// 美化画好的返回键（.ph-back 的图标）。多选时左上角是「取消」，不换
@@ -712,6 +719,13 @@ struct ConversationView: View {
             }
             // 美化的底栏（.ph-composer）：CSS 写了 padding 时以它为准
             .modifier(PhPadded(hooks: ["composer"], padH: skin.composerPad ?? Theme.sp3, padV: skin.composerPad ?? Theme.sp2))
+            // 底栏的底铺到屏幕最下面（Home 条那一截），不然美化的底栏下面漏出一截页面底色
+            .background(alignment: .top) {
+                if let css, css.has(["composer"]), let st = css.resolve(["composer"]) {
+                    PhBarBackground(style: st, image: CssRasterDraw.pick(raster, ["composer"], kind: .box, dark: scheme == .dark))
+                        .ignoresSafeArea(edges: .bottom)
+                }
+            }
             if showPanel { plusPanel.phStyle("panel") }
             if showStickers {
                 StickerPanel { st in sendSticker(st) }.phStyle("panel")
