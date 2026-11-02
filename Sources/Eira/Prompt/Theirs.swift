@@ -584,7 +584,12 @@ enum Theirs {
         var out: [String] = []
         let n = cap(s)
         let mine = ((try? Repo.chats()) ?? []).filter { !$0.isGroup && $0.characterIds == [char.id] && ($0.personaId.isEmpty || $0.personaId == personaId) }
-            .flatMap { ((try? Repo.messages(chatId: $0.id)) ?? []).filter { $0.row.string("proxy") == proxyAware } }
+            // 只取代发的那几条：先按存储的 JSON 里有没有 "proxy" 与 "aware" 两个值筛（数据库里逐字节找），再照原来的条件判断；
+            // 从前把整段会话读出来再筛，十万条时每次回复多花一秒多
+            .flatMap { c in
+                ((try? Database.shared.containing(Collections.messages, where: c.id, any: [["\"proxy\"", "\"\(proxyAware)\""]])) ?? [])
+                    .map(Message.init(row:)).filter { $0.kind != "typing" && $0.row.string("proxy") == proxyAware }
+            }
         for m in tail(mine, n) { out.append("\(userName) logged into your account and sent this to \(userName) as you: 「\(clip(m.content))」") }
         let lines = byTime(chatsOf(char.id).flatMap { c in proxied(c).map { (c, $0) } })
         for (c, l) in tail(lines, n) {
