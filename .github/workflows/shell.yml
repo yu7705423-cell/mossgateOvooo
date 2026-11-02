@@ -3,8 +3,9 @@ name: 壳 App（网页版外壳）
 # 网页版仓库里的 iPhone 外壳（ios/，包标识 cn.eiraphone.app）在这里编译：本仓库公开，标准 macOS 机器不扣分钟；
 # 网页版仓库私密，代码不进本仓库，编译时用只读钥匙 WEB_REPO_TOKEN 现取一份，用完即删。
 #
-# 推到 dev、提交说明里写着 [shell] 时只编译检查（未签名，不上传）；手动触发（工作流要在 main 上才有按钮）可以选上传。
-# TestFlight 上的测试员会收到每一次上传，所以每次上传都要先经用户同意。
+# 推到 dev：提交说明写着 [shell] 只编译检查（未签名，不上传）；写着 [shell-owo] 签名并上传到 owo（Eiraowo，包标识 cn.eiraphone.native，
+# 只有维护者在用；用户同意的，2026-11-02），打开测试版网址，试原生切换用。
+# 正式的 Eiraphone（cn.eiraphone.app）只在手动触发时上传（工作流要在 main 上才有按钮），测试员会收到每一次，先经用户同意。
 on:
   push:
     branches: [dev]
@@ -37,14 +38,15 @@ concurrency:
 
 jobs:
   shell:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[shell]')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[shell]') || contains(github.event.head_commit.message, '[shell-owo]')
     runs-on: macos-26
     env:
       WEB_REPO_TOKEN: ${{ secrets.WEB_REPO_TOKEN }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
-      BUNDLE_ID: cn.eiraphone.app
+      # [shell-owo]：传到 owo；其余（手动触发）照输入
+      OWO: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[shell-owo]') }}
     steps:
       - name: 取网页版代码
         run: |
@@ -54,6 +56,14 @@ jobs:
             || { git clone -q "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web && git -C web checkout -q "${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}"; }
           git -C web log --oneline -1
           echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
+          if [ "$OWO" = "true" ]; then
+            { echo "BUNDLE_ID=cn.eiraphone.native"; echo "DISPLAY_NAME=Eiraowo"; echo "UPLOAD=true"
+              echo "APP_URL=https://eira-test.pages.dev/"; echo "APP_BOUND_EXTRA=https://eira-test.pages.dev/"; } >> "$GITHUB_ENV"
+          else
+            { echo "BUNDLE_ID=cn.eiraphone.app"; echo "DISPLAY_NAME=Eiraphone"; echo "UPLOAD=${{ inputs.upload && 'true' || 'false' }}"
+              echo "APP_URL=${{ inputs.app_url || 'https://eiraphone.cn/' }}"
+              echo "APP_BOUND_EXTRA=${{ inputs.test_url || 'https://eira-test.pages.dev/' }}"; } >> "$GITHUB_ENV"
+          fi
           # 构建号要比 App Store Connect 上已有的大：从前在网页版仓库按运行序号递增，这里改用时刻（年月日时分）
           echo "BUILD_NUM=$(date -u +%y%m%d%H%M)" >> "$GITHUB_ENV"
 
@@ -64,16 +74,14 @@ jobs:
           xcodebuild -version
 
       - name: 只编译检查（未签名）
-        if: ${{ !inputs.upload }}
+        if: env.UPLOAD != 'true'
         working-directory: web
         env:
-          APP_URL: ${{ inputs.app_url || 'https://eiraphone.cn/' }}
-          APP_BOUND_EXTRA: ${{ inputs.test_url || 'https://eira-test.pages.dev/' }}
           VERSION: ${{ inputs.version || '1.0' }}
         run: ios/build.sh
 
       - name: 申请证书与描述文件
-        if: ${{ inputs.upload }}
+        if: env.UPLOAD == 'true'
         working-directory: web
         run: |
           missing=""
@@ -86,7 +94,7 @@ jobs:
           "$RUNNER_TEMP/venv/bin/python" ios/asc.py prepare "$BUNDLE_ID" "$SIGN_DIR"
 
       - name: 放进临时钥匙串
-        if: ${{ inputs.upload }}
+        if: env.UPLOAD == 'true'
         id: keychain
         run: |
           KC="$RUNNER_TEMP/eira.keychain-db"
@@ -108,17 +116,14 @@ jobs:
           echo "identity=$SHA" >> "$GITHUB_OUTPUT"
 
       - name: 打包并签名
-        if: ${{ inputs.upload }}
+        if: env.UPLOAD == 'true'
         working-directory: web
         env:
           SIGN: appstore
           PROFILE: ${{ env.SIGN_DIR }}/profile.mobileprovision
           IDENTITY: ${{ steps.keychain.outputs.identity }}
           KEYCHAIN: ${{ steps.keychain.outputs.keychain }}
-          APP_URL: ${{ inputs.app_url }}
-          APP_BOUND_EXTRA: ${{ inputs.test_url }}
-          VERSION: ${{ inputs.version }}
-          DISPLAY_NAME: Eiraphone
+          VERSION: ${{ inputs.version || '1.0' }}
         run: |
           if [ -f "$SIGN_DIR/ext-profile.mobileprovision" ]; then export EXT_PROFILE="$SIGN_DIR/ext-profile.mobileprovision"; fi
           if [ -f "$SIGN_DIR/st-monitor-profile.mobileprovision" ]; then export ST_MONITOR_PROFILE="$SIGN_DIR/st-monitor-profile.mobileprovision"; fi
@@ -128,7 +133,7 @@ jobs:
           ios/build.sh
 
       - name: 上传到 App Store Connect
-        if: ${{ inputs.upload }}
+        if: env.UPLOAD == 'true'
         id: upload
         working-directory: web
         run: |
@@ -141,7 +146,7 @@ jobs:
       - name: 收尾
         if: always()
         run: |
-          if [ "${{ inputs.upload }}" = "true" ] && [ "${{ steps.upload.outcome }}" != "success" ] && [ -x "$RUNNER_TEMP/venv/bin/python" ]; then
+          if [ "$UPLOAD" = "true" ] && [ "${{ steps.upload.outcome }}" != "success" ] && [ -x "$RUNNER_TEMP/venv/bin/python" ]; then
             (cd web && "$RUNNER_TEMP/venv/bin/python" ios/asc.py cleanup "$SIGN_DIR") || true
           fi
           security delete-keychain "$RUNNER_TEMP/eira.keychain-db" 2>/dev/null || true
