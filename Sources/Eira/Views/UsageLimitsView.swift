@@ -96,7 +96,7 @@ struct UsageLimitsView: View {
             }
 
             Section {
-                NumberRow(title: "角色朋友圈配图的比例", value: model.number("momentImageRate", 30), unit: "%", placeholder: "0", range: 0...100)
+                NumberRow(title: "角色朋友圈配图的比例", value: model.number("momentImageRate", 0), unit: "%", placeholder: "0", range: 0...100)
             } footer: {
                 Text("每配一张图调用一次生图接口。填 100 表示每一条都可以配图，填 0 表示一律不配图。")
                 HelpNote("角色每次写朋友圈时，按这个比例随机决定这一条可不可以配图；可以配图时由角色决定配不配，不可以的那一条只有文字与歌。未配置生图接口时一律不配图。", title: "角色朋友圈配图的比例")

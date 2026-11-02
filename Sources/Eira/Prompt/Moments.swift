@@ -206,10 +206,12 @@ enum Moments {
         return j
     }
 
-    /// 角色发朋友圈时给出配图一栏的比例，0 到 100，默认 30（网页版 imageRate，4.587）
+    /// 角色发朋友圈时给出配图一栏的比例，0 到 100（网页版 imageRate，4.587）。
+    /// 网页版默认 30；这里默认 0：每配一张图多调一次生图接口，花钱的默认关着（用户定的，2026-11-02）。
+    /// 从网页版导入、自己填过的照旧按填的
     static func imageRate(_ s: AppSettings = .load()) -> Double {
-        let n = s.raw["momentImageRate"]?.number ?? 30
-        return n.isFinite ? min(100, max(0, n)) : 30
+        let n = s.raw["momentImageRate"]?.number ?? 0
+        return n.isFinite ? min(100, max(0, n)) : 0
     }
 
     /// 角色发一条动态（朋友圈页右上角「刷新」，一次调用）。

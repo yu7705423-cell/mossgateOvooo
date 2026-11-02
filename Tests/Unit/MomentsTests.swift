@@ -199,10 +199,11 @@ final class MomentsTests: StoreTestCase {
         XCTAssertFalse(Moments.get(zero.id)?.imagePending ?? true)
         XCTAssertEqual(Moments.imageRate(.load()), 0)
 
-        // 默认 30：掷出 50 不给，掷出 10 给
-        try imageService()
+        // 没填过默认 0（花钱的默认关着，用户定的，2026-11-02；网页版默认 30）
         try setSettings(["momentImageRate": .null])
-        XCTAssertEqual(Moments.imageRate(.load()), 30)
+        XCTAssertEqual(Moments.imageRate(.load()), 0)
+        // 填 30：掷出 50 不给，掷出 10 给
+        try imageService(rate: 30)
         MockNet.reset { r, _ in self.isImage(r) ? .init(status: 200, body: #"{"data":[{"b64_json":"\#(Self.png)"}]}"#)
             : self.reply(#"{"text":"海边"}"#) }
         _ = try await Moments.createMoment(charId: "char_a", roll: 50)
