@@ -54,11 +54,18 @@ jobs:
           path: native
 
       - name: 取网页版代码
+        env:
+          MSG: ${{ github.event.head_commit.message }}
         run: |
           if [ -z "$WEB_REPO_TOKEN" ]; then echo "::error::没有 WEB_REPO_TOKEN"; exit 1; fi
-          git clone -q --depth 1 --branch "${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}" \
+          # 推送触发时，提交说明里写 [shell-ref:分支名] 就取那个分支（只认字母数字与 ._/-）
+          REF="${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}"
+          GOT="$(printf '%s' "$MSG" | sed -n 's/.*\[shell-ref:\([A-Za-z0-9._/-]*\)\].*/\1/p' | head -1)"
+          if [ -n "$GOT" ]; then REF="$GOT"; fi
+          echo "网页版分支 $REF"
+          git clone -q --depth 1 --branch "$REF" \
             "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web \
-            || { git clone -q "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web && git -C web checkout -q "${{ inputs.ref || 'claude/mini-phone-architecture-tqzvig' }}"; }
+            || { git clone -q "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" web && git -C web checkout -q "$REF"; }
           git -C web log --oneline -1
           echo "SIGN_DIR=$RUNNER_TEMP/sign" >> "$GITHUB_ENV"
           if [ "$OWO" = "true" ]; then
