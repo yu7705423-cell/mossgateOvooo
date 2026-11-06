@@ -262,7 +262,33 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 | stickers | myUsedAt | 毫秒。自己从表情面板点出去的最近一次（4.935「最近常用」）；useCount 另算，角色发的也算 |
 
 
-## 9. impressions（角色眼中的你，4.346）
+## 9. todos 与 notes（待办 app）
+
+待办（`todo.js`、`alarm.js`、`when.js`，ARCHITECTURE 4.104d 到 4.104i、4.326）。id 前缀 `td`，没有查询字段（整域读出来筛）。
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| text | | 要做的事，原话 |
+| state | | pending（等确认）open（已计入）done drop（忽略，留着免得再问） |
+| from | | 来源：local（对话中识别）char（角色提出）manual（手动）collect（收藏馆）fit（起居）。**每周重复的待办把开始日期也写在这一栏**（`'YYYY-MM-DD'`，我的日程那边建的会覆盖来源）；原生版只把形如日期的当开始日期 |
+| chatId, charId, srcMsgId | '' | 从哪段对话、哪个角色、哪条消息来的 |
+| dueAt | '' | 哪天做，`'YYYY-MM-DD'` |
+| time | '' | 几点做 `HH:MM`，与提醒时刻无关 |
+| remindAt | 0 | 提醒时刻（毫秒），也可能是空串 |
+| whenText | | 提醒时刻输入框里的原话（「明天七点」） |
+| alarmId, alarmAt | '', 0 | 排进系统的编号与排出去的时刻；两者对不上就是改过没重排。网页版是 AlarmKit 的编号，原生版是本地通知 `todo-<id>` |
+| rungAt | 0 | 应用开着时已经提醒过 |
+| doneAt | 0 | 完成时刻 |
+| repeat, weekdays | '', [] | `weekly` 加周几（1 到 7，周一为 1）为每周重复 |
+| doneDates | [] | 每周重复的每一天各自完成，记日期；只留最近 400 个 |
+| fitSched 等 | | 起居、收藏馆自己挂的记号，原样留着 |
+
+设置：`todoDetect` true、`todoCues` / `todoSkips` null（用 todo.js 里的默认那份；空数组等于关掉本地识别）、`planCount` 8（注入几条「你记着的事」，0 为全给）。
+能力 `todo`（角色卡 `canTodo !== false`，`capsOff` 可全局关）与区块 `plan` 都在新功能规矩定下之前就有（基线）。
+
+备忘 `notes`：id 前缀 `nt`。`text`、`from`（manual / chat，长按消息存下来的是 chat）、`chatId`、`charId`、`createdAt`、`updatedAt`。按 updatedAt 倒序列出。
+
+## 10. impressions（角色眼中的你，4.346）
 
 按 charId 查。一行一种，kind 分：
 
@@ -276,7 +302,7 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 
 强度按依据的不同日子数：settings.impressSeen 缺省 2、impressSure 缺省 5；整理最多读 settings.impressLines 缺省 400 条（0 为全部）。
 
-## 10. 角色包 character.json（charpack.js，4.116）
+## 11. 角色包 character.json（charpack.js，4.116）
 
 zip 只存不压：`character.json` 加 `images/<id>.<ext>`、`files/<id>.<ext>`。
 `{_format:'mini-phone-character', _version:2, _data, _history, exportedAt, character, alts, lorebooks, memories（向量 {__f32}）, chats, messages,

@@ -566,6 +566,10 @@ enum ChatEngine {
             guard try Theirs.addPhotos(char.id, [.object(row)]) > 0 else { return nil }
             return Message.new(chatId: chat.id, role: .char, authorId: char.id,
                                content: "[\(char.name)\(imageId == nil ? "存了一张照片" : "把这张照片存了下来")]", kind: "notice", turnId: turnId)
+        case .todo:
+            // 待办不是一条消息，是一个等你点头的提议：不占气泡，落一条待确认，由会话页问一句（网页版 reply.js 的 materialize）
+            Todo.fromMark(p.text, chatId: chat.id, charId: char.id)
+            return nil
         case .agenda:
             // 只认角色自己的事项；找不到那一条就不改（网页版 reply.js 的 agenda）
             try DayPlan.mark(char, title: p.text, done: p.flag)
@@ -682,7 +686,7 @@ enum ChatEngine {
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick:
             return nil
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }
@@ -861,6 +865,8 @@ enum ChatEngine {
             c.row["lastMessageAt"] = .number(Date().millis)
             c.row.touch()
             try Repo.save(c)
+            // 本地那一道监督（网页版 Conversation 的 send）：不花钱、不延迟，命中落成待确认
+            Todo.watchUser(text, chatId: chatId, charId: c.characterIds.first ?? "", msgId: m.id)
         }
         return m
     }

@@ -34,6 +34,8 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
 
     /// 点了通知、要打开的那段会话
     @Published var openChat: String?
+    /// 点了通知、要打开的那个 app（待办的提醒）
+    @Published var openApp: String?
     /// 正在看的那段会话（这段来消息不弹）
     var visibleChat: String?
     @Published private(set) var authorized = false
@@ -70,7 +72,11 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
 
     func disable() {
         SettingsModel.shared.set("nativeNotify", .bool(false))
-        UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
+        // 待办的提醒是用户自己定的时刻，不跟着这个开关撤（TodoAlarm）
+        Task {
+            let ids = await UNUserNotificationCenter.current().pendingNotificationRequests().map(\.identifier).filter { !$0.hasPrefix(TodoAlarm.prefix) }
+            UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: ids)
+        }
         Task { try? await UNUserNotificationCenter.current().setBadgeCount(0) }
     }
 
@@ -172,7 +178,11 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
     }
 
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse) async {
-        let id = response.notification.request.content.userInfo["chatId"] as? String
-        await MainActor.run { if let id { Notifier.shared.openChat = id } }
+        let info = response.notification.request.content.userInfo
+        let id = info["chatId"] as? String
+        let app = info["app"] as? String
+        await MainActor.run {
+            if let id { Notifier.shared.openChat = id } else if let app { Notifier.shared.openApp = app }
+        }
     }
 }

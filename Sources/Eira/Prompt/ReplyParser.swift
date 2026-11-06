@@ -35,6 +35,8 @@ enum ReplyParser {
         case mute, unmute, muteAll, nick
         // 换头像：text 是头像库里那一张的名字
         case wear
+        // 待办：角色提出的一件事（text），不占气泡，落成待确认
+        case todo
         // 群红包（网页版 4.736）：text 是祝福语，amount 是总额，count 是个数，extra 是种类（luck / equal / only），to 是专属红包给谁
         // 领红包：text 是发的人（空为最近能领的那一个）；退群（4.733）；改网名（4.947）：text 是新网名
         case redpacket, rpclaim, leave, selfnick
@@ -415,6 +417,9 @@ enum ReplyParser {
             case "草稿":
                 let t = body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !t.isEmpty { push(Part(type: .draft, text: t)) }
+            case "待办", "todo":
+                // 网页版 reply.js 的 TODO_KINDS：原样交给待办，空的由 propose 丢掉
+                push(Part(type: .todo, text: body))
             case "事项完成", "事项取消":
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"
