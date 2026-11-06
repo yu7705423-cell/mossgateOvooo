@@ -10,7 +10,8 @@ import UIKit
 ///
 /// **同一次开口只能扣一次钱。** 后台消息开着时：退到后台一律归服务器；回到前台要先把结果取回来（成功失败都算这一次
 /// 已经用掉）才恢复本机发；取不回来就本机也不发，界面上写明。应用开着时每四分钟报一次到，服务器看见就先不发。
-/// 原生版没有 Web Push：登记时不带订阅，服务器照样到点替角色发、存着，打开应用时取回。
+/// 原生版没有 Web Push：登记时不带订阅，服务器照样到点替角色发、存着，打开应用时取回；通知通道选了 Eira 推送（EiraPush）时，
+/// 服务器发完经推送转发送到锁屏上，角色打电话时响系统来电。
 /// 与服务器之间的请求格式和网页版一字不差（服务器不会跟着应用更新）。
 @MainActor
 final class BgPush: ObservableObject {
@@ -125,6 +126,8 @@ final class BgPush: ObservableObject {
     nonisolated static func channelOut(_ s: AppSettings = .load()) -> JSONValue {
         let ch = config(s)["channel"]?.object ?? [:]
         let kind = ch["kind"]?.string ?? ""
+        // Eira 推送（EiraPush，网页版 4.896）：登记过才交，登记记在本机
+        if kind == "eira" { return EiraPush.channel(s) }
         let hide = ch["hide"]?.bool == true
         if kind == "bark" {
             let url = (ch["url"]?.string ?? "").trimmingCharacters(in: .whitespaces)
@@ -163,6 +166,8 @@ final class BgPush: ObservableObject {
             out.append(.object([
                 "due": .array(times.map { .number($0) }), "chatId": .string(chat.id), "charId": .string(char.id),
                 "title": .string(char.displayName.isEmpty ? "Eira" : char.displayName), "lastAt": .number(lastAt),
+                // 角色卡关了打电话：服务器那边回复里写了来电也不发来电推送（网页版 4.896）
+                "canCall": .bool(char.row["canCall"]?.bool != false),
                 "tz": .string(TimeZone.current.identifier), "closing": .string(Proactive.closing), "request": request,
             ]))
         }
@@ -274,6 +279,8 @@ final class BgPush: ObservableObject {
         timer?.invalidate(); timer = nil
         proactiveTimer?.invalidate(); proactiveTimer = nil
         guard Self.isOn(), Self.device() != nil else { return }
+        // Eira 推送的通知上要显示头像：通知扩展读不到库，先把这几段会话的头像写进 App Group
+        if EiraPush.active() { WidgetFeed.exportFaces() }
         // 退到后台时系统只给几秒：申请一段后台时间把任务交上去
         let id = UIApplication.shared.beginBackgroundTask(withName: "bgpush-plan", expirationHandler: nil)
         Task.detached {

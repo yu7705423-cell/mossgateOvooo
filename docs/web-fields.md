@@ -259,6 +259,9 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 | settings | panelOrder, panelMore | 加号面板的先后与收进「更多」的几格（panel.js）。没设过取默认 |
 | settings | msgMenuOrder | 长按消息那几格的先后（menuorder.js 的 MSG_ITEMS，三十个 id）。读时丢掉不认识的、补上缺的；恢复默认写 null |
 | settings | convMenuOrder | 会话菜单分组的先后（menuorder.js 的 CONV_GROUPS，十一个 id）。读法同 msgMenuOrder；原生版没有的 scene、display 两组位置不动 |
+| settings | callKit | 系统来电界面（4.895），默认 false。原生版 SystemCall 读同一个键 |
+| settings | iosWidgetChar | iPhone 桌面组件「角色此刻」显示的角色 id（4.941），空为自动 |
+| settings | bgPush.channel.kind | 通知通道：'' / bark / pushplus / eira。网页版的 eira 登记存在 `bgPush.channel.eira`；原生版的登记只记在本机（EiraPush，不进设置、不进备份），`channel.eira` 原样留着不读 |
 | stickers | myUsedAt | 毫秒。自己从表情面板点出去的最近一次（4.935「最近常用」）；useCount 另算，角色发的也算 |
 
 
@@ -276,7 +279,7 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 | time | '' | 几点做 `HH:MM`，与提醒时刻无关 |
 | remindAt | 0 | 提醒时刻（毫秒），也可能是空串 |
 | whenText | | 提醒时刻输入框里的原话（「明天七点」） |
-| alarmId, alarmAt | '', 0 | 排进系统的编号与排出去的时刻；两者对不上就是改过没重排。网页版是 AlarmKit 的编号，原生版是本地通知 `todo-<id>` |
+| alarmId, alarmAt | '', 0 | 排进系统的编号与排出去的时刻；两者对不上就是改过没重排。AlarmKit 的编号是按待办 id 散出来的 UUID（网页版外壳与原生版同一种散法），原生版退回本地通知时是 `todo-<id>` |
 | rungAt | 0 | 应用开着时已经提醒过 |
 | doneAt | 0 | 完成时刻 |
 | repeat, weekdays | '', [] | `weekly` 加周几（1 到 7，周一为 1）为每周重复 |

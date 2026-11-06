@@ -17,8 +17,15 @@ targets:
     platform: iOS
     sources:
       - path: Sources/Eira
+      # 应用与两个扩展共用的几份源文件（App Group、推送的盒子、桌面组件的数据）
+      - path: Sources/Shared
       - path: Resources
         buildPhase: resources
+    # 两个扩展随应用一起打包（Embed App Extensions）。签名版里描述文件不全的那个扩展，
+    # 由 scripts/signplan.py 在生成工程之前从这里去掉（见 .github/workflows/testflight.yml）
+    dependencies:
+      - target: EiraNotify
+      - target: EiraWidgets
     info:
       path: Sources/Eira/Info.plist
       properties:
@@ -39,6 +46,15 @@ targets:
         UIBackgroundModes:
           - fetch
           - audio
+          # 来电推送（PushKit）要这一项；系统来电界面没有它时报 com.apple.CallKit.error 0（网页版 4.895）
+          - voip
+        # 待办的系统闹钟（AlarmKit，iOS 26）：不要 entitlement，只要这一句加一次运行时授权
+        NSAlarmKitUsageDescription: 在待办设定的时刻用系统闹钟提醒。
+        # 桌面组件与通知点进来的链接（DeepLink）。不用网页版外壳的 eira://：两只 app 都装着时系统不知道交给哪一只
+        CFBundleURLTypes:
+          - CFBundleURLName: cn.eiraphone.native
+            CFBundleURLSchemes:
+              - eiraowo
         BGTaskSchedulerPermittedIdentifiers:
           - eira.bgpush.refresh
         NSMicrophoneUsageDescription: 录制发送给角色的语音消息。
@@ -59,14 +75,78 @@ targets:
       properties:
         com.apple.developer.healthkit: true
         com.apple.developer.healthkit.access: []
+        # Eira 推送（EiraPush）：TestFlight 与 App Store 走正式的推送环境。描述文件里要有 Push Notifications（scripts/asc.py 勾上）
+        aps-environment: production
+        # 与两个扩展共用：推送的解密钥匙、桌面组件的数据。要在开发者网站把这个 group 分给三个包标识（docs/system-abilities.md）
+        com.apple.security.application-groups:
+          - group.cn.eiraphone.native
     settings:
       base:
+        # 签名版由工作流传入各自的描述文件（未签名的编译里为空）
+        PROVISIONING_PROFILE_SPECIFIER: $(EIRA_PROFILE_APP)
         # 正式的包标识，在开发者网站登记过、App Store Connect 里建 App 时选的就是它。一经使用永不改：
         # 改了就是另一只 app，装着的人要重装，手机里的数据带不过去
         PRODUCT_BUNDLE_IDENTIFIER: cn.eiraphone.native
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         TARGETED_DEVICE_FAMILY: "1"
         GENERATE_INFOPLIST_FILE: NO
+  # 通知扩展（网页版 ARCHITECTURE 4.896 的 NotifyService）：Eira 推送到了手机上，在这里用 App Group 里的钥匙解开盒子
+  EiraNotify:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/EiraNotify
+      - path: Sources/Shared
+    info:
+      path: Sources/EiraNotify/Info.plist
+      properties:
+        CFBundleDisplayName: Eiraowo 通知
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.usernotifications.service
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
+    entitlements:
+      path: EiraNotify.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cn.eiraphone.native
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.eiraphone.native.notify
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        PROVISIONING_PROFILE_SPECIFIER: $(EIRA_PROFILE_NOTIFY)
+        # 扩展只随应用打包，不单独进归档
+        SKIP_INSTALL: YES
+  # 桌面组件（网页版 ARCHITECTURE 4.941 的 EiraWidgets）：读应用经 App Group 写好的数据
+  EiraWidgets:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: Sources/EiraWidgets
+      - path: Sources/Shared
+    info:
+      path: Sources/EiraWidgets/Info.plist
+      properties:
+        CFBundleDisplayName: Eiraowo
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    entitlements:
+      path: EiraWidgets.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.cn.eiraphone.native
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: cn.eiraphone.native.widgets
+        TARGETED_DEVICE_FAMILY: "1"
+        GENERATE_INFOPLIST_FILE: NO
+        PROVISIONING_PROFILE_SPECIFIER: $(EIRA_PROFILE_WIDGETS)
+        # 扩展只随应用打包，不单独进归档
+        SKIP_INSTALL: YES
   EiraTests:
     type: bundle.unit-test
     platform: iOS

@@ -557,6 +557,7 @@ struct AppearanceView: View {
             } footer: {
                 HelpNote("关闭后所有会话都不显示美化，已导入的美化保留，重新打开即恢复。某一份美化让会话页无法操作时，在这里关闭。", title: "主题：显示会话美化")
             }
+            IosWidgetSection()
             RemovedAppsSection()
             ProblemSection(text: model.problem)
         }

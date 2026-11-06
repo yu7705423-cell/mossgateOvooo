@@ -462,6 +462,10 @@ struct ConversationView: View {
         .onAppear {
             Notifier.shared.visibleChat = chatId
             reload()
+            // 在系统来电界面上接起来的那一通（SystemCall）：进来就接上
+            if calling == nil, let char, let video = SystemCall.shared.answeredVideo(chatId) {
+                calling = CallTarget(char: char, incoming: true, video: video)
+            }
         }
         .onDisappear {
             if Notifier.shared.visibleChat == chatId { Notifier.shared.visibleChat = nil }
