@@ -94,7 +94,7 @@ struct TheaterSheet: View {
         .onAppear(perform: reload)
         .onDisappear { job?.cancel() }
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { _ in reload() }
-        .task(id: "\(t["card"].map { _ in "card" } ?? "")|\(scheme == .dark)|\(msg?.row.string("updatedAt") ?? "")") { await renderCard() }
+        .task(id: "\(t["card"].map { _ in "card" } ?? "")|\(scheme == .dark)|\(msg?.row["updatedAt"]?.number ?? 0)") { await renderCard() }
     }
 
     private func reload() { msg = Theater.message(msgId) }
