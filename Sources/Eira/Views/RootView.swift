@@ -67,6 +67,16 @@ struct RootView: View {
             OnboardingView { onboarding = false; settings.reload() }.eiraLook()
         }
         .onReceive(NotificationCenter.chatChangesSettled) { _ in unread = Shell.chatUnread() }
+        // 点了待办的提醒：打开待办
+        .onChange(of: notifier.openApp) { _, app in
+            guard let app else { return }
+            notifier.openApp = nil
+            if locked && PinLock.hasPin() { return }
+            locked = false
+            if opened?.id != app { opened = OpenedApp(id: app) }
+        }
+        // 待办到点（网页版 alarm.start）：应用开着时一分钟看一次表，没排进系统的当场弹一条
+        .task { await TodoAlarm.loop() }
         // 主屏自己的整理流程之外改了版式（自定义组件存数据、点空的自定义组件改内容）：重读一遍
         .onReceive(NotificationCenter.default.publisher(for: .eiraHomeLayoutChanged)) { _ in layout = Shell.layout() }
         .preferredColorScheme(AppearanceView.scheme(settings.s))
@@ -117,6 +127,7 @@ struct AppHost: View {
         case "space": NavigationStack { SpaceHomeView() }
         case "health": NavigationStack { HealthHomeView() }
         case "theirs": NavigationStack { TheirsPickView() }
+        case "todo": NavigationStack { TodoHomeView() }
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }

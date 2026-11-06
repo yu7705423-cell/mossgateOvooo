@@ -1431,6 +1431,7 @@ struct CapsView: View {
         Cap(id: "groupnick", label: "改群昵称", group: "群聊", info: "群里的角色可以修改自己的群昵称，群里出现一行提示"),
         Cap(id: "groupadmin", label: "群管理", group: "群聊", info: "群里有管理员时，管理员可以禁言、解除禁言、开关全员禁言、修改普通成员的群昵称。管不了群主与其他管理员"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
+        Cap(id: "todo", label: "记下待办", group: "生活", info: "角色可以把聊到要做的事记成待办。记下的先列为等待确认，计入之后才成为待办；随回复一并返回，不额外调用接口"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
         Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),
         Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),

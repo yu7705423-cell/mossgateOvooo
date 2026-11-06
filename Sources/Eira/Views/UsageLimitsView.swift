@@ -68,6 +68,12 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                NumberRow(title: "带上几条「你记着的事」", value: model.number("planCount", 8), unit: "条", placeholder: "全部")
+            } footer: {
+                HelpNote("每次请求带上「待办」里已计入、还没做的这么多条，排好时间的在前。填 0 表示全部带上。每周重复的写在「对方的日程」中，不在此列。", title: "带上几条「你记着的事」")
+            }
+
+            Section {
                 NumberRow(title: "你的日程往前读几天", value: model.number("userSchedBack", 1), unit: "天", placeholder: "只读今天")
                 NumberRow(title: "你的日程往后读几天", value: model.number("userSchedAhead", 0), unit: "天", placeholder: "不读")
             } footer: {

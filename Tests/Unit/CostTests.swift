@@ -48,6 +48,19 @@ final class CostTests: StoreTestCase {
         XCTAssertEqual(after[after.count - 2].row.string("raw"), "在的\n刚下班")
     }
 
+    /// 待办（网页版 4.104d）：本地识别、角色写 [待办：…]、到点提醒，都不多打一次接口（不进 ExtraCalls）
+    func testTodoAddsNoRequest() async throws {
+        MockNet.reset { _, _ in .init(status: 500, body: "{}") }
+        _ = try ChatEngine.send(text: "我打算明天七点去跑步", chatId: "chat_a")
+        try Todo.addMine("交房租", ["remindAt": .number(Date().millis - 1000)])
+        _ = TodoAlarm.beat { _ in }
+        XCTAssertEqual(MockNet.count, 0)
+        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream("好\n[待办：周六复查]")) }
+        try await ChatEngine.reply(chatId: "chat_a") { _ in }
+        XCTAssertEqual(MockNet.count, 1)
+        XCTAssertEqual(Todo.pendingOf("chat_a").count, 2)
+    }
+
     /// 默认设置下失败：只打一次，不重试、不换接口；留一条失败的消息。
     func testFailureByDefaultIsOneRequest() async throws {
         MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"boom"}}"#) }

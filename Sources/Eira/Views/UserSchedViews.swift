@@ -14,6 +14,9 @@ struct UserSchedView: View {
     @State private var pickingShot = false
     @State private var shot: PhotosPickerItem?
     @State private var pending: UserSched.Pending?
+    @State private var editingTask: TodoEdit?
+    @State private var addingTask = false
+    @State private var taskText = ""
 
     struct Edit: Identifiable { let id: String }   // "new" 为新建
 
@@ -36,6 +39,17 @@ struct UserSchedView: View {
                     row(r, sub: a <= m && m < max(e, a + 1) ? "正在进行" : "")
                 }
             } header: { Text("今天 · \(now.key) \(UserSched.weekdays[max(0, UserSched.weekdayOfKey(now.key) - 1)])") }
+
+            // 今天的任务（网页版 MinePage 的 TodayTasks，4.326）：任务就是待办，同一份；在任意一边打勾都算完成
+            let tasks = Todo.tasksOn(Todo.todayKey(model.s))
+            Section {
+                ForEach(tasks) { t in
+                    TodoRow(row: t.row, open: { editingTask = TodoEdit(id: t.row.id) }, changed: { tick += 1 })
+                }
+                Button("添加任务") { taskText = ""; addingTask = true }
+            } header: { Text(tasks.isEmpty ? "今天的任务" : "今天的任务 \(tasks.count) 项") } footer: {
+                HelpNote("任务与「待办」是同一份：在此处添加的会出现在待办中，在任意一边打勾均算完成。每周重复的任务每天分别完成。", title: "今天的任务")
+            }
 
             ForEach(1...7, id: \.self) { d in
                 let rows = weekly.filter { $0.weekday == d }.sorted { UserSched.minutes($0.start) < UserSched.minutes($1.start) }
@@ -95,6 +109,17 @@ struct UserSchedView: View {
         .sheet(item: $editing, onDismiss: { tick += 1 }) { e in
             NavigationStack { UserSchedEditView(itemId: e.id == "new" ? nil : e.id) }
         }
+        .sheet(item: $editingTask, onDismiss: { tick += 1 }) { e in NavigationStack { TodoEditView(todoId: e.id) } }
+        .alert("添加任务", isPresented: $addingTask) {
+            TextField("要做的事", text: $taskText)
+            Button("添加") {
+                // 记在今天；要每周重复、定时间，在接着打开的编辑页里改
+                do { if let r = try Todo.addMine(taskText, ["dueAt": .string(Todo.todayKey(model.s))]) { editingTask = TodoEdit(id: r.id) } }
+                catch { problem = "未能添加：\(error.localizedDescription)" }
+            }
+            Button("取消", role: .cancel) {}
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .eiraTodosChanged)) { _ in tick += 1 }
         .onAppear { model.reload(); tick += 1 }
     }
 
