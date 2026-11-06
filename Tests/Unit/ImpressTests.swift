@@ -34,7 +34,7 @@ final class ImpressTests: StoreTestCase {
     func testOrganizeIsOneCallAndKeepsOnlyUserRefs() async throws {
         XCTAssertEqual(Impress.sinceCount(char.id, me.id), 3)
         MockNet.reset { [self] _, _ in
-            reply(#"{"new":[{"text":"不舒服时先说没事","voice":"你总说没事","evidence":["#1","#2","#9"]},{"text":"没有依据的","evidence":[]}],"support":[],"against":[]}"#)
+            reply(##"{"new":[{"text":"不舒服时先说没事","voice":"你总说没事","evidence":["#1","#2","#9"]},{"text":"没有依据的","evidence":[]}],"support":[],"against":[]}"##)
         }
         let draft = try await ImpressTask.organize(charId: char.id, personaId: me.id)
         XCTAssertEqual(MockNet.count, 1)
