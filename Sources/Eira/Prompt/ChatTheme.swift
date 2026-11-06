@@ -706,7 +706,7 @@ enum ChatTheme {
             }
             if let clean = sanitize(.object(n)) { o[field] = clean }
         }
-        let data = try JSONSerialization.data(withJSONObject: JSONValue.object(o).any, options: [.prettyPrinted, .sortedKeys])
+        let data = try JSONSerialization.data(withJSONObject: JSONValue.object(o).any, options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes])
         return String(decoding: data, as: UTF8.self)
     }
 
