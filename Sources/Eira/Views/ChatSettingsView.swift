@@ -75,7 +75,7 @@ struct ChatSettingsView: View {
                         case .moment(let id): MomentDetailView(momentId: id, path: $profilePath)
                         case .editChar(let id): CharacterEditView(charId: id, path: $profilePath)
                         case .editPersona(let id): PersonaEditView(personaId: id)
-                        case .search: EmptyView()
+                        case .search, .favorites: EmptyView()
                         case .focus(let c, let m): ConversationView(chatId: c, focusId: m)
                         }
                     }
