@@ -363,8 +363,9 @@ final class ChangeLogTests: StoreTestCase {
         try db.deleteAll(Collections.messages, where: "c1")
         try db.setKV(KVKey.settings, .object([:]))
         let (c1, list) = db.changes.since(c0)
-        XCTAssertEqual(list, [.row("chats", "c1"), .row("chats", "c1"), .group("messages", "c1"), .kv("settings")])
-        XCTAssertEqual(db.changes.since(c1).changes, [], "之后没有新的")
+        let want: [ChangeLog.Change] = [.row("chats", "c1"), .row("chats", "c1"), .group("messages", "c1"), .kv("settings")]
+        XCTAssertEqual(list, want)
+        XCTAssertEqual(db.changes.since(c1).changes?.count, 0, "之后没有新的")
     }
 
     func testNothingKeptUntilAsked() throws {
@@ -374,7 +375,7 @@ final class ChangeLogTests: StoreTestCase {
         XCTAssertNil(log.since(c0).changes, "没人问过时不留记录，要整表")
         let c1 = log.cursor
         log.note(.row("x", "2"))
-        XCTAssertEqual(log.since(c1).changes, [.row("x", "2")])
+        XCTAssertEqual(log.since(c1).changes, [ChangeLog.Change.row("x", "2")])
     }
 
     func testFullRefeedWhenUnknown() throws {
@@ -397,7 +398,7 @@ final class ChangeLogTests: StoreTestCase {
         XCTAssertNil(log.since(c0).changes, "中间丢了几笔：整表")
         let c1 = log.cursor
         log.note(.kv("settings"))
-        XCTAssertEqual(log.since(c1).changes, [.kv("settings")])
+        XCTAssertEqual(log.since(c1).changes, [ChangeLog.Change.kv("settings")])
     }
 }
 
