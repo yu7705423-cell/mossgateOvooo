@@ -12,7 +12,7 @@ actor AIService {
     static let shared = AIService()
 
     /// 这几个任务是用户正盯着屏幕等的，走主用。
-    static let mainTasks: Set<String> = ["chat.reply", "chat.call", "scene.write"]
+    static let mainTasks: Set<String> = ["chat.reply", "chat.call", "scene.write", "chat.ooc"]
     /// 这几个走记忆接口，没单独配就跟副用。
     static let memoryTasks: Set<String> = ["memory.extract", "memory.bond", "memory.import", "link.tidy",
                                            "chat.summarize", "scene.summary", "work.summary"]

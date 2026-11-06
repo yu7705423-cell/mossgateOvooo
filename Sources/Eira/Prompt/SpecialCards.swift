@@ -178,6 +178,7 @@ enum MsgPreview {
         case Forward.kind: return "[聊天记录]"
         case "sticker": return "[表情]"
         case "image": return "[图片]"
+        case "charshot": return "[聊天截图]"
         case "voice": return "[语音]"
         case "clip": return "[视频]"
         case "silence": return r.bool("reacted") ? "已读，仅回应" : "已读，未回复"

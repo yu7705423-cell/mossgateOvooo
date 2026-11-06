@@ -5,6 +5,11 @@ import SwiftUI
 struct ChatListView: View {
     @Binding var path: NavigationPath
     @State private var rows: [Item] = []
+    /// 元模式（网页版 4.832、4.854）：单独一组时排在角色会话下面；融入列表时混在 rows 里
+    @State private var metas: [Item] = []
+    @State private var metaGroup = true
+    @State private var newMeta = false
+    @State private var newMetaName = ""
     @State private var loadError: String?
     @State private var deleting: Chat?
     @State private var newGroup = false
@@ -38,7 +43,7 @@ struct ChatListView: View {
                                 VStack(alignment: .leading, spacing: 3) {
                                     HStack(alignment: .firstTextBaseline, spacing: Theme.sp2) {
                                         Text(item.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
-                                        // 自动回复开着时名字旁一个小字：忙碌、休息、自动回复
+                                        // 自动回复开着时名字旁一个小字：忙碌、休息、自动回复；融入列表的元写「元模式」
                                         if !item.tag.isEmpty {
                                             Text(item.tag).font(.system(size: 10)).foregroundStyle(Theme.text3)
                                                 .padding(.horizontal, 4).padding(.vertical, 1)
@@ -97,8 +102,17 @@ struct ChatListView: View {
                         }
                     }
                 }
+                if metaGroup { metaSection }
             }
             .listStyle(.insetGrouped)
+            .alert("新建元", isPresented: $newMeta) {
+                TextField("\(Meta.name) \(Meta.list().count + 1)", text: $newMetaName)
+                Button("取消", role: .cancel) {}
+                Button("新建") {
+                    do { let c = try Meta.create(newMetaName); reload(); path.append(c.id) }
+                    catch { loadError = "新建失败：\(error.localizedDescription)" }
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { path.append(ChatAppView.ChatRoute.search) } label: { NavIcon("search") }.accessibilityLabel("搜索聊天记录")
@@ -116,7 +130,9 @@ struct ChatListView: View {
             .confirmationDialog("删除这段会话及其全部消息，角色的记忆保留。无法恢复。", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
                                 titleVisibility: .visible, presenting: deleting) { chat in
                 Button("删除", role: .destructive) {
-                    do { try People.deleteChat(chat.id); reload() } catch { loadError = "删除失败：\(error.localizedDescription)" }
+                    // 元连同它名下的记忆一起删（网页版 4.854）
+                    do { if Meta.isMeta(chat) { try Meta.remove(chat.id) } else { try People.deleteChat(chat.id) }; reload() }
+                    catch { loadError = "删除失败：\(error.localizedDescription)" }
                 }
             }
         }
@@ -126,7 +142,11 @@ struct ChatListView: View {
         do {
             let s = AppSettings.load()
             let active = s.raw["activePersonaId"]?.string ?? ""
-            var chats = try Repo.chats()
+            let everything = try Repo.chats()
+            // 元不按账号分（网页版 4.817）：换了小号也是同一段
+            let metaChats = Meta.list(everything)
+            metaGroup = Meta.place(s) == "group"
+            var chats = everything.filter { !Meta.isMeta($0) }
             // 只列当前身份的会话；一条都对不上（比如老数据没有 personaId）就全列
             let mine = chats.filter { $0.personaId == active }
             if !active.isEmpty && !mine.isEmpty { chats = mine }
@@ -149,9 +169,69 @@ struct ChatListView: View {
                             preview: preview,
                             tag: AutoReply.listTag(chat))
             }
+            metas = try metaChats.map { chat in
+                let last = try Repo.messages(chatId: chat.id, limit: 1).last
+                return Item(chat: chat, title: Meta.nameOf(chat), avatar: ChatFaces.of(chat, key: Meta.charIdOf(chat.id), fallback: ""),
+                            preview: last.map(previewText) ?? "", tag: metaGroup ? "" : "元模式")
+            }
+            if !metaGroup {
+                // 融入列表：和角色会话按同一个规矩排（置顶的在前，其余按最后一条的时间）
+                rows = (rows + metas).sorted {
+                    if $0.chat.pinned != $1.chat.pinned { return $0.chat.pinned }
+                    return $0.chat.lastMessageAt > $1.chat.lastMessageAt
+                }
+            }
             loadError = nil
         } catch {
             loadError = error.localizedDescription
+        }
+    }
+
+    /// 元模式一组（网页版 MessagesTab 的 MetaRow）：一个都没建时画一行「元」，点开才建（网页版第 20 条）；末尾一行「新建元」
+    @ViewBuilder private var metaSection: some View {
+        Section {
+            if metas.isEmpty {
+                NavigationLink(value: Meta.firstChatId) {
+                    HStack(spacing: Theme.sp3) {
+                        Avatar(imageId: "", name: Meta.name, size: Theme.listAvatarSize)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(Meta.name).font(.system(size: 15, weight: .medium))
+                            Text("不注入任何设定，直接与模型对话").font(.system(size: 12)).foregroundStyle(Theme.text3)
+                        }
+                    }
+                }
+                .eiraRow()
+            }
+            ForEach(metas) { item in
+                NavigationLink(value: item.chat.id) {
+                    HStack(spacing: Theme.sp3) {
+                        Avatar(imageId: item.avatar, name: item.title, size: Theme.listAvatarSize)
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(item.title).font(.system(size: 15, weight: .medium)).lineLimit(1)
+                                Spacer(minLength: 0)
+                                Text(shortTime(item.chat.lastMessageAt)).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                            }
+                            HStack {
+                                Text(item.preview).font(.system(size: 12)).foregroundStyle(Theme.text3).lineLimit(1)
+                                Spacer(minLength: 0)
+                                if item.chat.unread > 0 {
+                                    Text(item.chat.unread > 99 ? "99+" : "\(item.chat.unread)").font(.system(size: 11).monospacedDigit())
+                                        .padding(.horizontal, 5).frame(minWidth: 17, minHeight: 17)
+                                        .foregroundStyle(Theme.onAccent).background(Theme.accent, in: Capsule())
+                                }
+                            }
+                        }
+                    }
+                }
+                .eiraRow()
+                .swipeActions(edge: .trailing) {
+                    Button(role: .destructive) { deleting = item.chat } label: { Label("删除", systemImage: "trash") }
+                }
+            }
+            Button("新建元") { newMetaName = ""; newMeta = true }.eiraRow()
+        } header: {
+            Text("元模式")
         }
     }
 

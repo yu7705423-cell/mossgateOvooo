@@ -1,7 +1,8 @@
 import SwiftUI
 
 /// 调整顺序（网页版 MenuOrderPage，ARCHITECTURE 4.917、4.918）：加号面板、长按消息的那些格子。按住右侧把手拖动。
-/// 加号面板的先后与「在不在面板上」分两个字段存（settings.panelOrder、panelMore），长按消息存 settings.msgMenuOrder，都与网页版同一个键
+/// 加号面板的先后与「在不在面板上」分两个字段存（settings.panelOrder、panelMore），长按消息存 settings.msgMenuOrder，
+/// 会话菜单的分组存 settings.convMenuOrder，都与网页版同一个键
 struct MenuOrderView: View {
     @State var kind: String
     @ObservedObject private var model = SettingsModel.shared
@@ -13,12 +14,15 @@ struct MenuOrderView: View {
                 Picker("调整哪一处", selection: $kind) {
                     Text("加号面板").tag("panel")
                     Text("长按消息").tag("msg")
+                    Text("会话菜单").tag("conv")
                 }
                 .pickerStyle(.segmented)
                 .listRowBackground(Color.clear)
             } footer: {
                 if panel {
                     HelpNote("按住右侧拖动调整先后。开关决定这一项放在面板上，还是收进面板最后一格「更多」。面板上放几项没有上限。群聊里只出现说得通的几格（图片、语音、骰子、分享音乐、线下）。", title: "调整顺序：加号面板")
+                } else if kind == "conv" {
+                    HelpNote("按住右侧拖动调整会话右上角菜单中各组的先后。顶部的搜索、多选、背景、美化与最下方的「更多」不参与排序。每一组里有哪几项仍按这段会话自身而定，例如群聊没有「好友与拉黑」。", title: "调整顺序：会话菜单")
                 } else {
                     HelpNote("按住右侧拖动调整先后。每一项是否出现仍按那条消息自身而定，例如只有角色最新一轮的消息才有「重新生成」。「调整顺序」固定在最后。", title: "调整顺序：长按消息")
                 }
@@ -40,6 +44,11 @@ struct MenuOrderView: View {
                         }
                     }
                     .onMove { from, to in model.update { Panel.moveTo(&$0, from: from, to: to) } }
+                } else if kind == "conv" {
+                    ForEach(ConvOrder.shown(model.s), id: \.self) { id in
+                        if let g = ConvOrder.group(id) { Text(g.label) }
+                    }
+                    .onMove { from, to in model.update { ConvOrder.move(&$0, from: from, to: to) } }
                 } else {
                     ForEach(MenuOrder.shown(model.s), id: \.self) { id in
                         if let it = MenuOrder.item(id) {
@@ -53,8 +62,8 @@ struct MenuOrderView: View {
                 }
             }
             Section {
-                Button("恢复默认") { model.update { if panel { Panel.reset(&$0) } else { MenuOrder.reset(&$0) } } }
-                    .disabled(!(panel ? Panel.changed(model.s) : MenuOrder.changed(model.s)))
+                Button("恢复默认") { model.update { if panel { Panel.reset(&$0) } else if kind == "conv" { ConvOrder.reset(&$0) } else { MenuOrder.reset(&$0) } } }
+                    .disabled(!(panel ? Panel.changed(model.s) : kind == "conv" ? ConvOrder.changed(model.s) : MenuOrder.changed(model.s)))
             }
             ProblemSection(text: model.problem)
         }

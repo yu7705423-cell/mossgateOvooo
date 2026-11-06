@@ -40,6 +40,8 @@ enum ReplyParser {
         // 群红包（网页版 4.736）：text 是祝福语，amount 是总额，count 是个数，extra 是种类（luck / equal / only），to 是专属红包给谁
         // 领红包：text 是发的人（空为最近能领的那一个）；退群（4.733）；改网名（4.947）：text 是新网名
         case redpacket, rpclaim, leave, selfnick
+        // 截下聊天记录（网页版 4.904）：text 是冒号后面那一段原样（从「原话」开始|说明|私密）；发一张截过的：text 是说明
+        case shot, sendshot
     }
 
     struct Part: Equatable, Sendable {
@@ -114,6 +116,9 @@ enum ReplyParser {
     static let rpClaimLine = lineMark("领红包|抢红包|拆红包")
     static let unmuteAllLine = lineMark("解除全员禁言|关闭全员禁言")
     private static let keepLine = regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive])
+    // 截下聊天记录、发一张截过的（网页版 reply.js 的 SHOT_LINE、SEND_SHOT_LINE）。单独一行才认，和存图一样
+    static let shotLine = regex(#"^[\[【]\s*(?:截图|截屏|screenshot)\s*(?:[:：]\s*(.*?))?\s*[\]】]\s*$"#, [.caseInsensitive])
+    static let sendShotLine = regex(#"^[\[【]\s*(?:发截图|发送截图|send screenshot)\s*(?:[:：]\s*(.*?))?\s*[\]】]\s*$"#, [.caseInsensitive])
     private static let silenceLine = lineMark("不回复|已读不回|不回")
     private static let diceLine = lineMark("骰子|掷骰子|扔骰子|dice")
     private static let patLine = lineMark("拍一拍|拍拍|戳一戳")
@@ -495,6 +500,14 @@ enum ReplyParser {
             if ReplyParser.matches(ReplyParser.recallPostLine, t) { push(Part(type: .recallPost, text: "")); return }
             if let m = ReplyParser.match(ReplyParser.keepLine, t) {
                 push(Part(type: .keep, text: m[1].trimmingCharacters(in: .whitespaces)))
+                return
+            }
+            if let m = ReplyParser.match(ReplyParser.sendShotLine, t) {
+                push(Part(type: .sendshot, text: m[1].trimmingCharacters(in: .whitespaces)))
+                return
+            }
+            if let m = ReplyParser.match(ReplyParser.shotLine, t) {
+                push(Part(type: .shot, text: m[1].trimmingCharacters(in: .whitespaces)))
                 return
             }
             // 它要打电话过来。不占气泡：电话是一件事，不是一条消息

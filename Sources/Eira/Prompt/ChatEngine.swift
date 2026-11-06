@@ -36,7 +36,9 @@ enum ChatEngine {
         m.kind == "image" && m.role == .char && !MsgConvert.isTextImage(m)
     }
 
-    static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, onRow: @escaping OnRow) async throws {
+    /// correction：按场外检查的结果重写这一轮（网页版 4.819 的 correction），末尾接一段修正说明。只和 regenerate 一起用
+    static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, correction: String = "",
+                      onRow: @escaping OnRow) async throws {
         // 回复在路上：主动消息与群里主动开口据此不插话（网页版 isReplying）
         Replying.begin(chatId)
         defer { Replying.end(chatId) }
@@ -92,6 +94,9 @@ enum ChatEngine {
             built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
             // 试点（docs/jscore-prompt.md）：开了「按网页版拼装」时换成网页版代码拼的那一份，拼不出来照旧用原生的。默认关
             if let web = WebPrompt.replacing(built, chat: chat, char: char, excludeTurn: old?.id) { built = web }
+        }
+        if !correction.isEmpty {
+            Ooc.append(&built.messages, Templates.render("task.ooc-rewrite", ["issues": correction], settings: settings))
         }
         let turnId = old?.id ?? Ids.make("turn")
 
@@ -578,6 +583,18 @@ enum ChatEngine {
             // 认不出名字就不换（网页版 reply.js 的 wear）。不落消息，换上的头像本身就看得见
             try AvatarPool.wear(char.id, name: p.text)
             return nil
+        case .shot:
+            // 截下聊天记录（网页版 4.904）：存进角色手机的相册，聊天里什么都不留。截不下来不影响这一轮
+            guard !chat.isGroup, CharShot.capOn(char) else { return nil }
+            do { try CharShot.take(chat: chat, char: char, raw: p.text, turnId: turnId) }
+            catch { Problems.report("角色截图未能保存：\(error.localizedDescription)") }
+            return nil
+        case .sendshot:
+            // 发一张截过的：只从它自己存过的里挑（网页版第 22 条），一张都没存过就什么都不发
+            guard !chat.isGroup, CharShot.capOn(char), let shot = CharShot.pick(char.id, p.text) else { return nil }
+            var m = Message.new(chatId: chat.id, role: .char, authorId: char.id, content: "[聊天截图：\(shot.note)]", kind: "charshot", turnId: turnId)
+            m.row["shot"] = CharShot.carry(shot)
+            return m
         case .remark:
             guard char.row["canRemark"]?.bool != false, !chat.isGroup else { return nil }
             return try Interact.setTheirRemark(chatId: chat.id, name: p.text, char: char, turnId: turnId)
@@ -686,7 +703,7 @@ enum ChatEngine {
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick:
             return nil
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

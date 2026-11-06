@@ -192,6 +192,8 @@ final class WebLogic: @unchecked Sendable {
             case "rpclaim": p = .init(type: .rpclaim, text: str("from"))
             case "leave": p = .init(type: .leave, text: "")
             case "selfnick": p = .init(type: .selfnick, text: str("name"))
+            case "shot": p = .init(type: .shot, text: str("raw"))
+            case "sendshot": p = .init(type: .sendshot, text: str("query"))
             default:
                 unmapped.append(type)
                 continue

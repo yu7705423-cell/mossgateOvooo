@@ -183,7 +183,9 @@ enum ChatPrompt {
                                 older: @escaping (String) throws -> Message?) throws -> ([AIMessage], [String]) {
         let all = src.msgs
         // 线下那几场的正文按时间排进来，一起算条数与轮次（网页版 4.375）。场外指示不进
-        let timeline = timelineOf(src, beats: beats)
+        // 场外的问答（网页版 4.819）：角色不可见时一条都不带，可见时写成 [场外：…] 与 [场外回复：…]
+        let oocVisible = Ooc.cfg(chat).visible
+        let timeline = timelineOf(src, beats: beats).compactMap { Ooc.forPrompt(chat, $0, visible: oocVisible) }
         // source 读到够用才停，这里一定盖得住；万一盖不住，按读到的那一截算
         let window = windowOf(timeline, settings: s, complete: src.complete) ?? timeline
         let meName: String = {
@@ -587,7 +589,7 @@ enum ChatPrompt {
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick"]
+                         "grouppay", "groupleave", "selfnick", "charshot"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -610,7 +612,7 @@ enum ChatPrompt {
         func cap(_ id: String, on: Bool, hot: Bool, line: String?, detail: () -> String) {
             // 关掉的不进；解析格式的一部分（时间戳、译文）与自己有开关的（旁白、心声）不受这里管（网页版 PROTOCOL、OWN_SWITCH）
             guard on, !off.contains(id) || protocolCaps.contains(id) || ownSwitchCaps.contains(id) else { return }
-            guard perCharFeat.contains(id) || NewFeat.capOn(id, s) else { return }
+            guard perCharFeat.contains(id) || NewFeat.capOn(id, s, char: char) else { return }
             if chat.isGroup && !groupCaps.contains(id) { return }
             // 见面时只给当面说得通的那几样（网页版 face.CAPS）
             if Face.on(chat) && !Face.caps.contains(id) { return }
@@ -696,6 +698,11 @@ enum ChatPrompt {
         cap("keepphoto", on: Theirs.keepOn(char.id), hot: used(#"[\[【]存图"#),
             line: "Save a photo to your own phone: write a line on its own, [存图：what you are keeping]. A photo just sent to you is the one saved") {
             Templates.get("skeleton.keepphoto", settings: s)
+        }
+        // 截下聊天记录（网页版 4.904，新功能默认不注入）：存过的截图只列说明，发哪一张由它挑
+        cap("charshot", on: !chat.isGroup, hot: true,
+            line: "Screenshot your chat into your own phone album: a line on its own, [截图：从「first words of the message to start from」开始|label]; send a saved one with [发截图：label]") {
+            Templates.render("skeleton.charshot", ["saved": CharShot.savedLine(char.id)], settings: s)
         }
         cap("quote", on: msgs.count >= 2, hot: used(#"[\[【](引用|回复)"#),
             line: "Quote: write a line on its own, [引用：a short excerpt of that message], then what you want to say on the next line") {
@@ -824,7 +831,7 @@ enum ChatPrompt {
     }
 
     /// 表情名字：各分组轮流取一个，组内用得多的在前；重名的带上分组。一行一个（网页版 stickerNames）。
-    private static func stickerNames(char: Character, limit: Int) -> String {
+    static func stickerNames(char: Character, limit: Int) -> String {
         if char.row["canSendSticker"]?.bool == false { return "" }
         guard let rows = try? Database.shared.all("stickers"), !rows.isEmpty else { return "" }
         let cap = limit > 0 ? limit : Int.max

@@ -159,6 +159,7 @@ struct AbilitiesPage: View {
                 }
                 voiceSection
                 imageSection
+                NewFeatCharSection(charId: charId)
             }
             ProblemSection(text: problem)
         }

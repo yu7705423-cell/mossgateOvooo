@@ -88,6 +88,10 @@ struct ConversationView: View {
     @State private var photoText = ""
     /// 输入框此刻是不是在写旁白（这段会话开了「我也写旁白」才用得上）
     @State private var narrMode = false
+    /// 输入栏在发「场外」（网页版 4.819）：这段会话开了场外问答才有这一格
+    @State private var oocMode = false
+    /// 存为世界书的确认页：要存的那一段（场外答复、检查结果、长按的消息）
+    @State private var loreText: String?
     @State private var reactingTo: Message?
     @State private var askingImageKeep = false
     @State private var showStickers = false
@@ -568,6 +572,9 @@ struct ConversationView: View {
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
         .navigationDestination(isPresented: $showMenuOrder) { MenuOrderView(kind: "msg") }
+        .sheet(isPresented: Binding(get: { loreText != nil }, set: { if !$0 { loreText = nil } })) {
+            OocSaveSheet(chatId: chatId, initial: loreText ?? "") { notice = $0 }
+        }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
                 SearchChatView(chatId: chatId) { _, m in showSearch = false; jump(m) }
@@ -757,7 +764,7 @@ struct ConversationView: View {
     /// 输入框（.ph-composer-input）。美化写了样式时照着画，聚焦时叠上 :focus 的那一份；
     /// 按「有没有写过样式」分支，不按聚焦分支，聚焦的那一刻不换视图
     @ViewBuilder private var composerInput: some View {
-        let hint = narrMode && chat?.row.bool("userNarration") == true ? "写一行旁白" : "Aa…"
+        let hint = oocMode && Ooc.cfg(chat).on ? "向模型本身提问，对照角色卡检查" : narrMode && chat?.row.bool("userNarration") == true ? "写一行旁白" : "Aa…"
         if let css, css.has(["composer-input"]) {
             let st = css.resolve(["composer-input"], typing ? .focused : .normal) ?? CssStyle()
             let ph = css.resolve(["composer-input"], .normal, .placeholder)
@@ -818,17 +825,21 @@ struct ConversationView: View {
 
     /// 「消息 旁白」切换：输入栏上方一行小字，开了「我也写旁白」才有（网页版 composer-tabs）
     @ViewBuilder private var narrTabs: some View {
-        if chat?.row.bool("userNarration") == true {
+        let narrOn = chat?.row.bool("userNarration") == true
+        let oocOn = chat?.isGroup == false && Ooc.cfg(chat).on
+        if narrOn || oocOn {
             HStack(spacing: Theme.sp4) {
-                ForEach([false, true], id: \.self) { v in
-                    Button { narrMode = v } label: {
+                // 消息 / 旁白 / 场外（网页版 composer-tabs 的三态）
+                ForEach(["msg", narrOn ? "narr" : "", oocOn ? "ooc" : ""].filter { !$0.isEmpty }, id: \.self) { v in
+                    let cur = oocMode && oocOn ? "ooc" : narrMode && narrOn ? "narr" : "msg"
+                    Button { narrMode = v == "narr"; oocMode = v == "ooc" } label: {
                         // 切换条里的一项（.ph-composer-tab）
-                        Text(v ? "旁白" : "消息")
-                            .modifier(PhSurface(hooks: ["composer-tab"], fallback: PhFallback(fg: narrMode == v ? Theme.text : Theme.text3, fontSize: 12),
-                                                font: .system(size: 12, weight: narrMode == v ? .semibold : .regular)))
+                        Text(v == "narr" ? "旁白" : v == "ooc" ? "场外" : "消息")
+                            .modifier(PhSurface(hooks: ["composer-tab"], fallback: PhFallback(fg: cur == v ? Theme.text : Theme.text3, fontSize: 12),
+                                                font: .system(size: 12, weight: cur == v ? .semibold : .regular)))
                     }
                     .buttonStyle(.plain)
-                    .accessibilityAddTraits(narrMode == v ? .isSelected : [])
+                    .accessibilityAddTraits(cur == v ? .isSelected : [])
                 }
                 Spacer()
             }
@@ -1384,6 +1395,8 @@ struct ConversationView: View {
         var memoryUpToAt: Double = 0
         /// 存着思考过程的那几轮（长按给「查看思考」）
         var thinkTurns: Set<String> = []
+        /// 场外检查的结果挂在哪一条下面（这一轮最后一条 → 这一轮第一条，网页版 4.819）
+        var oocEnd: [String: Message] = [:]
         /// 结构写法（第三步）：美化用到的后缀，以及按它算出来的几条。美化没用到的那一项为空，消息行不因此重画
         var structUse: Set<String> = []
         /// 消息在整个列表里的序号（按奇偶挑 -odd / -even）
@@ -1417,6 +1430,7 @@ struct ConversationView: View {
             meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""),
             memoryUpToAt: chat?.isGroup == false ? (chat?.row.number("memoryUpToAt") ?? 0) : 0,
             thinkTurns: Set(messages.filter { !$0.turnId.isEmpty && !$0.row.string("think").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.map(\.turnId)),
+            oocEnd: Ooc.endsOf(messages),
             structUse: structUse,
             msgIndex: structUse.contains("-odd") || structUse.contains("-even")
                 ? Dictionary(messages.enumerated().map { ($0.element.id, $0.offset) }, uniquingKeysWith: { a, _ in a }) : [:],
@@ -1485,8 +1499,15 @@ struct ConversationView: View {
             let status = statusFor(m, ctx)
             if let status, status.top { statusBlock(status.msg, top: true, ctx).padding(.bottom, Theme.sp2) }
             // 行的内容没变就不重画（打字、计时器等让整页重算时，几十行气泡不跟着重算）
-            messageRow(m, ctx, sep: sep).equatable()
+            if m.kind == Ooc.kind {
+                OocBubble(message: m, onSave: { loreText = m.content }, onDelete: { remove(m) })
+            } else if m.kind == "charshot" {
+                CharShotBubble(message: m)
+            } else {
+                messageRow(m, ctx, sep: sep).equatable()
+            }
             if let status, !status.top { statusBlock(status.msg, top: false, ctx).padding(.top, Theme.sp2) }
+            if let head = ctx.oocEnd[m.id] { oocLine(head) }
         }
         // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
         .padding(.top, top)
@@ -1637,6 +1658,11 @@ struct ConversationView: View {
             } catch { problem = "画外音未能保存：\(error.localizedDescription)" }
             return
         }
+        // 场外问答（网页版 4.819）：输入栏切到「场外」，或以触发词开头
+        if chat?.isGroup == false, Ooc.cfg(chat).on, oocMode || Ooc.triggered(chat, text) != nil {
+            askOoc(Ooc.triggered(chat, text) ?? text)
+            return
+        }
         // 在写旁白：落一行我的旁白，切回发消息。不消耗正在引用的那一条，也不触发回复
         if narrMode && chat?.row.bool("userNarration") == true {
             do {
@@ -1762,6 +1788,8 @@ struct ConversationView: View {
             do { replace(try Favorites.set(m, !Favorites.isOn(m))) } catch { problem = "收藏未能保存：\(error.localizedDescription)" }
         case .menuOrder:
             showMenuOrder = true
+        case .saveLore:
+            loreText = MessageActions.bodyText(m).isEmpty ? m.content : MessageActions.bodyText(m)
         case .settle(let yes):
             do {
                 let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
@@ -1891,6 +1919,8 @@ struct ConversationView: View {
                 }
                 // 自动总结记忆：门槛到了才调（默认三个门槛都关着），在后台跑，不挡着聊天
                 Task.detached { _ = await MemorySummary.autoRun(chatId: id) }
+                // 场外的自动检查（网页版 4.819，默认关）：只标出时不等它；自动重写时等结果，这一轮还在「正在输入」
+                await oocAfter(id, round: 0)
             } catch let e as AIError where e.cancelled {
                 // 用户点了停止：已经落下的几条留着
             } catch is CancellationError {
@@ -1906,6 +1936,79 @@ struct ConversationView: View {
                 Typing.shared.end(id)
                 reload()
             }
+        }
+        job = task
+        typingState.begin(id, job: task)
+    }
+
+    /// 场外：检查这一轮，开了自动重写的按结果重写（Ooc.after）。只标出时不挡着下一轮
+    private func oocAfter(_ id: String, round: Int) async {
+        guard let c = try? Repo.chat(id), Ooc.cfg(c).check else { return }
+        let say: @Sendable (String) -> Void = { t in Task { @MainActor in problem = t } }
+        let row: ChatEngine.OnRow = { m in
+            Task { @MainActor in if let i = messages.firstIndex(where: { $0.id == m.id }) { messages[i] = m } else { messages.append(m) } }
+        }
+        if Ooc.cfg(c).checkMode == "rewrite" {
+            await Ooc.after(chatId: id, round: round, onRow: row, say: say)
+        } else {
+            Task.detached {
+                await Ooc.after(chatId: id, round: round, onRow: row, say: say)
+                await MainActor.run { reload() }
+            }
+        }
+    }
+
+    /// 检查结果那一行（网页版 OocCheckLine）：只有最新那一轮能按结果重写
+    private func oocLine(_ head: Message) -> some View {
+        OocCheckLine(head: head, canRewrite: !isBusy && head.turnId == (messages.last { $0.role == .char }?.turnId ?? ""),
+                     onRewrite: { issues in oocRewrite(issues) },
+                     onSave: { loreText = $0 },
+                     onDismiss: {
+                         var h = head
+                         h.row["oocDismissed"] = .bool(true)
+                         do { try Repo.save(h); replace(h) } catch { problem = "未能保存：\(error.localizedDescription)" }
+                     })
+    }
+
+    /// 手动点「按检查结果重写」：重新生成这一轮，之后只检查不再自动重写
+    private func oocRewrite(_ issues: [Ooc.Issue]) {
+        guard !isBusy else { return }
+        busy = true
+        problem = nil
+        let id = chatId
+        let task = Task {
+            do {
+                try await ChatEngine.reply(chatId: id, regenerate: true, correction: Ooc.correctionOf(issues)) { _ in }
+                await oocAfter(id, round: Int.max)
+            } catch let e as AIError where e.cancelled {
+            } catch is CancellationError {
+            } catch {
+                await MainActor.run { problem = "重写失败，原来的回复未改动：\(error.localizedDescription)" }
+            }
+            await MainActor.run { busy = false; Typing.shared.end(id); reload() }
+        }
+        job = task
+        typingState.begin(id, job: task)
+    }
+
+    /// 场外问答（网页版 askOoc）：问与答都落成 kind ooc，一次提问一次请求，不排日程、不顺带别的
+    private func askOoc(_ note: String) {
+        guard !isBusy, !note.isEmpty else { return }
+        busy = true
+        problem = nil
+        draft = ""
+        oocMode = false
+        let id = chatId
+        let task = Task {
+            do {
+                let ans = try await Ooc.ask(chatId: id, note: note, onAsk: { m in Task { @MainActor in messages.append(m) } })
+                await MainActor.run { messages.append(ans) }
+            } catch let e as AIError where e.cancelled {
+            } catch is CancellationError {
+            } catch {
+                await MainActor.run { problem = "场外答复失败：\(error.localizedDescription)" }
+            }
+            await MainActor.run { busy = false; Typing.shared.end(id); reload() }
         }
         job = task
         typingState.begin(id, job: task)
@@ -2255,7 +2358,7 @@ struct MessageRow: View, Equatable {
     }
 
     enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare, fav, menuOrder,
-                  textImage, backToText, toVoice, imageVersions, openRedPacket, keepNote }
+                  textImage, backToText, toVoice, imageVersions, openRedPacket, keepNote, saveLore }
 
     let message: Message
     let char: Character?
@@ -2552,6 +2655,11 @@ struct MessageRow: View, Equatable {
         case "rewind":
             if summarized {
                 Button { onAction?(.resummarize) } label: { Label("从这条起重新总结", systemImage: "arrow.counterclockwise") }
+            }
+        case "lore":
+            // 存为世界书（网页版 4.819）：这一条的正文存成一条常驻条目，存进哪一本在会话菜单「场外」里选
+            if !showName && !message.isRecalled && !MessageActions.bodyText(message).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Button { onAction?(.saveLore) } label: { Label("存为世界书", systemImage: "book") }
             }
         case "example":
             if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {

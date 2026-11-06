@@ -38,6 +38,13 @@ enum ExtraCalls {
                   isOn: { _ in liveChats().contains { $0.row.string("innerMode") == "apart" } },
                   when: { _ in "开了这一档的对话，每一轮在整轮说完之后再一次" }),
         // 挂在生图接口上（那一套选了「生图前翻译」），不是全局设置
+        // 挂在会话上（会话菜单「场外」，网页版 4.819），不是全局设置
+        ExtraCall(id: "oocCheck", label: "场外：OOC 自动检查",
+                  isOn: { _ in liveChats().contains { $0.row["ooc"]?["check"]?.bool == true } },
+                  when: { _ in "开了这一项的对话，每一轮回复之后再一次，按角色卡检查这一轮" }),
+        ExtraCall(id: "oocRewrite", label: "场外：发现 OOC 后自动重写",
+                  isOn: { _ in liveChats().contains { $0.row["ooc"]?["check"]?.bool == true && $0.row["ooc"]?["checkMode"]?.string == "rewrite" } },
+                  when: { _ in "检查发现与角色卡冲突时，每重写一次多一次回复、一次检查，次数在这段会话的「场外」页中填写" }),
         ExtraCall(id: "imageTranslate", label: "生图提示词译成英文",
                   isOn: { $0.imageReady && $0.activeImage?.promptLang == "translate" },
                   when: { _ in "选了「生图前翻译」的生图接口，每张含中文的图在生成之前一次（走副用接口）" }),

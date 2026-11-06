@@ -28,7 +28,7 @@ enum NewFeat {
         var blocks: [String] = []
     }
 
-    /// 网页版 FEATURES 的一部分，不是全部。网页版共 9 项；这里列宠物、测试问卷两项（所在的 app 原生版尚未提供，
+    /// 网页版 FEATURES 的一部分，不是全部。这里列宠物、测试问卷、截下聊天记录三项（所在的 app 原生版尚未提供，
     /// 列出来是因为 featureOpt 两边共用，在这里改的就是导入进来的那一份）。其余 7 项（娱乐卡、门禁卡与钥匙、票券、会员卡、
     /// 扭蛋机、在群里发消息、暂时离开）原生版没有对应的能力与区块，做到时照网页版原文登记；用户在网页版选过的 featureOpt 原样留着
     static let features: [Feature] = [
@@ -52,6 +52,12 @@ enum NewFeat {
                 desc: "开启后，角色可以在回复里写一行标记给自己改网名（编辑资料里「网名」那一栏同一处），聊天里留一行提示；重新生成那一轮时网名退回去。"
                     + "改不改、改成什么由角色自己决定。能力说明大约多三十个英文词；不多调用接口",
                 app: "contact", caps: ["selfnick"]),
+        // 角色截下聊天记录（网页版 4.904，Prompt/CharShot.swift）
+        Feature(id: "charshot", label: "截下聊天记录",
+                desc: "开启后，角色可以把和你的聊天记录截成一张图，存进该角色手机的相册，也可以存进带密码的那一本；截的时候聊天里不留提示，翻角色的手机才看得到。"
+                    + "角色也可以把存过的截图发进聊天。截图在本机画出，不多调用模型接口；提示词约多八十个英文词，另加已存截图的说明列表。"
+                    + "关闭后不再告诉角色这个写法，角色碰巧写了也不截",
+                app: "chat", caps: ["charshot"]),
     ]
 
     static func decided(_ id: String, _ s: AppSettings) -> String { s.raw["featureOpt"]?.object?[id]?.string ?? "" }
@@ -74,10 +80,25 @@ enum NewFeat {
         chars.isEmpty ? isOn(id, s) : chars.contains { isOn(id, s, char: $0) }
     }
 
-    /// 这项能力能不能进提示词：不是新功能照旧（由各自的开关决定），是新功能看用户开没开
-    static func capOn(_ id: String, _ s: AppSettings) -> Bool {
+    /// 改这个角色自己的选择："on" / "off"，"" 表示改回跟随全局（入口在「角色能力」最下面的「新功能」，第 5 条）
+    static func setFor(_ charId: String, _ id: String, _ v: String) throws {
+        guard var c = try Repo.character(charId) else { return }
+        var o = c.row["featOpt"]?.object ?? [:]
+        o[id] = v == "on" || v == "off" ? .string(v) : nil
+        c.row["featOpt"] = .object(o)
+        c.row.touch()
+        try Database.shared.put(Collections.characters, c.row)
+    }
+
+    /// 这项能力能不能进提示词：不是新功能照旧（由各自的开关决定），是新功能看用户开没开（给了角色就按这个角色）
+    static func capOn(_ id: String, _ s: AppSettings, char: Character? = nil) -> Bool {
         guard let f = features.first(where: { $0.caps.contains(id) }) else { return true }
-        return isOn(f.id, s)
+        return isOn(f.id, s, char: char)
+    }
+
+    /// 打开这个 app 时还没问过的新功能（网页版 pendingFor）
+    static func pending(app: String, _ s: AppSettings) -> [Feature] {
+        features.filter { $0.app == app && decided($0.id, s).isEmpty }
     }
 
     static func blockOn(_ id: String, _ s: AppSettings) -> Bool {
