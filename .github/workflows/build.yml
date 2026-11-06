@@ -5,7 +5,8 @@ name: 编译
 on:
   workflow_dispatch:
   push:
-    branches: [dev, main]
+    # wip/** 是几个助手各自在做的分支，推上来只为在苹果机器上编译、跑测试（本机是 Linux 编不了）
+    branches: [dev, main, 'wip/**']
 
 # 同一个分支连推几次，只编最新的那次
 concurrency:

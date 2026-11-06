@@ -3,7 +3,8 @@ name: 壳 App（网页版外壳）
 # 网页版仓库里的 iPhone 外壳（ios/，包标识 cn.eiraphone.app）在这里编译：本仓库公开，标准 macOS 机器不扣分钟；
 # 网页版仓库私密，代码不进本仓库，编译时用只读钥匙 WEB_REPO_TOKEN 现取一份，用完即删。
 #
-# 推到 dev：提交说明写着 [shell] 只编译检查（未签名，不上传）；写着 [shell-owo] 签名并上传到 owo（Eiraowo，包标识 cn.eiraphone.native，
+# 推到 dev：提交说明写着 [shell] 只编译检查（未签名，不上传）。[shell-owo] 已停用（2026-11-06，用户定的：owo 从此只传原生版；
+# 壳 App 与原生版同一个包标识，数据不通，轮流传会互相顶掉）。从前它签名并上传到 owo（Eiraowo，包标识 cn.eiraphone.native，
 # 只有维护者在用；用户同意的，2026-11-02），打开测试版网址，试原生切换用。
 # 正式的 Eiraphone（cn.eiraphone.app）只在手动触发时上传（工作流要在 main 上才有按钮），测试员会收到每一次，先经用户同意。
 on:
@@ -38,7 +39,7 @@ concurrency:
 
 jobs:
   shell:
-    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[shell]') || contains(github.event.head_commit.message, '[shell-owo]')
+    if: github.event_name == 'workflow_dispatch' || contains(github.event.head_commit.message, '[shell]')
     runs-on: macos-26
     env:
       WEB_REPO_TOKEN: ${{ secrets.WEB_REPO_TOKEN }}
@@ -46,7 +47,7 @@ jobs:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
       # [shell-owo]：传到 owo；其余（手动触发）照输入
-      OWO: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[shell-owo]') }}
+      OWO: 'false'   # [shell-owo] 已停用，见文件开头
     steps:
       # 本仓库只用来读版本号（project.yml），放在 native/ 下，和网页版那份分开
       - uses: actions/checkout@v4
