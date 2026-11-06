@@ -51,7 +51,7 @@ enum MenuOrder {
 
     /// 原生版长按菜单里真有的那几格（排序页只列这些）
     static let native: Set<String> = ["reply", "copy", "fav", "edit", "phototext", "voice", "imgvers", "regen", "redraw", "recall", "translate", "vision", "think",
-                                      "transedit", "remember", "rewind", "example", "served", "compare", "keep", "lore", "multi", "delete"]
+                                      "transedit", "remember", "rewind", "example", "served", "compare", "keep", "note", "lore", "multi", "delete"]
 
     private static var ids: [String] { all.map(\.id) }
 

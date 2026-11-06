@@ -161,6 +161,8 @@ enum ChatPrompt {
             // 代发与手机上的对话（角色手机）：只取有代发参与的那几句
             "proxy": one("proxy") { Theirs.proxyBlock(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s) },
             "userSched": one("userSched") { UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now) },
+            // 你记着的事（网页版 context/plan.js）：「待办」里已计入、还没做的几条，条数 planCount
+            "plan": one("plan") { Todo.planBlock(userName: me?.name ?? "", settings: s, now: now) },
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -583,9 +585,9 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent", "geo", "badges",
-                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
-    static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
+    static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
                          "grouppay", "groupleave", "selfnick", "charshot"]
     static let protocolCaps: Set<String> = ["time", "translate"]
@@ -671,6 +673,11 @@ enum ChatPrompt {
         cap("ring", on: char.row["canCall"]?.bool != false, hot: used(#"^call$|[\[【](视频)?(去电|来电)"#),
             line: "Call: write a line on its own, [去电]; for video, write [视频去电]") {
             Templates.get("skeleton.ring", settings: s)
+        }
+        // 记下待办（网页版 capabilities.js 的 todo）：角色卡上 canTodo 没关就有；落成待确认，不多调接口
+        cap("todo", on: char.row["canTodo"]?.bool != false, hot: used(#"[\[【]待办"#),
+            line: "Record something they mean to do: write a line on its own, [待办：the thing]") {
+            Templates.get("skeleton.todo", settings: s)
         }
         // 今天的安排：今天排了日程才有，一直给全文（网页版 capabilities.js 的 agenda，always）
         cap("agenda", on: DayPlan.brief(char) != nil, hot: true, line: nil) {

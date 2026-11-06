@@ -264,15 +264,26 @@ enum UserSched {
         return "- \(r.span) \(en): \(r.title)" + (r.place.isEmpty ? "" : " (\(r.place))") + (r.note.isEmpty ? "" : " \(r.note)")
     }
 
-    /// 几天的日程写成几行文字。一条日程都没有返回空
+    /// 任务那一行（任务就是待办，4.326）
+    private static func taskLine(_ t: Todo.DayTask) -> String {
+        "- \(t.time.isEmpty ? "Any time" : t.time) Task: \(t.row.text) (\(t.done ? "done" : "not done"))"
+    }
+
+    /// 几天的日程写成几行文字，那几天的任务（待办）按时间排进去，没定时间的垫在最后。日程与任务都没有返回空
     static func textFor(_ owner: String, back: Int, ahead: Int, settings s: AppSettings, at: Date = Date()) -> String {
-        guard !list(owner).isEmpty else { return "" }
         let today = today(s, at: at).key
-        return (-back...ahead).map { i -> String in
+        let days = (-back...ahead).map { i -> (i: Int, key: String, rows: [Item], tasks: [Todo.DayTask]) in
             let key = shiftKey(today, i)
+            return (i, key, itemsOn(owner, key), Todo.tasksOn(key))
+        }
+        guard !list(owner).isEmpty || days.contains(where: { !$0.tasks.isEmpty }) else { return "" }
+        return days.map { d -> String in
+            let i = d.i, key = d.key
             let rel = i == 0 ? "Today" : i == -1 ? "Yesterday" : i == 1 ? "Tomorrow" : i < 0 ? "\(-i) days ago" : "In \(i) days"
-            let rows = itemsOn(owner, key)
-            return "\(rel), \(key) \(weekdays[weekdayOfKey(key) - 1]):\n" + (rows.isEmpty ? "- (nothing scheduled)" : rows.map(line).joined(separator: "\n"))
+            let timed = (d.rows.map { (t: $0.start, s: line($0)) } + d.tasks.filter { !$0.time.isEmpty }.map { (t: $0.time, s: taskLine($0)) })
+                .enumerated().sorted { $0.element.t != $1.element.t ? $0.element.t < $1.element.t : $0.offset < $1.offset }.map(\.element.s)
+            let lines = timed + d.tasks.filter { $0.time.isEmpty }.map(taskLine)
+            return "\(rel), \(key) \(weekdays[weekdayOfKey(key) - 1]):\n" + (lines.isEmpty ? "- (nothing scheduled)" : lines.joined(separator: "\n"))
         }.joined(separator: "\n")
     }
 

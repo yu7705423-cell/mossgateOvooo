@@ -720,6 +720,8 @@ struct ConversationView: View {
                 .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
             tieBar
+            // 待办的确认栏（网页版 todo-bar）：这段对话里等着确认的那一条
+            TodoAskBar(chatId: chatId)
             // 延迟回复不再在输入栏上方写「约多久后回复」（网页版 4.319，用户要求）：还要等多久在「节奏」页看，到点了消息自己来
             mentionBar
             narrTabs
@@ -1757,6 +1759,14 @@ struct ConversationView: View {
                 notice = "已改回未总结 \(n) 条，下一次总结从这一条开始。已经记下的记忆不删除，再总结时与已有记忆比对，仍可能出现重复。"
                 reload()
             } catch { problem = error.localizedDescription }
+        case .keepNote:
+            let body = MessageActions.bodyText(m).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { problem = "这一条没有可记的正文"; return }
+            let who = m.role == .user ? "我" : (speaker(of: m)?.displayName ?? "对方")
+            do {
+                try Notes.add("\(who)：\(body)", from: Notes.fromChat, chatId: m.chatId, charId: m.authorId.isEmpty ? (char?.id ?? "") : m.authorId)
+                notice = "已存入「待办 - 备忘」"
+            } catch { problem = "备忘未能保存：\(error.localizedDescription)" }
         case .example:
             do { notice = try MessageActions.addExample(m) ? "已收进说话示例，可在编辑资料中修改" : "说话示例中已有这一句" }
             catch { problem = error.localizedDescription }
@@ -2348,7 +2358,7 @@ struct MessageRow: View, Equatable {
     }
 
     enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare, fav, menuOrder,
-                  textImage, backToText, toVoice, imageVersions, openRedPacket, saveLore }
+                  textImage, backToText, toVoice, imageVersions, openRedPacket, keepNote, saveLore }
 
     let message: Message
     let char: Character?
@@ -2632,6 +2642,11 @@ struct MessageRow: View, Equatable {
             if message.kind == "voice", case let aid = message.row.string("audioId"), !aid.isEmpty,
                let url = Files.exportURL(aid, name: "语音-\(String(message.row.string("voiceText").prefix(12)))") {
                 ShareLink(item: url) { Label("存储语音", systemImage: "square.and.arrow.down") }
+            }
+        case "note":
+            // 存成我自己的备忘（网页版 MsgMenu 的 keepNote）：只进「待办 - 备忘」，角色看不见
+            if !MessageActions.bodyText(message).isEmpty {
+                Button { onAction?(.keepNote) } label: { Label("存备忘", systemImage: "note.text") }
             }
         case "remember":
             if !MessageActions.bodyText(message).isEmpty {

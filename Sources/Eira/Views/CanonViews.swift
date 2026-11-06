@@ -1446,6 +1446,7 @@ struct CapsView: View {
         Cap(id: "groupleave", label: "自行退群", group: "群聊", info: "群聊中角色可以自行退出群聊；只在群资料里打开了「角色可以自行退群」、且退出后仍有两名以上角色的群里生效"),
         Cap(id: "selfnick", label: "改网名", group: "互动", info: "角色可以修改自己的网名"),
         Cap(id: "ties", label: "好友与拉黑", group: "社交", info: "角色可以加好友、拉黑或解除"),
+        Cap(id: "todo", label: "记下待办", group: "生活", info: "角色可以把聊到要做的事记成待办。记下的先列为等待确认，计入之后才成为待办；随回复一并返回，不额外调用接口"),
         Cap(id: "agenda", label: "日程事项", group: "生活", info: "角色可以安排日程事项"),
         Cap(id: "pact", label: "约定", group: "互动", info: "角色可以与用户立下约定，完成后标记"),
         Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),
