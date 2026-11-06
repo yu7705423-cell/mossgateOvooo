@@ -185,6 +185,7 @@ final class WebLogic: @unchecked Sendable {
             case "muteall": p = .init(type: .muteAll, text: ""); p.flag = bool("on")
             case "nick": p = .init(type: .nick, text: str("name")); p.extra = s("nick")
             case "wear": p = .init(type: .wear, text: str("name"))
+            case "todo": p = .init(type: .todo, text: str("text"))
             case "redpacket":
                 p = .init(type: .redpacket, text: str("note")); p.amount = num("total")
                 p.count = num("count").map { Int($0.rounded()) }; p.extra = s("rtype"); p.to = nonEmpty(s("to"))
