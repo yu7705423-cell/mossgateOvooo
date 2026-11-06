@@ -78,7 +78,7 @@ enum ChatEngine {
             try await perChar(chat: chat, settings: settings, onRow: onRow)
             return
         }
-        let built: ChatPrompt.Built
+        var built: ChatPrompt.Built
         if chat.isGroup {
             // 一个能说话的都没有：不调接口。调了写出来的也一句都发不出去
             let members = GroupChat.members(chat)
@@ -86,6 +86,8 @@ enum ChatEngine {
             built = try ChatPrompt.buildGroup(chat: chat, members: members, settings: settings, excludeTurn: old?.id)
         } else {
             built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
+            // 试点（docs/jscore-prompt.md）：开了「按网页版拼装」时换成网页版代码拼的那一份，拼不出来照旧用原生的。默认关
+            if let web = WebPrompt.replacing(built, chat: chat, char: char, excludeTurn: old?.id) { built = web }
         }
         let turnId = old?.id ?? Ids.make("turn")
 

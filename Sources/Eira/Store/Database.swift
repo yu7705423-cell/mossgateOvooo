@@ -161,6 +161,18 @@ final class Database: @unchecked Sendable {
         }
     }
 
+    /// 同上，只是不解析、交出原文。limit 为 nil 时全部。网页版提示词试点往 JavaScriptCore 里灌表用（WebPrompt）
+    func rawLast(_ collection: String, where value: String, limit: Int?) throws -> [Data] {
+        try queue.sync {
+            try query("""
+                SELECT json FROM (
+                  SELECT json, created, id FROM records WHERE collection = ? AND idx = ?
+                  ORDER BY created DESC, id DESC LIMIT ?
+                ) ORDER BY created, id
+                """, [collection, value, limit ?? -1]) { Self.blob($0, 0) }
+        }
+    }
+
     func count(_ collection: String) throws -> Int {
         try queue.sync { try countLocked(collection) }
     }
