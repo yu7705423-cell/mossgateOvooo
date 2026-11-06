@@ -31,7 +31,11 @@
 | avatar, portrait, cover | 图片 id | |
 | lorebookIds | [String] | 挂的世界书 |
 | remark | String | 用户给角色的备注名 |
-| relations | [{charId, label}] | |
+| relations | [{charId, label, circle}] | label 是「对方是我的什么」，两边各写一条；circle 是这一方自己的圈子分法，空串未分组（card.js，4.593）。指向已删除角色的读时滤掉 |
+| nick | String | 网名 |
+| altReason, altOpenedAt, altDisclosed | String 毫秒 Bool | 角色自己开的小号：理由、开设时间、是否已承认（4.305） |
+| nowPlaying | {kind:'recent'/'often', at, songs:[{title, artist}]} | 在听的歌，近况页读 |
+| loreEntries | {"书id:条目id": Bool} | 只对这个角色开关某一条世界书条目；没记跟着条目的 enabled |
 | bonds | {根身份id 或 'root': {text, manual, at, sig}} | 关系底色 |
 | states | {根身份id: {...}} | 现状块 |
 | parentId | String? | 不为空表示是那个角色的小号 |
@@ -141,8 +145,9 @@ personas 是「我」的身份树：parentId 为空是大号，否则是小号�
 | parentId | |
 | avatar, cover, avatarBase | 图片 id |
 | signature, description | |
-| gender, age, birthday | |
-| sections | {personality, likes, habits, triggers, life} |
+| gender, age, birthday | birthday 可写 `3月14日` 或 `1999-03-14`，写进「对方是谁」，带年份时另写 Age（4.775） |
+| nick, city | 网名（4.687）、所在城市（4.776），填了才写进「对方是谁」 |
+| sections | {personality, likes, habits, triggers, life}。「基础资料」就是 description（selfprofile.js，4.347） |
 | charNotes | [{id, charId, kind:'exp'/'imp', text, vis, visIds, at}] |
 
 kv persona 是迁移 2 之前的单一身份，现在只作回落：`{name:'我', avatar, cover, signature, gender, description}`。
@@ -249,3 +254,25 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 | settings | convMenuOrder | 会话菜单分组的先后（原生版暂不读，原样留着） |
 | stickers | myUsedAt | 毫秒。自己从表情面板点出去的最近一次（4.935「最近常用」）；useCount 另算，角色发的也算 |
 
+
+## 9. impressions（角色眼中的你，4.346）
+
+按 charId 查。一行一种，kind 分：
+
+| kind | 字段 |
+|---|---|
+| imp | charId, personaId, text, voice, evidence:[{msgId, chatId, at, day, quote}], against（同上）, state 'kept'/'dropped', droppedAt, seenAt（null 为新）, mergedAt, mergedTo:{personaId, key, charId} |
+| note | charId, personaId, text, evidence:[一条], usedAt（整理时用掉） |
+| draft | charId, personaId, fresh:[{text, voice, evidence}], support / against:[{id, evidence}], noteIds, upTo。同一个角色 × 账号一份 |
+| mark | charId, personaId, upTo（整理读到的最后一条消息的时间）, at |
+| groups | charId 为空串，personaId, groups:[{ids, text}], basis（对照时的全部印象 id）, at |
+
+强度按依据的不同日子数：settings.impressSeen 缺省 2、impressSure 缺省 5；整理最多读 settings.impressLines 缺省 400 条（0 为全部）。
+
+## 10. 角色包 character.json（charpack.js，4.116）
+
+zip 只存不压：`character.json` 加 `images/<id>.<ext>`、`files/<id>.<ext>`。
+`{_format:'mini-phone-character', _version:2, _data, _history, exportedAt, character, alts, lorebooks, memories（向量 {__f32}）, chats, messages,
+scenes, works, chapters, beats, trips, spaceItems, skins, days, meals, health, phones, phoneChats, moments, reviews, readnotes, todos, playlists,
+songs, closet, wishes, ties, smsThreads, diaries, dreams, memsnaps, dramas, drafts, impressions, collection, mallPeople, mallItems, pets, cams,
+camLogs, quizRuns, boxes, slips, slipLog}`。群聊与只在群里生效的记忆不带；印象只带 imp 与 note。

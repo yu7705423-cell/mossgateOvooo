@@ -100,11 +100,14 @@ struct PersonaEditView: View {
     @State private var name = ""
     @State private var signature = ""
     @State private var gender = ""
-    @State private var description = ""
+    @State private var nick = ""
+    @State private var birthday = ""
+    @State private var city = ""
     @State private var avatar = ""
     @State private var avatarItem: PhotosPickerItem?
     @State private var saved = false
     @State private var problem: String?
+    @State private var othersLine = ""
 
     var body: some View {
         Form {
@@ -114,16 +117,18 @@ struct PersonaEditView: View {
                     PhotosPicker(selection: $avatarItem, matching: .images) { Text("更换头像") }.padding(.leading, Theme.pad)
                 }
                 TextField("名字", text: $name)
+                TextField("网名（未填写）", text: $nick)
                 TextField("一句话签名", text: $signature)
                 TextField("性别", text: $gender)
+                TextField("生日（例如：3月14日）", text: $birthday)
+                TextField("所在城市（未填写）", text: $city)
+            } footer: {
+                HelpNote("网名：聊天软件上显示的名字，填写后角色知道你的网名。性别：单独写入提示词，用于确定角色提及你时使用的人称。生日：可填写为 3月14日 或 1999-03-14，写入「对方是谁」；填写了年份时一并写入年龄；生日前三天起，角色知道生日临近。所在城市：写入「对方是谁」。留空则不写入。", title: "我的资料")
             }
             Section {
-                TextField("基本介绍", text: $description, axis: .vertical).lineLimit(4...30)
-            } header: {
-                Text("基本介绍")
-            } footer: {
-                HelpNote("角色在对话中看到的「你是谁」。")
+                NavigationLink { OthersView(personaId: personaId) } label: { IconRow(title: "别人眼中的我", icon: "eye", value: othersLine) }
             }
+            SelfSectionsList(personaId: personaId)
             Section {
                 NavigationLink("我的锁脸") { FaceLockView(owner: .me(personaId)) }
             } footer: {
@@ -150,11 +155,14 @@ struct PersonaEditView: View {
                 }
             }
         }
-        .onChange(of: [name, signature, gender, description]) { _, _ in saved = false }
+        .onChange(of: [name, signature, gender, nick, birthday, city]) { _, _ in saved = false }
         .onAppear {
             guard loaded == nil, let p = (try? Repo.personas())?.first(where: { $0.id == personaId }) else { return }
             loaded = p
-            name = p.name; signature = p.signature; gender = p.row.string("gender"); description = p.description; avatar = p.avatar
+            name = p.name; signature = p.signature; gender = p.row.string("gender"); avatar = p.avatar
+            nick = p.row.string("nick"); birthday = p.row.string("birthday"); city = p.row.string("city")
+            let sum = Impress.summary(personaId)
+            othersLine = sum.total > 0 ? "\(sum.chars) 位角色 · \(sum.total) 条\(sum.fresh > 0 ? " · 新增 \(sum.fresh) 条" : "")" : "暂无印象"
         }
     }
 
@@ -163,7 +171,7 @@ struct PersonaEditView: View {
         do {
             loaded = try People.update(p, [
                 "name": .string(name.trimmingCharacters(in: .whitespaces)), "signature": .string(signature),
-                "gender": .string(gender), "description": .string(description),
+                "gender": .string(gender), "nick": .string(nick), "birthday": .string(birthday), "city": .string(city),
                 "avatar": avatar.isEmpty ? .null : .string(avatar),
             ])
             saved = true

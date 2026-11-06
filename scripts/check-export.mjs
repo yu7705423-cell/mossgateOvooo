@@ -60,4 +60,34 @@ for (const c of cases) {
   if (media !== c.media) fail(c, `图片与文件 ${media}，应为 ${c.media}`);
   if (!failed) console.log(`通过 ${c.file}`);
 }
+// 角色包（Tests/Unit/CharPackTests.swift 写出）：照网页版 charpack.js 的 read 认包，install 用得到的那几项逐一核对
+{
+  const c = { file: 'charpack.zip' };
+  const path = join(dir, c.file);
+  if (!existsSync(path)) fail(c, '测试没有写出这份文件');
+  else {
+    const found = await unzip(new Blob([readFileSync(path)]));
+    const json = found.get('character.json');
+    if (!json) fail(c, '包里没有 character.json');
+    else {
+      const data = JSON.parse(await json.text());
+      if (data._format !== 'mini-phone-character') fail(c, `_format 是 ${data._format}`);
+      if (data._version !== 2) fail(c, `_version 是 ${data._version}`);
+      if (!(Number(data._data) >= 12)) fail(c, `_data 是 ${data._data}`);
+      if (data.character?.id !== 'char_pk') fail(c, '角色不在');
+      if ((data.alts || []).length !== 1 || data.alts[0].parentId !== 'char_pk') fail(c, '小号不对');
+      if ((data.chats || []).length !== 1 || data.chats[0].group === true) fail(c, '会话不对');
+      if ((data.messages || []).length !== 3) fail(c, `消息 ${data.messages?.length}`);
+      const mem = (data.memories || []).map(r => unpackRow('memories', r))[0];
+      if (!mem || !(mem.vec instanceof Float32Array) || mem.vec[1] !== -0.25) fail(c, '记忆向量还原不出来');
+      for (const k of ['impressions', 'ties', 'moments', 'lorebooks']) if ((data[k] || []).length !== 1) fail(c, `${k} ${data[k]?.length}`);
+      const media = [...found.keys()].filter(n => /^(images|files)\/[^./]+/.test(n));
+      if (media.length !== 4) fail(c, `图片与文件 ${media.length}，应为 4`);
+      const png = found.get(media.find(n => n.startsWith('images/img_msg')));
+      const sig = png && new Uint8Array(await png.slice(0, 4).arrayBuffer());
+      if (!sig || sig[0] !== 0x89 || sig[1] !== 0x50) fail(c, 'images/img_msg 内容不对');
+    }
+  }
+  if (!failed) console.log(`通过 ${c.file}`);
+}
 process.exit(failed ? 1 : 0);
