@@ -490,89 +490,123 @@ struct NetPageView: View {
     }
 
     /// 各节点的位置（视图坐标系 W×W）与第一圈各圈子占的那一段弧
-    private func layout() -> (pos: [String: CGPoint], sectors: [(circle: String, s: Double, e: Double, full: Bool)]) {
+    private func layout() -> NetLayout {
         let c = CGPoint(x: W / 2, y: W / 2)
         var pos: [String: CGPoint] = [charId: c]
-        var angles: [String: Double] = [:]
+        var angles: [String: CGFloat] = [:]
         func rank(_ id: String) -> Int { order.firstIndex(of: circleOf[id] ?? "") ?? order.count }
-        let r1 = nodes.filter { $0.depth == 1 }.enumerated().sorted { (rank($0.element.id), $0.offset) < (rank($1.element.id), $1.offset) }.map(\.element)
+        let first = nodes.filter { $0.depth == 1 }
+        let r1 = first.indices.sorted { (rank(first[$0].id), $0) < (rank(first[$1].id), $1) }.map { first[$0] }
         let r2 = nodes.filter { $0.depth == 2 }
         for (d, list, r) in [(1, r1, R1), (2, r2, R2)] {
-            let n = Double(max(1, list.count))
+            let n = CGFloat(max(1, list.count))
             for (i, node) in list.enumerated() {
-                let a = Double(i) / n * .pi * 2 - .pi / 2 + (d == 2 ? .pi / n : 0)
+                let shift: CGFloat = d == 2 ? CGFloat.pi / n : 0
+                let a: CGFloat = CGFloat(i) / n * CGFloat.pi * 2 - CGFloat.pi / 2 + shift
                 angles[node.id] = a
                 pos[node.id] = CGPoint(x: c.x + cos(a) * r, y: c.y + sin(a) * r)
             }
         }
-        let half = Double.pi / Double(max(1, r1.count))
-        let sectors = order.compactMap { circ -> (String, Double, Double, Bool)? in
+        let half = CGFloat.pi / CGFloat(max(1, r1.count))
+        var sectors: [NetLayout.Sector] = []
+        for circ in order {
             let idx = r1.indices.filter { circleOf[r1[$0].id] == circ }
-            guard let f = idx.first, let l = idx.last, let s = angles[r1[f].id], let e = angles[r1[l].id] else { return nil }
-            return (circ, s - half, e + half, idx.count == r1.count)
+            guard let f = idx.first, let l = idx.last, let s = angles[r1[f].id], let e = angles[r1[l].id] else { continue }
+            sectors.append(.init(circle: circ, s: s - half, e: e + half, full: idx.count == r1.count))
         }
-        return (pos, sectors.map { (circle: $0.0, s: $0.1, e: $0.2, full: $0.3) })
+        return NetLayout(pos: pos, sectors: sectors)
     }
 
     private var graph: some View {
         GeometryReader { geo in
-            let k = geo.size.width / W
-            let lay = layout()
-            let pos = lay.pos
-            let sectors = lay.sectors
-            let depth = Dictionary(nodes.map { ($0.id, $0.depth) }, uniquingKeysWith: { a, _ in a })
-            ZStack {
-                ForEach(Array(sectors.enumerated()), id: \.offset) { i, sc in
-                    Path { p in
-                        let c = CGPoint(x: W / 2 * k, y: W / 2 * k)
-                        if sc.full {
-                            p.addEllipse(in: CGRect(x: c.x - (R1 + 24) * k, y: c.y - (R1 + 24) * k, width: (R1 + 24) * 2 * k, height: (R1 + 24) * 2 * k))
-                        } else {
-                            p.move(to: c)
-                            p.addArc(center: c, radius: (R1 + 24) * k, startAngle: .radians(sc.s), endAngle: .radians(sc.e), clockwise: false)
-                            p.closeSubpath()
-                        }
-                    }
-                    .fill(i % 2 == 0 ? Theme.surface2 : Theme.surface3)
-                    let mid = (sc.s + sc.e) / 2
-                    Text(sc.circle).font(.system(size: 10)).foregroundStyle(Theme.text2)
-                        .position(x: (W / 2 + cos(mid) * (R1 + 34)) * k, y: (W / 2 + sin(mid) * (R1 + 34)) * k)
-                }
-                ForEach(edges) { e in
-                    // a 永远是更靠中心的那一端，标签固定落在靠外的一侧
-                    let inner = (depth[e.a] ?? 9) <= (depth[e.b] ?? 9)
-                    if let a = pos[inner ? e.a : e.b], let b = pos[inner ? e.b : e.a] {
-                        Path { p in p.move(to: CGPoint(x: a.x * k, y: a.y * k)); p.addLine(to: CGPoint(x: b.x * k, y: b.y * k)) }
-                            .stroke(Theme.border2, lineWidth: 1)
-                        if !e.label.isEmpty {
-                            Text(e.label).font(.system(size: 9)).foregroundStyle(Theme.text3)
-                                .position(x: (a.x + (b.x - a.x) * 0.45) * k, y: (a.y + (b.y - a.y) * 0.45 - 6) * k)
-                        }
-                    }
-                }
-                ForEach(nodes) { n in
-                    if let p = pos[n.id] {
-                        let r: CGFloat = n.depth == 0 ? 26 : n.depth == 1 ? 20 : 16
-                        Button {
-                            if n.id != charId { path.append(ContactsView.Route.profile(n.id)) }
-                        } label: {
-                            ZStack {
-                                Circle().fill(n.depth == 0 ? Theme.accent : Theme.surface)
-                                Circle().strokeBorder(Theme.border, lineWidth: 1)
-                                Text(String(n.name.prefix(1))).font(.system(size: r * 0.62 * k))
-                                    .foregroundStyle(n.depth == 0 ? Theme.onAccent : Theme.text)
-                            }
-                            .frame(width: r * 2 * k, height: r * 2 * k)
-                        }
-                        .buttonStyle(.plain)
-                        .position(x: p.x * k, y: p.y * k)
-                        Text(n.name).font(.system(size: 10)).foregroundStyle(Theme.text2).lineLimit(1)
-                            .position(x: p.x * k, y: (p.y + r + 10) * k)
-                    }
-                }
+            NetCanvas(charId: charId, nodes: nodes, edges: edges, lay: layout(), k: geo.size.width / W, W: W, R1: R1) { id in
+                path.append(ContactsView.Route.profile(id))
             }
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(name)的关系网，共 \(nodes.count) 个人")
+        }
+    }
+}
+
+struct NetLayout {
+    struct Sector { var circle: String; var s: CGFloat; var e: CGFloat; var full: Bool }
+    var pos: [String: CGPoint]
+    var sectors: [Sector]
+}
+
+/// 关系网那一张图：扇区、连线、圆圈三层，各自一个小视图，免得一个表达式太大
+private struct NetCanvas: View {
+    let charId: String
+    let nodes: [Relations.Node]
+    let edges: [Relations.Edge]
+    let lay: NetLayout
+    let k: CGFloat
+    let W: CGFloat
+    let R1: CGFloat
+    var open: (String) -> Void
+
+    var body: some View {
+        ZStack {
+            ForEach(lay.sectors.indices, id: \.self) { i in sector(i) }
+            ForEach(edges) { e in edge(e) }
+            ForEach(nodes) { n in node(n) }
+        }
+    }
+
+    private func pt(_ p: CGPoint) -> CGPoint { CGPoint(x: p.x * k, y: p.y * k) }
+
+    @ViewBuilder private func sector(_ i: Int) -> some View {
+        let sc = lay.sectors[i]
+        let c = CGPoint(x: W / 2 * k, y: W / 2 * k)
+        let rr: CGFloat = (R1 + 24) * k
+        Path { p in
+            if sc.full {
+                p.addEllipse(in: CGRect(x: c.x - rr, y: c.y - rr, width: rr * 2, height: rr * 2))
+            } else {
+                p.move(to: c)
+                p.addArc(center: c, radius: rr, startAngle: .radians(Double(sc.s)), endAngle: .radians(Double(sc.e)), clockwise: false)
+                p.closeSubpath()
+            }
+        }
+        .fill(i % 2 == 0 ? Theme.surface2 : Theme.surface3)
+        let mid: CGFloat = (sc.s + sc.e) / 2
+        let lr: CGFloat = R1 + 34
+        Text(sc.circle).font(.system(size: 10)).foregroundStyle(Theme.text2)
+            .position(pt(CGPoint(x: W / 2 + cos(mid) * lr, y: W / 2 + sin(mid) * lr)))
+    }
+
+    @ViewBuilder private func edge(_ e: Relations.Edge) -> some View {
+        let da = nodes.first { $0.id == e.a }?.depth ?? 9
+        let db = nodes.first { $0.id == e.b }?.depth ?? 9
+        // a 永远是更靠中心的那一端，标签固定落在靠外的一侧
+        let inner = da <= db
+        if let a = lay.pos[inner ? e.a : e.b], let b = lay.pos[inner ? e.b : e.a] {
+            Path { p in p.move(to: pt(a)); p.addLine(to: pt(b)) }
+                .stroke(Theme.border2, lineWidth: 1)
+            if !e.label.isEmpty {
+                let at = CGPoint(x: a.x + (b.x - a.x) * 0.45, y: a.y + (b.y - a.y) * 0.45 - 6)
+                Text(e.label).font(.system(size: 9)).foregroundStyle(Theme.text3).position(pt(at))
+            }
+        }
+    }
+
+    @ViewBuilder private func node(_ n: Relations.Node) -> some View {
+        if let p = lay.pos[n.id] {
+            let r: CGFloat = n.depth == 0 ? 26 : n.depth == 1 ? 20 : 16
+            let center = n.depth == 0
+            Button { if n.id != charId { open(n.id) } } label: {
+                ZStack {
+                    Circle().fill(center ? Theme.accent : Theme.surface)
+                    Circle().strokeBorder(Theme.border, lineWidth: 1)
+                    Text(String(n.name.prefix(1))).font(.system(size: r * 0.62 * k))
+                        .foregroundStyle(center ? Theme.onAccent : Theme.text)
+                }
+                .frame(width: r * 2 * k, height: r * 2 * k)
+            }
+            .buttonStyle(.plain)
+            .position(pt(p))
+            Text(n.name).font(.system(size: 10)).foregroundStyle(Theme.text2).lineLimit(1)
+                .position(pt(CGPoint(x: p.x, y: p.y + r + 10)))
         }
     }
 }
