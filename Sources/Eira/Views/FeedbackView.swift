@@ -120,8 +120,8 @@ struct WebPromptLabSection: View {
             let webMs = Date().timeIntervalSince(start) * 1000
             let t = web.timing
             func ms(_ v: Double) -> String { String(format: "%.0f", v) }
-            return "原生版 \(ms(nativeMs)) 毫秒；网页版 \(ms(webMs)) 毫秒（读库 \(ms(t.read * 1000))、灌表 \(ms(t.feed * 1000))、"
-                + "换表 \(ms(t.refill * 1000))、拼装 \(ms(t.build * 1000))），共 \(t.rows) 行、\(t.bytes / 1024) KB；"
+            return "原生版 \(ms(nativeMs)) 毫秒；网页版 \(ms(webMs)) 毫秒（\(t.full ? "整表灌入" : "只交变了的行")：读库 \(ms(t.read * 1000))、"
+                + "灌表 \(ms(t.feed * 1000))、拼装 \(ms((t.refill + t.build) * 1000))），共 \(t.rows) 行、\(t.bytes / 1024) KB；"
                 + "脚本加载 \(ms(WebPrompt.shared.loadSeconds * 1000)) 毫秒。两版不一致 \(WebPrompt.compare(native: native, web: web).count) 处，"
                 + "构建失败的区块 \(web.failed.count) 个。网页版提交 \(String(web.commit.prefix(10)))。"
         } catch {

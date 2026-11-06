@@ -4,6 +4,10 @@
 //   node scripts/sync-weblogic.mjs <网页版仓库目录>            两个都打
 //   node scripts/sync-weblogic.mjs <网页版仓库目录> reply      只打回复解析
 //   node scripts/sync-weblogic.mjs <网页版仓库目录> prompt     只打提示词拼装
+//   --no-strip   不去注释与缩进（查问题时看原样的代码）
+//
+// 默认去掉注释与缩进（scripts/jsstrip.mjs，省一半以上的体积与加载时间）。去之前后各做一次语法检查，
+// 再由 check-weblogic 拿同一批样本对照去过的与原样的两份包，结果逐字相同才用去过的那一份，否则用原样的并报警告。
 //
 // 网页版是原生 ES Modules、没有打包器（网页版 CLAUDE.md 第 9 条），JSContext 却只认普通脚本。
 // 这里手写一个最小的 ESM -> 函数作用域转换：每个模块包进一个函数，import / export 改成模块表上的读写。
@@ -24,11 +28,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import os from 'node:os';
+import vm from 'node:vm';
+import { strip } from './jsstrip.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const native = path.resolve(here, '..');
 const web = process.argv[2];
-const only = process.argv[3] || 'all';
+const only = process.argv.slice(3).find(a => !a.startsWith('--')) || 'all';
+const stripOn = !process.argv.includes('--no-strip');
 if (!web || !fs.existsSync(path.join(web, 'src/system/ai/reply.js'))) {
   console.error('用法：node scripts/sync-weblogic.mjs <网页版仓库目录> [reply|prompt]（目录里要有 src/system/ai/reply.js）');
   process.exit(1);
@@ -296,15 +304,46 @@ ${autoStubs.map(m => `//   ${m}`).join('\n')}
   __wl.commit = ${JSON.stringify(commit)};
   __wl.stubbed(${JSON.stringify(autoStubs)});
 `);
+  const raw = [...out];
+  const syntax = (id, body) => {
+    try { new vm.Script(`(function (__exports) {\n'use strict';\n${body}\n})`, { filename: id }); return null; }
+    catch (e) { return e.message; }
+  };
   for (const [id, t] of modules) {
-    out.push(`__wl.define(${JSON.stringify(id)}, function (__exports) {\n'use strict';\n${t.body}\n});\n`);
+    const wrap = body => `__wl.define(${JSON.stringify(id)}, function (__exports) {\n'use strict';\n${body}\n});\n`;
+    raw.push(wrap(t.body));
+    let body = t.body;
+    if (stripOn) {
+      const before = syntax(id, t.body);
+      if (before) fail(`${id}: 转换之后语法不对：${before}`);
+      try { body = strip(t.body); } catch (e) { fail(`${id}: 去注释失败：${e.message}`); }
+      const after = syntax(id, body);
+      if (after) fail(`${id}: 去注释之后语法不对：${after}（jsstrip 认错了这个模块里的某种写法，修 scripts/jsstrip.mjs，或者先用 --no-strip）`);
+    }
+    out.push(wrap(body));
   }
   out.push(`})();\n`);
+  raw.push(`})();\n`);
 
   const dir = path.join(native, 'Resources/weblogic');
   fs.mkdirSync(dir, { recursive: true });
   const file = path.join(dir, target.file);
-  fs.writeFileSync(file, out.join('\n'));
+  const rawText = raw.join('\n');
+  fs.writeFileSync(file, stripOn ? out.join('\n') : rawText);
+  const size = fs.statSync(file).size;
+  if (stripOn) {
+    // 原样的那一份放在临时目录（不进 Resources，不随 app 打包），交给 check-weblogic 对照
+    const rawDir = fs.mkdtempSync(path.join(os.tmpdir(), 'weblogic-raw-'));
+    fs.writeFileSync(path.join(rawDir, target.file), rawText);
+    try {
+      execFileSync(process.execPath, [path.join(here, 'check-weblogic.mjs'), target.name, '--raw', rawDir], { stdio: 'inherit' });
+      console.log(`去注释：${rawText.length} 字符 -> ${out.join('\n').length} 字符（${Buffer.byteLength(rawText)} -> ${size} 字节）`);
+    } catch {
+      console.warn(`::warning::sync-weblogic：${target.name} 去过注释的包没有通过对照，改用原样的那一份`);
+      fs.writeFileSync(file, rawText);
+    }
+    fs.rmSync(rawDir, { recursive: true, force: true });
+  }
   console.log(`已生成 ${path.relative(native, file)}：${modules.size} 个模块，${autoStubs.length} 个存根，${fs.statSync(file).size} 字节，网页版 ${commit.slice(0, 10)}`);
 }
 

@@ -8,9 +8,10 @@ import JavaScriptCore
 /// `node scripts/sync-weblogic.mjs <网页版仓库目录> prompt` 从网页版源码打出来，随 app 一起打包，**从不联网下载**
 /// （App Store 审核 2.5.2），不进本仓库（网页版仓库私密）。没有它时这里一律返回 nil，走原生。
 ///
-/// 存储：网页版的 IndexedDB 那一层换成内存表。每拼一次，先从原生库把各数据域的原文（一行一条的 JSON，本来就是网页版的格式）
-/// 原样交进去，网页版的 db/index.js、collection.js 照它自己的写法读。拼装途中网页版想写的（标头像已看过之类）
-/// **一律不落盘**，记在 `Output.writes` 里。
+/// 存储：网页版的 IndexedDB 那一层换成内存表，**常驻**在 JSContext 里。第一次把各数据域的原文（一行一条的 JSON，本来就是网页版的格式）
+/// 整表交进去，之后只交原生库变更记录里变了的那几行（`WebPromptFeed`）。网页版的 db/index.js、collection.js 照它自己的写法读。
+/// 拼装途中网页版想写的（标头像已看过之类）在 JS 里不落盘，按行算成改了哪几个字段交回来（`Output.changes`）；
+/// 真正发请求的那一条路（`replacing`）照网页版的意思写回原生库（`apply`：合并字段，不认得的字段留着），写不进去摆到屏幕上。
 ///
 /// 开关：`isOn`，存在原生自己的 native_meta 里（不进备份、不写进网页版的设置），默认关。
 /// 只有 `ChatEngine` 的一对一回复会换用它（`replacing`）；通话、主动发消息、群聊、线下照旧走原生。
@@ -45,11 +46,13 @@ final class WebPrompt: @unchecked Sendable {
     // MARK: - 结果
 
     struct Timing: Sendable {
+        /// 这一次是不是整表灌的（第一次、导入或清空之后）；否则只交了变了的行
+        var full = false
         /// 从原生库读出各表的原文（秒）
         var read: Double = 0
         /// 交进 JSContext（JSON.parse 那一步，秒）
         var feed: Double = 0
-        /// 网页版内存镜像换表（秒，JS 里量的）
+        /// 拼装开头等 kv 重新读完（秒，JS 里量的）
         var refill: Double = 0
         /// 拼装本身（秒，JS 里量的）
         var build: Double = 0
@@ -67,8 +70,10 @@ final class WebPrompt: @unchecked Sendable {
         var recalled: [String]
         /// 网页版里构建失败的区块 id（各块单独 try/catch，失败的不进提示词）
         var failed: [String]
-        /// 拼装途中网页版想写、这里没有落盘的：「put chats chat_a」
+        /// 拼装途中网页版想写的，一行一句：「put chats chat_a」
         var writes: [String]
+        /// 同上，逐个字段（`apply` 照它写回原生库）
+        var changes: [Write]
         /// 调到的存根（不在包里的模块）。正常应为空
         var stubHits: [String]
         /// 网页版的 console 输出
@@ -89,6 +94,7 @@ final class WebPrompt: @unchecked Sendable {
     private var lastErrorStorage: String?
     private var errorCount = 0
     private var loadSecondsStorage: Double = 0
+    private let feeder = WebPromptFeed()
 
     /// 最近一次出错的说明。没出过错是 nil
     var lastError: String? { queue.sync { lastErrorStorage } }
@@ -106,8 +112,11 @@ final class WebPrompt: @unchecked Sendable {
             return nil
         }
         guard let out = shared.build(chat: chat, char: char, excludeTurn: excludeTurn) else { return nil }
+        // 网页版拼装途中写的（头像已看过之类），照网页版的意思写回原生库；写不进去摆到屏幕上（网页版第 20 条），这一轮照常发
+        let problems = apply(out.changes)
+        if !problems.isEmpty { Problems.report("提示词拼装途中的写入未能保存：\(problems.joined(separator: "；"))") }
         Diagnostics.shared.record("webprompt-used", [
-            "ms": Int((out.timing.total * 1000).rounded()), "bytes": out.timing.bytes,
+            "ms": Int((out.timing.total * 1000).rounded()), "bytes": out.timing.bytes, "full": out.timing.full,
             "failed": out.failed.joined(separator: ","), "writes": out.writes.count, "stubs": out.stubHits.count,
         ])
         return ChatPrompt.Built(system: out.system, messages: out.messages, recalled: out.recalled, seenImages: [])
@@ -115,25 +124,24 @@ final class WebPrompt: @unchecked Sendable {
 
     // MARK: - 拼装
 
-    /// now：钉住拼装时的「此刻」（对照测试用）；nil 用真实时间
+    /// now：钉住拼装时的「此刻」（对照测试用）；nil 用真实时间。
+    /// 只拼，不写回：拼装途中网页版写的在 `Output.changes` 里，要写回调 `apply`（`replacing` 会调）
     func build(chat: Chat, char: Character, excludeTurn: String? = nil, now: Date? = nil) -> Output? {
-        let start = Date()
-        let feed: Feed
-        do { feed = try Self.read(chat: chat, char: char) } catch {
-            queue.sync { fail("读本地库失败：\(error.localizedDescription)") }
-            return nil
-        }
-        let readSeconds = Date().timeIntervalSince(start)
-        return queue.sync { () -> Output? in
+        queue.sync { () -> Output? in
+            let start = Date()
             guard let api = loadLocked() else { return nil }
-            let t0 = Date()
             let before = errorCount
             let nowArg: Any = now.map { NSNumber(value: $0.timeIntervalSince1970 * 1000) as Any } ?? NSNull()
-            api.invokeMethod("reset", withArguments: [nowArg])
-            for (name, json) in feed.tables { api.invokeMethod("table", withArguments: [name, json]) }
-            for (key, json) in feed.kv { api.invokeMethod("kv", withArguments: [key, json]) }
-            if errorCount != before { return nil }
-            let feedSeconds = Date().timeIntervalSince(t0)
+            api.invokeMethod("begin", withArguments: [nowArg])
+            let stats: WebPromptFeed.Stats
+            do {
+                stats = try feeder.sync(api: api, chat: chat, char: char) { errorCount != before }
+            } catch {
+                feeder.invalidate()
+                fail("灌表失败：\(error.localizedDescription)")
+                return nil
+            }
+            if errorCount != before { feeder.invalidate(); return nil }
 
             var req: [String: Any] = ["chatId": chat.id, "charId": char.id]
             if let excludeTurn { req["excludeTurn"] = excludeTurn }
@@ -145,12 +153,16 @@ final class WebPrompt: @unchecked Sendable {
                 context?.evaluateScript("void 0")
                 text = Self.string(api.invokeMethod("output", withArguments: []))
             }
-            if errorCount != before { return nil }
-            guard let text else { fail("拼装没有结束（多半在等一个定时器或网络）"); return nil }
+            // 拼装途中抛过、没拼完：表里可能留着改到一半的行，下一次整表重灌
+            if errorCount != before { feeder.invalidate(); return nil }
+            guard let text else { feeder.invalidate(); fail("拼装没有结束（多半在等一个定时器或网络）"); return nil }
             guard let obj = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any] else {
-                fail("拼装返回的不是 JSON"); return nil
+                feeder.invalidate(); fail("拼装返回的不是 JSON"); return nil
             }
+            let changes = (obj["changes"] as? [[String: Any]] ?? []).map(Write.init(json:))
+            feeder.wrote(changes)
             guard obj["ok"] as? Bool == true else {
+                feeder.invalidate()
                 fail("拼装出错：\(obj["error"] as? String ?? "未知")"); return nil
             }
             var messages: [AIMessage] = []
@@ -161,17 +173,25 @@ final class WebPrompt: @unchecked Sendable {
                 messages.append(AIMessage(role: role, content: m["content"] as? String ?? ""))
             }
             let ms = obj["ms"] as? [String: Any] ?? [:]
-            let timing = Timing(read: readSeconds, feed: feedSeconds,
+            let timing = Timing(full: stats.full, read: stats.read, feed: stats.feed,
                                 refill: ((ms["refill"] as? NSNumber)?.doubleValue ?? 0) / 1000,
                                 build: ((ms["build"] as? NSNumber)?.doubleValue ?? 0) / 1000,
-                                total: Date().timeIntervalSince(start), bytes: feed.bytes, rows: feed.rows)
-            let writes = (obj["writes"] as? [[String: Any]] ?? []).map {
-                "\($0["op"] as? String ?? "") \($0["store"] as? String ?? "") \($0["id"] as? String ?? "")"
-            }
+                                total: Date().timeIntervalSince(start), bytes: stats.bytes, rows: stats.rows)
             return Output(system: obj["system"] as? String ?? "", messages: messages,
                           recalled: obj["recalled"] as? [String] ?? [], failed: obj["failed"] as? [String] ?? [],
-                          writes: writes, stubHits: obj["stubHits"] as? [String] ?? [], logs: obj["logs"] as? [String] ?? [],
+                          writes: obj["writes"] as? [String] ?? [], changes: changes,
+                          stubHits: obj["stubHits"] as? [String] ?? [], logs: obj["logs"] as? [String] ?? [],
                           touched: obj["touched"] as? [String] ?? [], timing: timing, commit: obj["commit"] as? String ?? "")
+        }
+    }
+
+    /// 下一次整表重灌（测试与诊断用：量整表灌的耗时、核对增量与整表的结果相同）
+    func invalidate() { queue.sync { feeder.invalidate() } }
+
+    /// 让 JavaScriptCore 回收一次（量内存之前）
+    func collectGarbage() {
+        queue.sync {
+            if let ref = context?.jsGlobalContextRef { JSGarbageCollect(ref) }
         }
     }
 
@@ -181,56 +201,6 @@ final class WebPrompt: @unchecked Sendable {
             guard loadLocked() != nil else { return nil }
             return context?.evaluateScript("__wl.commit")?.toString()
         }
-    }
-
-    // MARK: - 从原生库读
-
-    struct Feed {
-        /// 数据域 -> JSON 数组原文
-        var tables: [(String, String)] = []
-        /// kv 键 -> JSON 原文
-        var kv: [(String, String)] = []
-        var bytes = 0
-        var rows = 0
-    }
-
-    /// 各数据域的全部行原样交进去（消息除外，见 chatRows）；kv 交 settings、persona、layout
-    static func read(chat: Chat, char: Character) throws -> Feed {
-        let db = Database.shared
-        var feed = Feed()
-        func add(_ name: String, _ rows: [Data]) {
-            var d = Data("[".utf8)
-            for (i, r) in rows.enumerated() {
-                if i > 0 { d.append(0x2C) }
-                d.append(r)
-            }
-            d.append(0x5D)
-            feed.bytes += d.count
-            feed.rows += rows.count
-            feed.tables.append((name, String(decoding: d, as: UTF8.self)))
-        }
-        var chatList: [Data] = []
-        for name in try db.collections() where name != Collections.messages {
-            let rows = try db.rawRows(name)
-            if name == Collections.chats { chatList = rows }
-            add(name, rows)
-        }
-        // 消息：这段会话最近 chatRows 条，同一个角色的别的会话各最近 otherChatRows 条
-        var msgs = try db.rawLast(Collections.messages, where: chat.id, limit: Self.chatRows)
-        for raw in chatList {
-            guard let o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any],
-                  let id = o["id"] as? String, id != chat.id,
-                  (o["characterIds"] as? [String] ?? []).contains(char.id) else { continue }
-            msgs += try db.rawLast(Collections.messages, where: id, limit: Self.otherChatRows)
-        }
-        add(Collections.messages, msgs)
-        for key in [KVKey.settings, KVKey.persona, KVKey.layout] {
-            guard let v = try db.kv(key) else { continue }
-            let data = try v.encoded()
-            feed.bytes += data.count
-            feed.kv.append((key, String(decoding: data, as: UTF8.self)))
-        }
-        return feed
     }
 
     // MARK: - 加载
@@ -274,6 +244,15 @@ final class WebPrompt: @unchecked Sendable {
         }
         guard let api = ctx.objectForKeyedSubscript("weblogic")?.objectForKeyedSubscript("prompt"), !api.isUndefined else {
             fail("脚本里没有 weblogic.prompt")
+            return nil
+        }
+        // 网页版 db/index.js 的 ready（表都是空的）。返回 Promise，这一下调用返回之前跑完；万一没跑完，再进出一次
+        let before = errorCount
+        api.invokeMethod("boot", withArguments: [])
+        if api.invokeMethod("isReady", withArguments: [])?.toBool() != true { ctx.evaluateScript("void 0") }
+        if errorCount != before { return nil }
+        guard api.invokeMethod("isReady", withArguments: [])?.toBool() == true else {
+            fail("网页版的库没有准备好（boot 没有结束）")
             return nil
         }
         context = ctx

@@ -46,6 +46,8 @@ final class Database: @unchecked Sendable {
     private var msgtextReady = false
     /// 后台补索引每一批多少条。一批在 queue 上做完，期间别的读写排队，所以不要太大
     private static let fillChunk = 2000
+    /// 每一次写记一笔（网页版提示词试点的常驻表据此只交变了的行，见 ChangeLog）
+    let changes = ChangeLog()
 
     init(url: URL) throws {
         try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -171,6 +173,25 @@ final class Database: @unchecked Sendable {
                 ) ORDER BY created, id
                 """, [collection, value, limit ?? -1]) { Self.blob($0, 0) }
         }
+    }
+
+    /// 按 id 取几行的原文，不解析（id -> 原文；库里没有的不在结果里）。网页版提示词试点只交变了的行时用（WebPromptFeed）
+    func rawRows(_ collection: String, ids: [String]) throws -> [String: Data] {
+        var out: [String: Data] = [:]
+        var at = 0
+        while at < ids.count {
+            let part = Array(ids[at..<min(at + 400, ids.count)])
+            at += part.count
+            let marks = Array(repeating: "?", count: part.count).joined(separator: ",")
+            var args: [Any?] = [collection]
+            args += part.map { $0 as Any? }
+            try queue.sync {
+                _ = try query("SELECT id, json FROM records WHERE collection = ? AND id IN (\(marks))", args) { stmt in
+                    out[Self.text(stmt, 0)] = Self.blob(stmt, 1)
+                }
+            }
+        }
+        return out
     }
 
     func count(_ collection: String) throws -> Int {
@@ -353,6 +374,7 @@ final class Database: @unchecked Sendable {
     func delete(_ collection: String, id: String) throws {
         try queue.sync {
             try run("DELETE FROM records WHERE collection = ? AND id = ?", [collection, id])
+            changes.note(.row(collection, id))
             // 索引里留下的行搜索时 JOIN 不回记录，不会冒出来；删不掉只记着下次开机重建
             if collection == Collections.messages {
                 do { try run("DELETE FROM msgtext WHERE id = ?", [id]) } catch { searchIndexBroke() }
@@ -364,6 +386,7 @@ final class Database: @unchecked Sendable {
     func deleteAll(_ collection: String, where value: String) throws {
         try queue.sync {
             try run("DELETE FROM records WHERE collection = ? AND idx = ?", [collection, value])
+            changes.note(.group(collection, value))
             if collection == Collections.messages {
                 do { try run("DELETE FROM msgtext WHERE chat = ?", [value]) } catch { searchIndexBroke() }
             }
@@ -450,6 +473,7 @@ final class Database: @unchecked Sendable {
     /// 设置（接口配置与密钥）留着。图片与文件本身由调用方在这之后删掉。
     func wipe() throws {
         try queue.sync {
+            defer { changes.reset() }
             try exec("BEGIN IMMEDIATE")
             do {
                 try exec("DELETE FROM records")
@@ -485,7 +509,7 @@ final class Database: @unchecked Sendable {
     func setKV(_ key: String, _ value: JSONValue) throws {
         let data = try value.encoded()
         try queue.sync {
-            do { try run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", [key, data]); kvCache[key] = .some(value) }
+            do { try run("INSERT OR REPLACE INTO kv (k, v) VALUES (?, ?)", [key, data]); kvCache[key] = .some(value); changes.note(.kv(key)) }
             catch { kvCache[key] = nil; throw error }
         }
     }
@@ -519,6 +543,7 @@ final class Database: @unchecked Sendable {
     /// 中途任何一步失败都整体回滚，库保持导入之前的样子。
     func replaceAll(_ body: (Batch) throws -> Void) throws {
         try queue.sync {
+            defer { changes.reset() }
             let wasReady = msgtextReady
             try exec("BEGIN IMMEDIATE")
             do {
@@ -569,6 +594,7 @@ final class Database: @unchecked Sendable {
         let idx = Collections.indexValue(collection, row.fields)
         try run("INSERT OR REPLACE INTO records (collection, id, idx, created, json) VALUES (?, ?, ?, ?, ?)",
                 [collection, row.id, idx, row.created, json])
+        changes.note(.row(collection, row.id))
         if collection == Collections.messages {
             indexMessageLocked(id: row.id, chat: idx, created: row.created, Self.searchParts(row.fields))
         }

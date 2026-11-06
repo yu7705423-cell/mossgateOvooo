@@ -1,0 +1,209 @@
+{
+ "_format": "mini-phone-backup",
+ "_version": 2,
+ "_data": 13,
+ "_media": false,
+ "_keys": false,
+ "exportedAt": "2025-10-09T09:13:20.000Z",
+ "persona": {
+  "name": "我",
+  "avatar": null
+ },
+ "settings": {
+  "activePersonaId": "me_v",
+  "msgMin": 1,
+  "msgMax": 2,
+  "apiKey": "",
+  "webOnlySetting": {
+   "keep": [
+    1,
+    2
+   ]
+  }
+ },
+ "layout": {
+  "pages": []
+ },
+ "characters": [
+  {
+   "id": "char_v",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "周",
+   "signature": "签名",
+   "persona": "AVATAR_PERSONA",
+   "core": "AVATAR_CORE",
+   "gender": "男",
+   "lorebookIds": [
+    "lb_v"
+   ],
+   "futureField": {
+    "nested": true
+   }
+  }
+ ],
+ "personas": [
+  {
+   "id": "me_v",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "阿青",
+   "parentId": null,
+   "description": "AVATAR_USER",
+   "gender": "女",
+   "avatar": "img_new",
+   "avatarNote": "几乎全黑"
+  }
+ ],
+ "chats": [
+  {
+   "id": "chat_v",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "characterIds": [
+    "char_v"
+   ],
+   "personaId": "me_v",
+   "lastMessageAt": 1760000360000,
+   "seenAvatar": "img_old",
+   "unknownChatField": "keep-me"
+  }
+ ],
+ "messages": [
+  {
+   "id": "msg_v1",
+   "createdAt": 1760000060000,
+   "updatedAt": 1760000060000,
+   "chatId": "chat_v",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "换了个头像",
+   "status": "done"
+  },
+  {
+   "id": "msg_v2",
+   "createdAt": 1760000120000,
+   "updatedAt": 1760000120000,
+   "chatId": "chat_v",
+   "role": "char",
+   "authorId": "char_v",
+   "kind": "text",
+   "content": "看到了",
+   "status": "done",
+   "turnId": "turn_v1"
+  },
+  {
+   "id": "msg_v3",
+   "createdAt": 1760000180000,
+   "updatedAt": 1760000180000,
+   "chatId": "chat_v",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "好看吗，晚上去跑步",
+   "status": "done"
+  },
+  {
+   "id": "msg_v4",
+   "createdAt": 1760000240000,
+   "updatedAt": 1760000240000,
+   "chatId": "chat_v",
+   "role": "char",
+   "authorId": "char_v",
+   "kind": "text",
+   "content": "[语音：好看（译文：looks good）]",
+   "status": "done",
+   "turnId": "turn_v2"
+  },
+  {
+   "id": "msg_v5",
+   "createdAt": 1760000300000,
+   "updatedAt": 1760000300000,
+   "chatId": "chat_v",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "明天下雨的话就不去了",
+   "status": "done"
+  },
+  {
+   "id": "msg_v6",
+   "createdAt": 1760000360000,
+   "updatedAt": 1760000360000,
+   "chatId": "chat_v",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "你呢",
+   "status": "done"
+  }
+ ],
+ "memories": [
+  {
+   "id": "mem_v1",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "charId": "char_v",
+   "personaId": "me_v",
+   "content": "AVATAR_PINNED",
+   "pinned": true
+  },
+  {
+   "id": "mem_v2",
+   "createdAt": 1759740800000,
+   "updatedAt": 1759740800000,
+   "charId": "char_v",
+   "personaId": "me_v",
+   "content": "用户每周跑步三次",
+   "keywords": [
+    "跑步"
+   ],
+   "rank": "S",
+   "category": "fact"
+  },
+  {
+   "id": "mem_v3",
+   "createdAt": 1759222400000,
+   "updatedAt": 1759222400000,
+   "charId": "char_v",
+   "personaId": "me_v",
+   "content": "用户不喜欢下雨天",
+   "keywords": [
+    "下雨"
+   ],
+   "rank": "C",
+   "category": "fact"
+  }
+ ],
+ "lorebooks": [
+  {
+   "id": "lb_v",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "城",
+   "entries": [
+    {
+     "id": "v1",
+     "keys": [
+      "跑步",
+      "操场"
+     ],
+     "content": "AVATAR_LORE_RUN",
+     "enabled": true,
+     "part": "before",
+     "depth": 0
+    },
+    {
+     "id": "v2",
+     "keys": [],
+     "constant": true,
+     "content": "AVATAR_LORE_ALWAYS",
+     "enabled": true,
+     "part": "after",
+     "depth": 0
+    }
+   ]
+  }
+ ]
+}
