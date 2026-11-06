@@ -15,7 +15,7 @@ enum When {
         var hit: String
     }
 
-    private static let digit: [Character: Int] = ["零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
+    private static let digit: [Swift.Character: Int] = ["零": 0, "〇": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6,
                                                  "七": 7, "八": 8, "九": 9, "十": 10]
 
     /// 「十九」「二十三」「七」都认。认不出来返回 nil
