@@ -55,7 +55,7 @@ reply.js 3231 行、182 KB，直接 import 77 个模块（含 4 处动态 import
 - 动态 import 只放行 `DYNAMIC_OK` 里的三个（来电、一起听、一起看，都在 `materialize` 里，不在解析路径上），换成被拒的 Promise；
   其余写法（`import.meta`、解构导出、`export * as`、非字面量路径的 `import()`）一律报错退出，不猜着转。
 - 存根被当成常量用，会把函数塞进结果：`parseReply` 序列化时遇到函数直接报错。
-- 已知限制：具名 import 是加载时取一次值，不是活绑定。网页版 `src/system` 里没有一处 `export let`，不受影响。
+- 具名 import 写成 `let x = __wl.live(mod, "x", v => { x = v; })`：循环依赖里对方还没执行完时先是 undefined，对方执行完补上（提示词拼装那一包里循环依赖很多，见 docs/jscore-prompt.md）。仍不是完全的活绑定：`export let` 之后再赋值的看不到；网页版 `src/system` 里没有一处 `export let`。
 
 ## 结果（Node 的 vm，JSContext 的同等条件）
 

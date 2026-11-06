@@ -1,0 +1,678 @@
+{
+ "_format": "mini-phone-backup",
+ "_version": 2,
+ "_data": 12,
+ "_media": false,
+ "_keys": false,
+ "exportedAt": "2025-10-09T08:53:20.000Z",
+ "persona": {
+  "name": "我",
+  "avatar": null
+ },
+ "settings": {
+  "activePersonaId": "me_root",
+  "msgMin": 3,
+  "msgMax": 6,
+  "memoryTopK": 4,
+  "apiKey": ""
+ },
+ "layout": {
+  "pages": []
+ },
+ "characters": [
+  {
+   "id": "char_r",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "林",
+   "signature": "一句签名",
+   "persona": "RICH_PERSONA",
+   "scenario": "RICH_SCENARIO",
+   "core": "RICH_CORE",
+   "gender": "女",
+   "lorebookIds": [
+    "lb_r"
+   ]
+  },
+  {
+   "id": "char_s",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "沈",
+   "persona": "OTHER_PERSONA",
+   "gender": "男"
+  }
+ ],
+ "personas": [
+  {
+   "id": "me_root",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "小于",
+   "parentId": null,
+   "description": "RICH_USER",
+   "gender": "男"
+  }
+ ],
+ "chats": [
+  {
+   "id": "chat_r",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "characterIds": [
+    "char_r"
+   ],
+   "personaId": "me_root",
+   "lastMessageAt": 1760002340000,
+   "summary": "RICH_SUMMARY"
+  },
+  {
+   "id": "chat_g",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "characterIds": [
+    "char_r",
+    "char_s"
+   ],
+   "personaId": "me_root",
+   "group": true,
+   "title": "三人行",
+   "lastMessageAt": 1760000060000
+  }
+ ],
+ "messages": [
+  {
+   "id": "msg_r1",
+   "createdAt": 1760000060000,
+   "updatedAt": 1760000060000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "今天下班好晚",
+   "status": "done"
+  },
+  {
+   "id": "msg_r2",
+   "createdAt": 1760000120000,
+   "updatedAt": 1760000120000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "辛苦了",
+   "status": "done",
+   "turnId": "turn_r0"
+  },
+  {
+   "id": "msg_r3",
+   "createdAt": 1760000180000,
+   "updatedAt": 1760000180000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "吃饭了吗",
+   "status": "done",
+   "turnId": "turn_r0"
+  },
+  {
+   "id": "msg_r4",
+   "createdAt": 1760000240000,
+   "updatedAt": 1760000240000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "还没有，想吃拉面",
+   "status": "done"
+  },
+  {
+   "id": "msg_r5",
+   "createdAt": 1760000300000,
+   "updatedAt": 1760000300000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "楼下那家拉面汤头很浓",
+   "status": "done",
+   "turnId": "turn_r1"
+  },
+  {
+   "id": "msg_r6",
+   "createdAt": 1760000360000,
+   "updatedAt": 1760000360000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "周末一起去看电影吗",
+   "status": "done"
+  },
+  {
+   "id": "msg_r7",
+   "createdAt": 1760000420000,
+   "updatedAt": 1760000420000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "好啊",
+   "status": "done",
+   "turnId": "turn_r1"
+  },
+  {
+   "id": "msg_r8",
+   "createdAt": 1760000480000,
+   "updatedAt": 1760000480000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "看什么",
+   "status": "done",
+   "turnId": "turn_r2"
+  },
+  {
+   "id": "msg_r9",
+   "createdAt": 1760000540000,
+   "updatedAt": 1760000540000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "今天下班好晚",
+   "status": "done"
+  },
+  {
+   "id": "msg_r10",
+   "createdAt": 1760000600000,
+   "updatedAt": 1760000600000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "辛苦了",
+   "status": "done",
+   "turnId": "turn_r2"
+  },
+  {
+   "id": "msg_r11",
+   "createdAt": 1760000660000,
+   "updatedAt": 1760000660000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "吃饭了吗",
+   "status": "done",
+   "turnId": "turn_r2"
+  },
+  {
+   "id": "msg_r12",
+   "createdAt": 1760000720000,
+   "updatedAt": 1760000720000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "还没有，想吃拉面",
+   "status": "done"
+  },
+  {
+   "id": "msg_r13",
+   "createdAt": 1760000780000,
+   "updatedAt": 1760000780000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "楼下那家拉面汤头很浓",
+   "status": "done",
+   "turnId": "turn_r3"
+  },
+  {
+   "id": "msg_r14",
+   "createdAt": 1760000840000,
+   "updatedAt": 1760000840000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "周末一起去看电影吗",
+   "status": "done"
+  },
+  {
+   "id": "msg_r15",
+   "createdAt": 1760000900000,
+   "updatedAt": 1760000900000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "好啊",
+   "status": "done",
+   "turnId": "turn_r3"
+  },
+  {
+   "id": "msg_r16",
+   "createdAt": 1760000960000,
+   "updatedAt": 1760000960000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "看什么",
+   "status": "done",
+   "turnId": "turn_r4"
+  },
+  {
+   "id": "msg_r17",
+   "createdAt": 1760001020000,
+   "updatedAt": 1760001020000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "今天下班好晚",
+   "status": "done"
+  },
+  {
+   "id": "msg_r18",
+   "createdAt": 1760001080000,
+   "updatedAt": 1760001080000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "辛苦了",
+   "status": "done",
+   "turnId": "turn_r4"
+  },
+  {
+   "id": "msg_r19",
+   "createdAt": 1760001140000,
+   "updatedAt": 1760001140000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "吃饭了吗",
+   "status": "done",
+   "turnId": "turn_r4"
+  },
+  {
+   "id": "msg_r20",
+   "createdAt": 1760001200000,
+   "updatedAt": 1760001200000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "还没有，想吃拉面",
+   "status": "done"
+  },
+  {
+   "id": "msg_r21",
+   "createdAt": 1760001260000,
+   "updatedAt": 1760001260000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "楼下那家拉面汤头很浓",
+   "status": "done",
+   "turnId": "turn_r5"
+  },
+  {
+   "id": "msg_r22",
+   "createdAt": 1760001320000,
+   "updatedAt": 1760001320000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "周末一起去看电影吗",
+   "status": "done"
+  },
+  {
+   "id": "msg_r23",
+   "createdAt": 1760001380000,
+   "updatedAt": 1760001380000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "好啊",
+   "status": "done",
+   "turnId": "turn_r5"
+  },
+  {
+   "id": "msg_r24",
+   "createdAt": 1760001440000,
+   "updatedAt": 1760001440000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "看什么",
+   "status": "done",
+   "turnId": "turn_r6"
+  },
+  {
+   "id": "msg_r25",
+   "createdAt": 1760001500000,
+   "updatedAt": 1760001500000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "今天下班好晚",
+   "status": "done"
+  },
+  {
+   "id": "msg_r26",
+   "createdAt": 1760001560000,
+   "updatedAt": 1760001560000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "辛苦了",
+   "status": "done",
+   "turnId": "turn_r6"
+  },
+  {
+   "id": "msg_r27",
+   "createdAt": 1760001620000,
+   "updatedAt": 1760001620000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "吃饭了吗",
+   "status": "done",
+   "turnId": "turn_r6"
+  },
+  {
+   "id": "msg_r28",
+   "createdAt": 1760001680000,
+   "updatedAt": 1760001680000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "还没有，想吃拉面",
+   "status": "done"
+  },
+  {
+   "id": "msg_r29",
+   "createdAt": 1760001740000,
+   "updatedAt": 1760001740000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "楼下那家拉面汤头很浓",
+   "status": "done",
+   "turnId": "turn_r7"
+  },
+  {
+   "id": "msg_r30",
+   "createdAt": 1760001800000,
+   "updatedAt": 1760001800000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "周末一起去看电影吗",
+   "status": "done"
+  },
+  {
+   "id": "msg_r31",
+   "createdAt": 1760001860000,
+   "updatedAt": 1760001860000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "好啊",
+   "status": "done",
+   "turnId": "turn_r7"
+  },
+  {
+   "id": "msg_r32",
+   "createdAt": 1760001920000,
+   "updatedAt": 1760001920000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "看什么",
+   "status": "done",
+   "turnId": "turn_r8"
+  },
+  {
+   "id": "msg_r33",
+   "createdAt": 1760001980000,
+   "updatedAt": 1760001980000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "你说的那家店叫什么",
+   "status": "done",
+   "quoteId": "msg_r5"
+  },
+  {
+   "id": "msg_r34",
+   "createdAt": 1760002040000,
+   "updatedAt": 1760002040000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "transfer",
+   "content": "[转账：52 奶茶]",
+   "status": "done",
+   "turnId": "turn_r8",
+   "amount": 52,
+   "note": "奶茶",
+   "transfer": {
+    "state": "pending"
+   }
+  },
+  {
+   "id": "msg_r35",
+   "createdAt": 1760002100000,
+   "updatedAt": 1760002100000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "sticker",
+   "content": "[表情：开心]",
+   "status": "done",
+   "stickerId": "stk_1"
+  },
+  {
+   "id": "msg_r36",
+   "createdAt": 1760002160000,
+   "updatedAt": 1760002160000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "See you tomorrow",
+   "status": "done",
+   "turnId": "turn_r9",
+   "translation": "明天见"
+  },
+  {
+   "id": "msg_r37",
+   "createdAt": 1760002220000,
+   "updatedAt": 1760002220000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "voice",
+   "content": "[语音：我到家了]",
+   "status": "done"
+  },
+  {
+   "id": "msg_r38",
+   "createdAt": 1760002280000,
+   "updatedAt": 1760002280000,
+   "chatId": "chat_r",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "说错了",
+   "status": "done",
+   "turnId": "turn_r9",
+   "recalled": {
+    "at": 1760000000000,
+    "by": "char"
+   }
+  },
+  {
+   "id": "msg_r39",
+   "createdAt": 1760002340000,
+   "updatedAt": 1760002340000,
+   "chatId": "chat_r",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "那就这么定了，猫也带上",
+   "status": "done"
+  },
+  {
+   "id": "msg_g0",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "chatId": "chat_g",
+   "role": "user",
+   "authorId": "me",
+   "kind": "text",
+   "content": "大家好",
+   "status": "done"
+  },
+  {
+   "id": "msg_g1",
+   "createdAt": 1760000030000,
+   "updatedAt": 1760000030000,
+   "chatId": "chat_g",
+   "role": "char",
+   "authorId": "char_r",
+   "kind": "text",
+   "content": "你好",
+   "status": "done"
+  },
+  {
+   "id": "msg_g2",
+   "createdAt": 1760000060000,
+   "updatedAt": 1760000060000,
+   "chatId": "chat_g",
+   "role": "char",
+   "authorId": "char_s",
+   "kind": "text",
+   "content": "欢迎",
+   "status": "done"
+  }
+ ],
+ "memories": [
+  {
+   "id": "mem_p",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "charId": "char_r",
+   "personaId": "me_root",
+   "content": "RICH_PINNED",
+   "pinned": true
+  },
+  {
+   "id": "mem_cat",
+   "createdAt": 1757408000000,
+   "updatedAt": 1757408000000,
+   "charId": "char_r",
+   "personaId": "me_root",
+   "content": "用户养了一只猫",
+   "keywords": [
+    "猫"
+   ],
+   "rank": "A",
+   "category": "fact"
+  },
+  {
+   "id": "mem_ramen",
+   "createdAt": 1758272000000,
+   "updatedAt": 1758272000000,
+   "charId": "char_r",
+   "personaId": "me_root",
+   "content": "用户喜欢吃拉面",
+   "keywords": [
+    "拉面"
+   ],
+   "rank": "B",
+   "category": "fact"
+  },
+  {
+   "id": "mem_movie",
+   "createdAt": 1759827200000,
+   "updatedAt": 1759827200000,
+   "charId": "char_r",
+   "personaId": "me_root",
+   "content": "约好周末去看电影",
+   "keywords": [
+    "电影"
+   ],
+   "rank": "A",
+   "kind": "open"
+  }
+ ],
+ "lorebooks": [
+  {
+   "id": "lb_r",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "设定",
+   "entries": [
+    {
+     "id": "r1",
+     "keys": [
+      "拉面"
+     ],
+     "content": "RICH_LORE_RAMEN",
+     "enabled": true,
+     "part": "before",
+     "depth": 0
+    },
+    {
+     "id": "r2",
+     "keys": [],
+     "constant": true,
+     "content": "RICH_LORE_ALWAYS",
+     "enabled": true,
+     "part": "after",
+     "depth": 0
+    },
+    {
+     "id": "r3",
+     "keys": [
+      "火星"
+     ],
+     "content": "RICH_LORE_MISS",
+     "enabled": true
+    }
+   ]
+  }
+ ],
+ "stickers": [
+  {
+   "id": "stk_1",
+   "createdAt": 1760000000000,
+   "updatedAt": 1760000000000,
+   "name": "开心",
+   "group": ""
+  }
+ ]
+}

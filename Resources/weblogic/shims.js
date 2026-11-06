@@ -20,6 +20,8 @@
   const cache = new Map();
   let stubbedIds = new Set();
   const hits = [];
+  // 循环依赖时还没执行完的模块：exports 对象 -> 等它执行完要补的 [名字, 赋值函数]
+  const pendingLive = new Map();
 
   const unavailable = (id, name) => {
     const e = new Error(`weblogic: ${id} 的 ${String(name)} 不在包里（存根）`);
@@ -52,7 +54,19 @@
         }
       }
     },
+    /** 具名 import 的值（见 sync-weblogic.mjs 的 bindings）。对方还在暂时性死区时先给 undefined，执行完再补 */
+    live(mod, name, set) {
+      try { return mod[name]; } catch (e) {
+        if (!(e instanceof ReferenceError) || !pendingLive.has(mod)) throw e;
+        pendingLive.get(mod).push([name, set]);
+        return undefined;
+      }
+    },
     dynamicImport(id) { return Promise.reject(unavailable(id, 'import()')); },
+    // 以下三项给 prompt-host.js 用（提示词拼装那一个 JSContext，docs/jscore-prompt.md）
+    stubModule,
+    has(id) { return factories.has(id); },
+    meta(id) { return { url: `weblogic:///${id}` }; },
     require(id) {
       if (cache.has(id)) return cache.get(id);
       const shim = globalThis.__wlShims[id];
@@ -62,7 +76,11 @@
       if (!fn) throw new Error(`weblogic: 模块表里没有 ${id}`);
       const exp = {};
       cache.set(id, exp);
-      fn(exp);
+      pendingLive.set(exp, []);
+      try { fn(exp); } catch (e) { pendingLive.delete(exp); throw e; }
+      const fix = pendingLive.get(exp);
+      pendingLive.delete(exp);
+      for (const [name, set] of fix) set(exp[name]);
       return exp;
     },
   };

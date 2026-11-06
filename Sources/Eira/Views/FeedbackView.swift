@@ -35,6 +35,8 @@ struct FeedbackView: View {
                     .textSelection(.enabled)
             }
 
+            WebPromptLabSection()
+
             Section {
                 Button("清空诊断记录", role: .destructive) { confirmClear = true }.foregroundStyle(Theme.dangerText)
             } footer: {
@@ -62,6 +64,68 @@ struct FeedbackView: View {
         } catch {
             file = nil
             problem = "无法生成诊断文件：\(error.localizedDescription)。可改用「复制诊断信息」。"
+        }
+    }
+}
+
+/// 「问题反馈」里的「试验」一组（docs/jscore-prompt.md）：一对一聊天的提示词改由网页版的代码拼装。默认关。
+/// 这一版 app 里没有网页版的拼装脚本（编译时没取到网页版代码）时整组不出现
+struct WebPromptLabSection: View {
+    @State private var on = WebPrompt.isOn
+    @State private var result: String?
+    @State private var problem: String?
+    @State private var running = false
+
+    var body: some View {
+        if WebPrompt.available {
+            Section {
+                Toggle("提示词按网页版拼装", isOn: Binding(get: { on }, set: { v in
+                    do { try WebPrompt.setOn(v); on = v; problem = nil }
+                    catch { problem = "无法保存开关：\(error.localizedDescription)" }
+                }))
+                Button(running ? "正在测量" : "测量一次拼装耗时") { measure() }.disabled(running)
+                if let result {
+                    Text(result).font(.caption).foregroundStyle(Theme.secondaryText).textSelection(.enabled)
+                }
+                if let problem { Text(problem).foregroundStyle(Theme.danger) }
+            } header: {
+                Text("试验")
+            } footer: {
+                HelpNote("开启后，一对一聊天的回复改由网页版的代码拼装提示词；拼装失败、或本轮要把图片原图交给聊天模型时，仍由原生版拼装。通话、主动消息、群聊与线下不受影响。测量时用最近一段一对一会话各拼装一次，不调用接口。")
+            }
+        }
+    }
+
+    private func measure() {
+        running = true
+        result = nil
+        Task.detached {
+            let text = Self.measureText()
+            await MainActor.run { result = text; running = false }
+        }
+    }
+
+    nonisolated private static func measureText() -> String {
+        do {
+            guard let chat = try Repo.chats().filter({ !$0.isGroup }).max(by: { $0.lastMessageAt < $1.lastMessageAt }),
+                  let char = try Repo.character(chat.characterIds.first ?? "") else { return "没有可用于测量的一对一会话。" }
+            let s = AppSettings.load()
+            var start = Date()
+            let native = try ChatPrompt.build(chat: chat, char: char, settings: s)
+            let nativeMs = Date().timeIntervalSince(start) * 1000
+            start = Date()
+            guard let web = WebPrompt.shared.build(chat: chat, char: char) else {
+                return "网页版拼装失败：\(WebPrompt.shared.lastError ?? "原因未知")"
+            }
+            let webMs = Date().timeIntervalSince(start) * 1000
+            let t = web.timing
+            func ms(_ v: Double) -> String { String(format: "%.0f", v) }
+            return "原生版 \(ms(nativeMs)) 毫秒；网页版 \(ms(webMs)) 毫秒（读库 \(ms(t.read * 1000))、灌表 \(ms(t.feed * 1000))、"
+                + "换表 \(ms(t.refill * 1000))、拼装 \(ms(t.build * 1000))），共 \(t.rows) 行、\(t.bytes / 1024) KB；"
+                + "脚本加载 \(ms(WebPrompt.shared.loadSeconds * 1000)) 毫秒。两版不一致 \(WebPrompt.compare(native: native, web: web).count) 处，"
+                + "构建失败的区块 \(web.failed.count) 个。网页版提交 \(String(web.commit.prefix(10)))。"
+        } catch {
+            return "测量失败：\(error.localizedDescription)"
         }
     }
 }
