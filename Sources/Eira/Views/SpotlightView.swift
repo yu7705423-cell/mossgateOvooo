@@ -267,7 +267,7 @@ struct FindPlaceView: View {
         "caps", "lore", "memory", "presets", "ban", "regex",
         "api", "routes", "memoryApi", "voice", "image", "music", "weather", "vision", "asr", "translateApi",
         "notify", "bgpush", "limits", "holidays", "appearance", "lockpin", "storage", "help", "feedback", "terms",
-        "time", "stickers", "personas", "favorites", "menuorder", "sent", "convorder", "ooc", "theater", "mcp",
+        "time", "stickers", "personas", "favorites", "menuorder", "sent", "convorder", "ooc", "theater", "mcp", "chatThemes",
     ]
 
     /// 这一项能不能点过去：没有页面的不能；搜索聊天记录要能打开会话
@@ -298,7 +298,7 @@ struct FindPlaceView: View {
         case "summary": SummaryPage(chatId: chatId)
         case "bond": BondView(chatId: chatId)
         case "badges": BadgesView(chatId: chatId)
-        case "skin": SkinPageView(chatId: chatId)
+        case "skin": ThemeGalleryView(chatId: chatId)
         case "look": ChatLookView(chatId: chatId)
         case "search": SearchChatView(chatId: chatId) { id, _ in openChat?(id) }
         case "card": FindCardEdit(charId: charId)
@@ -335,6 +335,7 @@ struct FindPlaceView: View {
         case "limits": UsageLimitsView()
         case "holidays": HolidaySettingsView()
         case "appearance": AppearanceView()
+        case "chatThemes": ThemeGalleryView(chatId: nil)
         case "lockpin": LockPinView()
         case "storage": StorageView()
         case "help": HelpView(openChat: openChat)

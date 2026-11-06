@@ -337,3 +337,15 @@ zip 只存不压：`character.json` 加 `images/<id>.<ext>`、`files/<id>.<ext>`
 scenes, works, chapters, beats, trips, spaceItems, skins, days, meals, health, phones, phoneChats, moments, reviews, readnotes, todos, playlists,
 songs, closet, wishes, ties, smsThreads, diaries, dreams, memsnaps, dramas, drafts, impressions, collection, mallPeople, mallItems, pets, cams,
 camLogs, quizRuns, boxes, slips, slipLog}`。群聊与只在群里生效的记忆不带；印象只带 imp 与 note。
+
+## 13. skins（美化与原生聊天主题，skin.js 4.111；原生主题 ChatTheme）
+
+网页版字段：`name, tokens, shape, css, scope: ['chat'|'shell'], gen, frame, frameWho, frameScale, late`，缺省同 `Skins.create`。
+挂法：`chat.skinId`（会话）、`settings.globalSkinId`（全部会话的默认，库里的那一份要带 shell）、`settings.skinOff`（总开关）。
+
+原生版另加一项 `native`（网页版不认，原样带着），见 Prompt/ChatTheme.swift 开头：
+`{v:1, look:{scheme}, palette:{bg,surface,text,text2,accent,onAccent}, wall:{image,blur,dim}, mine/theirs:{fill,text,radius,tail,border,borderWidth,padX,padY},
+avatar:{shape,size,show}, spacing:{gap,gapIn}, nav/composer:{style,color,alpha,fg}, composer.input, font:{family,scale,size}, stamp:{color,size},
+sys:{color,fill}, status:{fill,text,radius,border}, dark:{同上任意几组}}`。不写为跟随默认；认不得的键写回时原样留着。
+内置主题的 id 以 `builtin-` 开头，不在库里（chat.skinId 可以指向它，网页版读到时当没挂）。
+美化包（phone-skin v1）导出时多带 `native`，背景图放在 `native.wall.data`（data: 地址），导入时存成本机图片。

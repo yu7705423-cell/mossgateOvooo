@@ -547,15 +547,19 @@ struct AppearanceView: View {
             LookPresetsSection()
             ReactStyleSection()
             Section {
-                // 美化总开关（网页版第 18 条的逃生口）：设置这一页永不套美化，美化写坏了从这里一键关掉
-                Toggle("显示会话美化", isOn: Binding(get: { model.s.raw["skinOff"]?.bool != true }, set: { on in
+                NavigationLink { ThemeGalleryView(chatId: nil) } label: {
+                    IconRow(title: "全部会话的默认主题", icon: "palette", value: ThemeGalleryView.globalLabel(model.s))
+                }
+                // 总开关（网页版第 18 条的逃生口）：设置这一页永不套主题，主题或美化写坏了从这里一键关掉
+                Toggle("显示聊天主题与美化", isOn: Binding(get: { model.s.raw["skinOff"]?.bool != true }, set: { on in
                     model.set("skinOff", .bool(!on))
                     NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)
                 }))
             } header: {
-                Text("美化")
+                Text("聊天主题")
             } footer: {
-                HelpNote("关闭后所有会话都不显示美化，已导入的美化保留，重新打开即恢复。某一份美化让会话页无法操作时，在这里关闭。", title: "主题：显示会话美化")
+                HelpNote("默认主题用于没有单独挂主题的会话；某段会话自己的主题在会话右上角菜单的「主题」中设置。", title: "主题：全部会话的默认主题")
+                HelpNote("关闭后所有会话都不显示聊天主题与美化，恢复应用默认样式；已有的主题与美化保留，重新打开即恢复。某一份主题或美化让会话页无法操作时，在这里关闭。", title: "主题：显示聊天主题与美化")
             }
             IosWidgetSection()
             RemovedAppsSection()

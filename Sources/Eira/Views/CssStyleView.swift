@@ -282,6 +282,25 @@ enum CssPaint {
         return max(0, r)
     }
 
+    /// 气泡的小尾巴：贴在底边靠外的那个角上，朝外伸出一截（原生主题的「小尾巴」）
+    static func tail(_ r: CGRect, right: Bool) -> Path {
+        let reach: CGFloat = 6
+        let w = min(16, r.width / 2)
+        let h = min(14, r.height)
+        var p = Path()
+        if right {
+            p.move(to: CGPoint(x: r.maxX - w, y: r.maxY))
+            p.addLine(to: CGPoint(x: r.maxX - w / 2, y: r.maxY - h))
+            p.addQuadCurve(to: CGPoint(x: r.maxX + reach, y: r.maxY), control: CGPoint(x: r.maxX - 1, y: r.maxY - 2))
+        } else {
+            p.move(to: CGPoint(x: r.minX + w, y: r.maxY))
+            p.addLine(to: CGPoint(x: r.minX + w / 2, y: r.maxY - h))
+            p.addQuadCurve(to: CGPoint(x: r.minX - reach, y: r.maxY), control: CGPoint(x: r.minX + 1, y: r.maxY - 2))
+        }
+        p.closeSubpath()
+        return p
+    }
+
     /// 写了 50% 以上：胶囊或正圆
     static func isCapsule(_ s: CssStyle?) -> Bool { (s?.radiusPercent ?? 0) >= 50 }
 
@@ -432,6 +451,8 @@ struct CssBoxShape: InsettableShape {
     var fallback: CGFloat = 0
     var continuous = false
     var inset: CGFloat = 0
+    /// 原生主题的气泡小尾巴（ChatTheme.tailKey）：left、right，空为没有
+    var tail = ""
 
     init(_ s: CssStyle?, fallback: PhFallback) {
         px = s?.radius
@@ -439,13 +460,16 @@ struct CssBoxShape: InsettableShape {
         self.fallback = fallback.radius
         // 只有沿用原本圆角时才跟着原本的连续曲线；CSS 写的圆角是正圆弧
         continuous = s?.radius == nil && s?.radiusPercent == nil && fallback.continuous
+        tail = s?.raw[ChatTheme.tailKey] ?? ""
     }
 
     func path(in rect: CGRect) -> Path {
         let rr = rect.insetBy(dx: inset, dy: inset)
         guard rr.width > 0, rr.height > 0 else { return Path() }
         let r = max(0, CssPaint.cornerRadius(px: px, percent: percent, fallback: fallback, size: rect.size) - inset)
-        return Path(roundedRect: rr, cornerRadius: min(r, min(rr.width, rr.height) / 2), style: continuous ? .continuous : .circular)
+        let body = Path(roundedRect: rr, cornerRadius: min(r, min(rr.width, rr.height) / 2), style: continuous ? .continuous : .circular)
+        guard !tail.isEmpty else { return body }
+        return body.union(CssPaint.tail(rr, right: tail == "right"))
     }
 
     func inset(by amount: CGFloat) -> CssBoxShape {

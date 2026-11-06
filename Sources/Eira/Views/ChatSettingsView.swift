@@ -65,7 +65,7 @@ struct ChatSettingsView: View {
                 }
             }
         }
-        .navigationDestination(isPresented: $showSkin) { SkinPageView(chatId: chatId) }
+        .navigationDestination(isPresented: $showSkin) { ThemeGalleryView(chatId: chatId) }
         .sheet(item: Binding(get: { profileChar.map { EditTarget(id: $0) } }, set: { profileChar = $0?.id })) { t in
             NavigationStack(path: $profilePath) {
                 ProfileView(subjectId: t.id, path: $profilePath)
@@ -109,7 +109,7 @@ struct ChatSettingsView: View {
         if let onSearch { add("search", "", "搜索聊天记录", keys: "查找 消息", searchOnly: true, action: onSearch) }
         if let onSelect { add("select", "", "多选消息", keys: "批量 删除", searchOnly: true, action: onSelect) }
         if let onLook { add("look", "", "聊天背景", keys: "背景图 遮罩 顶栏 输入栏 颜色 旁白颜色", searchOnly: true, action: onLook) }
-        add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执", searchOnly: true,
+        add("skin", "", "主题", keys: "主题 美化 美化包 css 配色 气泡 小尾巴 头像形状 显示头像 字体 消息时刻 已读回执 导入主题 导出主题", searchOnly: true,
             action: { showSkin = true })
         if c.isGroup {
             add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称 成员私下找你 私信 我在本群的身份 旁观 画外音 接着聊 自行退群",
@@ -280,7 +280,7 @@ struct ChatSettingsView: View {
                 if let onSearch { tile("搜索", "search", action: onSearch) }
                 if let onSelect { tile("多选", "check", action: onSelect) }
                 if let onLook { tile("背景", "image", action: onLook) }
-                tile("美化", "palette") { showSkin = true }
+                tile("主题", "palette") { showSkin = true }
             }
             .padding(.vertical, Theme.sp2)
         }

@@ -360,6 +360,8 @@ enum Skins {
         var frameScale: Double = 160
         var css = ""
         var late = false
+        /// 原生主题的格子（ChatTheme.sanitize 核过的；背景图以 data: 地址带着）。网页版导出的包没有这一项
+        var native: JSONValue?
     }
 
     static let packKind = "phone-skin"
@@ -425,6 +427,7 @@ enum Skins {
         p.gen = o["gen"]?.object ?? [:]
         p.css = o["css"]?.string ?? ""
         p.late = o["late"]?.bool == true
+        p.native = ChatTheme.sanitize(o["native"])
         return p
     }
 
@@ -457,6 +460,7 @@ enum Skins {
             "frameWho": .string(p.frameWho), "frameScale": .number(p.frameScale),
         ]
         if p.late { fields["late"] = .bool(true) }
+        if let n = ChatTheme.installNative(p.native) { fields[ChatTheme.field] = n }
         let r = Row.new(prefix: "sk", fields)
         try Database.shared.put(collection, r)
         NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)

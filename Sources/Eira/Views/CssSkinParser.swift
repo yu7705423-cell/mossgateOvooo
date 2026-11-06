@@ -78,10 +78,12 @@ extension CssSkin {
         "ph-accent-weak", "ph-on-accent", "ph-group-fill",
     ]
 
-    /// 原生版自己读的契约变量（气泡、头像、底栏、顶栏的尺寸）
+    /// 原生版自己读的契约变量（气泡、头像、底栏、顶栏的尺寸；配色与状态栏那几个由 ChatTheme.slots(vars:) 落到主题的格子上）
     static let nativeVars: Set<String> = [
         "ph-bubble-r", "ph-bubble-px", "ph-bubble-py", "ph-bubble-fs", "ph-bubble-gap", "ph-bubble-gap-in",
         "ph-avatar-size", "ph-avatar-r", "ph-navbar-h", "ph-composer-h", "ph-composer-pad",
+        "ph-bg", "ph-surface", "ph-text", "ph-text-3", "ph-accent", "ph-on-accent",
+        "ph-status-bg", "ph-status-fg", "ph-status-bc", "ph-status-r",
     ]
 
     /// 原生版另外认的钩子：一串里最后一条消息、最后一个气泡。
