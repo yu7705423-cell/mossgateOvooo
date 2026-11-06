@@ -88,6 +88,8 @@ enum ChatEngine {
             built = try ChatPrompt.buildGroup(chat: chat, members: members, settings: settings, excludeTurn: old?.id)
         } else {
             built = try ChatPrompt.build(chat: chat, char: char, settings: settings, excludeTurn: old?.id)
+            // 试点（docs/jscore-prompt.md）：开了「按网页版拼装」时换成网页版代码拼的那一份，拼不出来照旧用原生的。默认关
+            if let web = WebPrompt.replacing(built, chat: chat, char: char, excludeTurn: old?.id) { built = web }
         }
         if !correction.isEmpty {
             Ooc.append(&built.messages, Templates.render("task.ooc-rewrite", ["issues": correction], settings: settings))

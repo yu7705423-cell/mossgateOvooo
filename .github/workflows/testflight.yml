@@ -78,11 +78,18 @@ jobs:
           git clone -q --depth 1 --branch claude/mini-phone-architecture-tqzvig \
             "https://x-access-token:${WEB_REPO_TOKEN}@github.com/yu7705423-cell/phone.git" "$RUNNER_TEMP/web"
           # 网页版改了结构（合并、挪动文件）导致打包不出来时不拦这次编译：app 自动退回原生解析，这里只记一条警告
-          if node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web" && node scripts/check-weblogic.mjs; then
+          if node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web" reply && node scripts/check-weblogic.mjs reply; then
             echo "网页版逻辑已打包"
           else
             echo "::warning::网页版逻辑打包失败，这次的 app 用原生解析。看 scripts/sync-weblogic.mjs 的输出，按网页版的新结构调整"
             rm -f Resources/weblogic/reply.bundle.js
+          fi
+          # 提示词拼装（docs/jscore-prompt.md，试点，默认关）：同样不拦编译，打不出来时 app 里没有这一项，照旧原生拼装
+          if node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web" prompt && node scripts/check-weblogic.mjs prompt; then
+            echo "网页版提示词拼装已打包"
+          else
+            echo "::warning::网页版提示词拼装打包失败，这次的 app 照旧原生拼装。看 scripts/sync-weblogic.mjs 与 check-weblogic.mjs 的输出"
+            rm -f Resources/weblogic/prompt.bundle.js
           fi
           rm -rf "$RUNNER_TEMP/web"
 
