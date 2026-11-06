@@ -35,6 +35,9 @@ enum ReplyParser {
         case mute, unmute, muteAll, nick
         // 换头像：text 是头像库里那一张的名字
         case wear
+        // 群红包（网页版 4.736）：text 是祝福语，amount 是总额，count 是个数，extra 是种类（luck / equal / only），to 是专属红包给谁
+        // 领红包：text 是发的人（空为最近能领的那一个）；退群（4.733）；改网名（4.947）：text 是新网名
+        case redpacket, rpclaim, leave, selfnick
         // 截下聊天记录（网页版 4.904）：text 是冒号后面那一段原样（从「原话」开始|说明|私密）；发一张截过的：text 是说明
         case shot, sendshot
     }
@@ -55,6 +58,10 @@ enum ReplyParser {
         var extra: String?
         /// 收款 / 拆开为 true，退回 / 拒收为 false
         var flag = false
+        /// 群里转账、专属红包写明的那个人（名字，网页版 part.to）
+        var to: String?
+        /// 红包的个数
+        var count: Int?
     }
 
     struct Result: Sendable {
@@ -65,7 +72,7 @@ enum ReplyParser {
 
     // MARK: - 正则（网页版原文）
 
-    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|卡片|card|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
+    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|普通红包|专属红包|领红包|抢红包|红包|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改网名|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|卡片|card|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
 
     private static let mark = regex(markPattern, [.caseInsensitive])
     private static let voiceTrans = regex(#"\s*[\[【(（]?\s*(?:译文|翻译|译|translation)\s*[:：]"#, [.caseInsensitive])
@@ -101,6 +108,10 @@ enum ReplyParser {
         lineMark("覆盖"),
     ]
     static let muteAllLine = lineMark("全员禁言|开启全员禁言")
+    // 自行退群（网页版 4.733）：整行就是它
+    static let leaveLine = lineMark("退群|退出群聊")
+    // 领红包（4.736）：不写发的人就是能领的最近那一个
+    static let rpClaimLine = lineMark("领红包|抢红包|拆红包")
     static let unmuteAllLine = lineMark("解除全员禁言|关闭全员禁言")
     private static let keepLine = regex(#"^[\[【(（]?\s*(?:存图|存照片)\s*[:：]\s*(.+?)[\]】)）]?\s*$"#, [.caseInsensitive])
     // 截下聊天记录、发一张截过的（网页版 reply.js 的 SHOT_LINE、SEND_SHOT_LINE）。单独一行才认，和存图一样
@@ -291,12 +302,51 @@ enum ReplyParser {
                 p.extra = (bar.map { String(body[body.index(after: $0)...]) } ?? body).trimmingCharacters(in: .whitespaces)
                 push(p)
             case "转账", "transfer":
+                // 群里写明转给谁（网页版 4.736）：「名字｜金额 备注」。竖线前面本身就是金额、后面读不出金额的，
+                // 是私聊里原来的「金额｜留言」（4.753），照旧整段当金额与留言读
+                var bar = body.firstIndex { $0 == "|" || $0 == "｜" }
+                if let b = bar, ReplyParser.matches(ReplyParser.amountRe, String(body[..<b])),
+                   !ReplyParser.matches(ReplyParser.amountRe, String(body[body.index(after: b)...])) { bar = nil }
+                var toName = bar.map { String(body[..<$0]).trimmingCharacters(in: .whitespaces) } ?? ""
+                if toName.hasPrefix("@") { toName.removeFirst() }
+                let rest = bar.map { String(body[body.index(after: $0)...]) } ?? body
                 // 金额读不出来就整条丢掉。凭空造一笔金额不明的转账比少发一条更糟
-                if let m = ReplyParser.match(ReplyParser.amountRe, body), let a = Double(m[1]) {
+                if let m = ReplyParser.match(ReplyParser.amountRe, rest), let a = Double(m[1]) {
                     var p = Part(type: .transfer, text: m[2].trimmingCharacters(in: .whitespaces))
                     p.amount = a
+                    if !toName.isEmpty { p.to = toName }
                     push(p)
                 }
+            case "红包", "普通红包", "专属红包":
+                // 群红包（4.736）：[红包：总额｜个数｜祝福语]、[普通红包：…]、[专属红包：名字｜金额｜祝福语]
+                let rtype = kind == "普通红包" ? "equal" : kind == "专属红包" ? "only" : "luck"
+                let xs = body.split(maxSplits: Int.max, omittingEmptySubsequences: false, whereSeparator: { $0 == "|" || $0 == "｜" }).map { $0.trimmingCharacters(in: .whitespaces) }
+                func num(_ i: Int) -> Double {
+                    guard i < xs.count else { return 0 }
+                    let t = xs[i].filter { !"¥￥$元块个".contains($0) && !$0.isWhitespace }
+                    return Double(t) ?? 0
+                }
+                let note = xs.count > 2 ? xs[2...].joined(separator: " ") : ""
+                if rtype == "only" {
+                    var who = xs.first ?? ""
+                    if who.hasPrefix("@") { who.removeFirst() }
+                    if !who.isEmpty && num(1) > 0 {
+                        var p = Part(type: .redpacket, text: note)
+                        p.amount = num(1); p.count = 1; p.extra = rtype; p.to = who
+                        push(p)
+                    }
+                } else if num(0) > 0 {
+                    var p = Part(type: .redpacket, text: note)
+                    let n = num(1)
+                    p.amount = num(0); p.count = max(1, n.isFinite && n > 0 ? Int(n.rounded()) : 1); p.extra = rtype
+                    push(p)
+                }
+            case "领红包", "抢红包":
+                var from = body
+                if from.hasPrefix("@") { from.removeFirst() }
+                push(Part(type: .rpclaim, text: from.trimmingCharacters(in: .whitespaces)))
+            case "改网名":
+                push(Part(type: .selfnick, text: body))
             case "礼物", "gift":
                 if let g = Interact.parseGift(body) {
                     var p = Part(type: .gift, text: g.cover)
@@ -464,6 +514,8 @@ enum ReplyParser {
             }
             if ReplyParser.matches(ReplyParser.unmuteAllLine, t) { var p = Part(type: .muteAll, text: ""); p.flag = false; push(p); return }
             if ReplyParser.matches(ReplyParser.muteAllLine, t) { var p = Part(type: .muteAll, text: ""); p.flag = true; push(p); return }
+            if ReplyParser.matches(ReplyParser.leaveLine, t) { push(Part(type: .leave, text: "")); return }
+            if ReplyParser.matches(ReplyParser.rpClaimLine, t) { push(Part(type: .rpclaim, text: "")); return }
             if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))

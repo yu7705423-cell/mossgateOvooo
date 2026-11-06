@@ -107,7 +107,7 @@ struct NewFeatCharSection: View {
         let char = (try? Repo.character(charId)) ?? nil
         Section {
             ForEach(NewFeat.features, id: \.id) { f in
-                Picker(f.label, selection: Binding(get: { NewFeat.ownOf(char, f.id) }, set: { v in
+                Picker(f.label, selection: Binding(get: { NewFeat.own(char, f.id) }, set: { v in
                     do { try NewFeat.setFor(charId, f.id, v); problem = nil } catch { problem = "未能保存：\(error.localizedDescription)" }
                     tick += 1
                 })) {

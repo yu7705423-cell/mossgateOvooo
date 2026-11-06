@@ -111,7 +111,7 @@ final class CharShotTests: StoreTestCase {
         var s = AppSettings.load()
         XCTAssertFalse(CharShot.capOn(char, s))
         XCTAssertFalse(try ChatPrompt.build(chat: chat, char: char, settings: s).system.contains("[截图："))
-        XCTAssertEqual(NewFeat.pending(app: "chat", s).map(\.id), ["charshot"])
+        XCTAssertTrue(NewFeat.pending(app: "chat", s).map(\.id).contains("charshot"))
         try NewFeat.setFor("char_a", "charshot", "on")
         let mine = try XCTUnwrap(Repo.character("char_a"))
         XCTAssertTrue(CharShot.capOn(mine, s))
@@ -121,7 +121,7 @@ final class CharShotTests: StoreTestCase {
         XCTAssertFalse(CharShot.capOn(try XCTUnwrap(Repo.character("char_a")), s))
         try NewFeat.setFor("char_a", "charshot", "")
         XCTAssertTrue(CharShot.capOn(try XCTUnwrap(Repo.character("char_a")), s))
-        XCTAssertTrue(NewFeat.pending(app: "chat", s).isEmpty)
+        XCTAssertFalse(NewFeat.pending(app: "chat", s).map(\.id).contains("charshot"))
     }
 }
 

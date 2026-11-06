@@ -38,6 +38,20 @@ enum NewFeat {
         Feature(id: "quiz", label: "测试问卷",
                 desc: "开启后，角色记得最近几次与你一起做过的测试，并可以从已有的问卷里挑一份发给你作答。不多调用接口；角色作答仍由你在结果页点了才调用",
                 app: "play", caps: ["quiz"], blocks: ["quizzes"]),
+        // 以下三项原文照抄网页版（4.733、4.736、4.947）
+        Feature(id: "groupleave", label: "自行退群",
+                desc: "开启后，在群资料里打开了「角色可以自行退群」的群里，角色可以按对话自己退出群聊：移出成员，群里落一行「某某退出了群聊」，"
+                    + "可以再把它拉回来。退了之后群里至少还留两名角色。能力说明大约多六十字；不多调用接口。关闭后不再告诉角色这个写法，角色碰巧写了也不退群",
+                app: "chat", caps: ["groupleave"]),
+        Feature(id: "grouppay", label: "群红包与转账",
+                desc: "开启后，群聊里的角色可以发红包（拼手气、普通、专属）、领群里的红包、给指定成员转账，并收下或退回转给自己的钱；"
+                    + "每份红包的金额由应用在发出时分好，过了 24 小时未领完的退回发出的人。能力说明大约多二百字；不多调用接口。"
+                    + "关闭后不再告诉角色这些写法，角色碰巧写了也不发不领。你自己在群里发红包与转账不受这一项影响",
+                app: "chat", caps: ["grouppay"]),
+        Feature(id: "selfnick", label: "自己改网名",
+                desc: "开启后，角色可以在回复里写一行标记给自己改网名（编辑资料里「网名」那一栏同一处），聊天里留一行提示；重新生成那一轮时网名退回去。"
+                    + "改不改、改成什么由角色自己决定。能力说明大约多三十个英文词；不多调用接口",
+                app: "contact", caps: ["selfnick"]),
         // 角色截下聊天记录（网页版 4.904，Prompt/CharShot.swift）
         Feature(id: "charshot", label: "截下聊天记录",
                 desc: "开启后，角色可以把和你的聊天记录截成一张图，存进该角色手机的相册，也可以存进带密码的那一本；截的时候聊天里不留提示，翻角色的手机才看得到。"
@@ -49,22 +63,24 @@ enum NewFeat {
     static func decided(_ id: String, _ s: AppSettings) -> String { s.raw["featureOpt"]?.object?[id]?.string ?? "" }
     static func isOn(_ id: String, _ s: AppSettings) -> Bool { decided(id, s) == "on" }
 
-    // 每个角色可以单独开或关某一项新功能（网页版 4.882）：存在角色卡上 char.featOpt[id] = "on" / "off"，没有这一项就跟随全局。
-    // 入口在会话菜单「角色能力」最下面的「新功能」（第 5 条）
-
-    /// 这个角色自己选的："on" / "off" / ""（跟随全局）
-    static func ownOf(_ char: Character?, _ id: String) -> String {
-        let v = char?.row["featOpt"]?.object?[id]?.string ?? ""
+    /// 这个角色自己选的（网页版 4.882，char.featOpt[id]）：on / off / 空串（跟随全局）
+    static func own(_ char: Character?, _ id: String) -> String {
+        let v = char?.row["featOpt"]?[id]?.string ?? ""
         return v == "on" || v == "off" ? v : ""
     }
 
-    /// 这项新功能对这个角色开着吗。不给角色就只看全局
+    /// 这项新功能对这个角色开着吗：角色自己选过的不看全局（网页版 isOn(id, char)）
     static func isOn(_ id: String, _ s: AppSettings, char: Character?) -> Bool {
-        let own = ownOf(char, id)
-        return (own.isEmpty ? decided(id, s) : own) == "on"
+        let mine = own(char, id)
+        return (mine.isEmpty ? decided(id, s) : mine) == "on"
     }
 
-    /// 改这个角色自己的选择："on" / "off"，"" 表示改回跟随全局
+    /// 群里：有一个成员开着就算开着（网页版 anyOn）
+    static func anyOn(_ id: String, _ s: AppSettings, chars: [Character]) -> Bool {
+        chars.isEmpty ? isOn(id, s) : chars.contains { isOn(id, s, char: $0) }
+    }
+
+    /// 改这个角色自己的选择："on" / "off"，"" 表示改回跟随全局（入口在「角色能力」最下面的「新功能」，第 5 条）
     static func setFor(_ charId: String, _ id: String, _ v: String) throws {
         guard var c = try Repo.character(charId) else { return }
         var o = c.row["featOpt"]?.object ?? [:]

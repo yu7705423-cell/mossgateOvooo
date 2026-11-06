@@ -76,6 +76,10 @@ enum ExtraCalls {
         ExtraCall(id: "groupProactive", label: "群里主动开口",
                   isOn: { _ in liveChats().contains { $0.isGroup && $0.row["groupProactive"]?["on"]?.bool == true } },
                   when: { _ in "每个开了的群按设定的间隔一次；只在应用打开时发送。开关在群资料" }),
+        // 挂在群上（群资料），默认关（网页版 cost.js 的 groupAmbient，4.1018）
+        ExtraCall(id: "groupAmbient", label: "本群页面打开时群里接着聊",
+                  isOn: { _ in liveChats().contains { $0.isGroup && GroupMore.ambient($0).page } },
+                  when: { _ in "每个开了的群：本群页面打开且在前台时，距最后一条消息与打开页面均满设定的间隔进行一轮，每次打开最多若干轮（填 0 不限）。每轮一次调用。开关在群资料" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "diaryAuto", label: "角色每天写日记",
                   isOn: { _ in liveChars().contains { $0.row["diaryAuto"]?.bool == true } },

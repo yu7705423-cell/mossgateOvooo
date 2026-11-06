@@ -113,8 +113,9 @@ enum Interact {
 
     // MARK: - 转账
 
-    static func transferContent(_ amount: Double, _ note: String, _ state: String, _ code: String?) -> String {
-        let head = "[转账：\(format(amount, code))\(note.isEmpty ? "" : " " + note)]"
+    /// toName：群里转给谁（网页版 4.736），写成 [转账：名字｜金额 备注]，和角色在群里该写的一样
+    static func transferContent(_ amount: Double, _ note: String, _ state: String, _ code: String?, toName: String = "") -> String {
+        let head = "[转账：\(toName.isEmpty ? "" : toName + "｜")\(format(amount, code))\(note.isEmpty ? "" : " " + note)]"
         switch state {
         case "taken": return head + "（已被收下）"
         case "returned": return head + "（已被退回）"
@@ -152,7 +153,16 @@ enum Interact {
         let code = row.string("currency").isEmpty ? nil : row.string("currency")
         try update(msgId) {
             $0["transfer"] = .string(state)
-            $0["content"] = .string(transferContent(amount, row.string("note"), state, code))
+            $0["content"] = .string(transferContent(amount, row.string("note"), state, code, toName: row.string("toName")))
+        }
+        // 群里（4.736）：处理的是收款人，名字按群里的写
+        if case let to = row.string("to"), !to.isEmpty, let chat = try Repo.chat(m.chatId) {
+            let from = m.role == .user ? GroupChat.me : m.authorId
+            var notice = Message.new(chatId: m.chatId, role: to == GroupChat.me ? .user : .char, authorId: to,
+                                     content: "[\(GroupPay.nameIn(chat, to))\(take ? "收下了" : "退回了")\(GroupPay.nameIn(chat, from))的转账 \(format(amount, code))]",
+                                     kind: "notice", turnId: turnId)
+            notice.row["settledId"] = .string(msgId)
+            return notice
         }
         let n = names(m.chatId)
         let byUser = m.role != .user
@@ -328,6 +338,8 @@ enum Interact {
         // 颁标识的那一条删了，标识也收回。重新生成那一轮时，旧的那一枚不该留在收藏里
         if notice.kind == "award" { try Badges.dropAward(notice.chatId, msgId: notice.id); return }
         if notice.kind == "notice", notice.row["groupUndo"] != nil { try GroupChat.undo(notice); return }
+        // 领红包、改网名那一行（网页版 4.736、4.947）：领的那一份退回去，网名退回改之前那一个
+        if try GroupPay.undo(notice) { return }
         // 角色改锁屏密码的那一行：放回换之前那一份
         if notice.kind == "notice", let u = notice.row["lockUndo"]?.object, let charId = u["charId"]?.string {
             try Theirs.restoreLock(charId, u["prev"])
@@ -356,7 +368,7 @@ enum Interact {
             let code = row.string("currency").isEmpty ? nil : row.string("currency")
             try update(id) {
                 $0["transfer"] = .string("pending")
-                $0["content"] = .string(transferContent(row.number("amount") ?? 0, row.string("note"), "pending", code))
+                $0["content"] = .string(transferContent(row.number("amount") ?? 0, row.string("note"), "pending", code, toName: row.string("toName")))
             }
         }
     }

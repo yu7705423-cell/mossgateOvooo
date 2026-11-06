@@ -8,7 +8,9 @@ final class PanelTests: XCTestCase {
         XCTAssertEqual(Panel.order(s).first, "lore")
         XCTAssertEqual(Panel.more(s), ["lore", "video", "share", "dice", "card", "file"])
         XCTAssertFalse(Panel.onPanel(s, group: false).contains("lore"))
-        XCTAssertEqual(Set(Panel.onPanel(s, group: true)), ["photo", "voice", "song", "offline"])
+        // 群里多了转账与红包（网页版 4.736）；红包只在群里
+        XCTAssertEqual(Set(Panel.onPanel(s, group: true)), ["photo", "voice", "song", "offline", "transfer", "redpacket"])
+        XCTAssertFalse(Panel.onPanel(s, group: false).contains("redpacket"))
     }
 
     func testMoveAndMoreKeepWebIds() {

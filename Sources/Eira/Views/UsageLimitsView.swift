@@ -277,6 +277,7 @@ struct UsageLimitsView: View {
             "chat.call": "通话",
             "call.summary": "通话总结",
             "chat.proactive": "主动发起对话",
+            "group.ambient": "群里接着聊（本群页面打开时）",
             "diary.write": "角色写日记",
             "day.plan": "当日日程",
             "event.batch": "生成随机事件",
