@@ -41,6 +41,9 @@
 | archived | 毫秒 | 大于 0 表示已归档 |
 | proactive / proactiveMinutes / proactiveQuietFrom / proactiveQuietTo | Bool 60 0 8 | 主动发消息 |
 | voiceIds | {语音接口id: String} | |
+| nick | String | 网名（4.687、4.947），缺省空串；角色可以自己改（[改网名：…]，新功能 selfnick） |
+| chatApiId | String | 这个角色回复用的那一套聊天接口（4.828），空串跟随主用；不公开 |
+| featOpt | {新功能id: 'on' 'off'} | 这个角色自己对新功能的选择（4.882），没有这一项跟随全局 featureOpt |
 
 能力开关（`ai/capabilities.js` 读）：
 - 缺省为真：canCall canChangeLock canDice canListen canPact canPat canRecall canReact canRemark canSendGift
@@ -81,7 +84,9 @@
 状态栏：`statusBar.{online,offline}` 为 `{on, carry, at, items, fold:false, folded:true, brief:'', css:''}`（4.399、4.802、4.857）；
 最大高度在 `look.status.{online,offline}.mh`（40 到 1200，不填不限）。原生版只读写 online，css 原样留着。
 
-群聊另有：admins、nicks、mutes、muteAll、groupProactive。上下文长度、记忆、模板**不按会话存**，都在 settings 里，
+群聊另有：admins、nicks、mutes、muteAll、groupProactive；
+charLeave（Bool，缺省假，角色可以自行退群，4.733）、groupMode（'member' 'watch' 'voice'，缺省 member，4.1018）、
+groupAmbient（{page: false, pageMin: 3, perOpen: 10}，本群页面打开时接着聊，4.1018）。上下文长度、记忆、模板**不按会话存**，都在 settings 里，
 会话只能选一份预设（presetId）叠在 settings 上。
 
 ## 3. messages
@@ -111,24 +116,26 @@
 | kind | 附加字段 |
 |---|---|
 | text | — |
-| image | imageId（生成中为空）、prompt、media、vision、imageDesc |
-| voice | audioId（文件，可空）、seconds、voiceText、asr |
+| image | imageId（生成中为空）、prompt、media、vision、imageDesc；imageVers（[图片 id]，各版按先后，4.861，缺省只有 imageId 那一张）；角色的文字改成的文字图 media 为 text、prompt 为空、原文在 textBefore（4.799） |
+| voice | audioId（文件，可空）、seconds、voiceText、asr；由「改为语音」改过来的带 textBefore（4.881） |
 | sticker | stickerId、stickerName |
 | file | fileId、name、ext、size、text |
 | clip | clipId（文件）、posterId（图片）、clipDur、prompt |
-| transfer / request / gift / takeout | amount、note、currency 与各自的状态字段 |
+| transfer / request / gift / takeout | amount、note、currency 与各自的状态字段；群里的转账另有 to（角色 id 或 me）、toName（4.736） |
+| redpacket | rp：{type luck/equal/only, total, count, shares[], claims[{who, amount, at}], to, note, currency}（4.736） |
 | location | place、address |
 | dice | faces、value |
 | call | direction、outcome、seconds、callKind、callLog |
 | narration | narration |
 | silence | content 为 `[不回复]` |
-| notice | 居中提示，靠 settledId、pat、wishId 等字段区分 |
+| notice | 居中提示，靠 settledId、pat、wishId 等字段区分；领红包那一行带 rpOf，改网名那一行带 nickUndo {charId, prev}，退群那一行带 groupUndo {chatId, prev} |
+| voiceover | 画外音（4.1018）：content `[画外音：…]`，voiceover 是那一句 |
 
 其余 kind（listen watch read excerpt song xhs tool card forward moshare award acquire outfit groom closetshare
 dresscode slip mallitem mallshot forumpost boxslip boxdraw boxreveal dreamcard quiz quizask game scene side）
 见网页版 `apps/chat/pages/Conversation.js` 的渲染分派。
 
-**图片 id**：imageId posterId mallSnap.imageId forward.items[].imageId share.images[]
+**图片 id**：imageId imageVers[] posterId mallSnap.imageId forward.items[].imageId share.images[]
 **文件 id**：audioId clipId fileId callLog[].audio[]
 
 ## 4. personas 与 kv persona

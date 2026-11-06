@@ -106,6 +106,8 @@ struct ConversationView: View {
     @State private var rememberedMemory: RememberedMemory?
     struct RememberedMemory: Identifiable { var id: String; var charId: String }
     @State private var composing: InteractSheet.Kind?
+    /// 群红包、群里转账、红包详情、图片版本（ChatMediaViews）
+    @State private var media = ChatMediaState()
     @State private var recordingVoice = false
     @State private var calling: CallTarget?
     @State private var showScenes = false
@@ -349,7 +351,10 @@ struct ConversationView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, Theme.pad).padding(.top, Theme.gap)
             }
-            if picking != nil { pickBar } else if archivedChat { archivedBar } else { composer }
+            if picking != nil { pickBar } else if archivedChat { archivedBar }
+            else if let chat, chat.isGroup, GroupMore.mode(chat) == "watch" {
+                GroupWatchBar(chatId: chatId, busy: isBusy, onContinue: { generate() }, onJoin: { reload() })
+            } else { composer }
         }
         // 自己画的顶栏（美化写了系统顶栏画不出的样子时）；没有时这里不占地方
         .safeAreaInset(edge: .top, spacing: 0) { if ownBar { phBar } }
@@ -360,6 +365,8 @@ struct ConversationView: View {
         .modifier(TopBarLook(bar: look.top))
         // 美化的顶栏底色（.ph-navbar）。这段会话自己设过顶栏的以自己设的为准
         .modifier(PhNavBar(style: look.top.isSet ? nil : css?.resolve(["navbar"])))
+        .modifier(ChatMediaSheets(chatId: chatId, state: $media, draftEmpty: draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                                  busy: isBusy, onChange: { reload() }))
         .navigationTitle(pageTitle)
         .navigationBarTitleDisplayMode(.inline)
         // 美化画好了返回键的图（.ph-back）时换成自己的返回键；没有图时用系统的
@@ -1023,7 +1030,8 @@ struct ConversationView: View {
                 guard char.row["canCall"]?.bool != false else { notice = "该角色的通话已在角色卡上关闭。"; return }
                 calling = CallTarget(char: char, incoming: false, video: true)
             }
-        case "transfer": panelButton("wallet", "转账") { composing = .transfer }
+        case "transfer": panelButton("wallet", "转账") { if isGroup { media.groupTransfer = true } else { composing = .transfer } }
+        case "redpacket": panelButton("gift", "红包") { if isGroup { media.redPacket = true } }
         case "gift": panelButton("gift", "礼物") { composing = .gift }
         case "takeout": panelButton("bag", "外卖") { composing = .takeout }
         case "location": panelButton("map", "位置") { composing = .location }
@@ -1561,7 +1569,8 @@ struct ConversationView: View {
         guard let chat, chat.isGroup, m.role != .user, let c = members[m.authorId] else { return "" }
         // 群昵称优先，管理员标一下，再跟这周的称号（网页版 whoOf）
         let role = GroupChat.roleLabel[GroupChat.role(chat, c.id)] ?? ""
-        return ([GroupChat.nameIn(chat, c), role] + (weekly[m.authorId] ?? [])).filter { !$0.isEmpty }.joined(separator: " · ")
+        // 群里名字的顺序：群昵称、我给的备注、网名、角色名（4.947）
+        return ([GroupMore.shownName(chat, c), role] + (weekly[m.authorId] ?? [])).filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     private func reactorName(_ id: String) -> String {
@@ -1613,6 +1622,19 @@ struct ConversationView: View {
     private func primary() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         if text.isEmpty { generate(); return }
+        // 画外音（4.1018）：我不在群里，输入框发出的是一行画外音
+        if let chat, chat.isGroup, GroupMore.mode(chat) == "voice" {
+            do {
+                if let m = try GroupMore.sendVoiceover(text, chatId: chatId) {
+                    messages.append(m)
+                    draft = ""
+                    turn = nil
+                    problem = nil
+                    afterSend(m.content)
+                }
+            } catch { problem = "画外音未能保存：\(error.localizedDescription)" }
+            return
+        }
         // 在写旁白：落一行我的旁白，切回发消息。不消耗正在引用的那一条，也不触发回复
         if narrMode && chat?.row.bool("userNarration") == true {
             do {
@@ -1643,6 +1665,25 @@ struct ConversationView: View {
         switch action {
         case .openForward:
             openedForward = m
+        case .textImage:
+            do { replace(try MsgConvert.toTextImage(m)) } catch { problem = error.localizedDescription }
+        case .backToText:
+            do { replace(try m.kind == "voice" ? MsgConvert.fromVoice(m) : MsgConvert.fromTextImage(m)) }
+            catch { problem = error.localizedDescription }
+        case .toVoice:
+            // 用户点的，调一次语音接口（网页版 4.881）
+            do {
+                replace(try MsgConvert.toVoice(m))
+                let id = m.id
+                Task {
+                    _ = await MsgConvert.speak(id)
+                    await MainActor.run { reload() }
+                }
+            } catch { problem = error.localizedDescription }
+        case .imageVersions:
+            media.versionsId = m.id
+        case .openRedPacket:
+            media.packetId = m.id
         case .editTrans:
             editingTrans = m
         case .jumpQuote:
@@ -1878,16 +1919,21 @@ struct ConversationView: View {
     /// 选好的图按顺序一张一张存好、发出去。存不进去的那一张说明原因，其余照发。
     private func sendPhotos(_ items: [PhotosPickerItem]) {
         let id = chatId
+        // 正在引用的那一条只挂在第一张上（网页版 4.910）
+        let quote = quoting
+        quoting = nil
         Task {
             var failed = 0
             var lastError = ""
+            var first = true
             for item in items {
                 do {
                     guard let data = try await item.loadTransferable(type: Data.self) else {
                         throw StoreError(message: "无法读取所选图片")
                     }
                     let imageId = try Images.save(data)
-                    let m = try ChatEngine.sendImage(imageId: imageId, chatId: id)
+                    let m = try ChatEngine.sendImage(imageId: imageId, chatId: id, quote: first ? quote : nil)
+                    first = false
                     await MainActor.run { messages.append(m); turn = nil }
                     if m.row.string("vision") == "pending" { describe(m.id) }
                 } catch {
@@ -2198,7 +2244,8 @@ struct MessageRow: View, Equatable {
             && a.chatCharIds == b.chatCharIds && a.narrName == b.narrName && a.narrTone == b.narrTone && a.innerLook == b.innerLook
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare, fav, menuOrder }
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare, fav, menuOrder,
+                  textImage, backToText, toVoice, imageVersions, openRedPacket }
 
     let message: Message
     let char: Character?
@@ -2295,8 +2342,11 @@ struct MessageRow: View, Equatable {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card", "redpacket":
                         bubbleRow
+                    case "voiceover":
+                        // 画外音（4.1018）：居中一行，不算群里谁的消息
+                        centered("画外音：" + GroupMore.voiceoverText(message))
                     case "narration":
                         narrationRow
                     case "silence":
@@ -2419,6 +2469,27 @@ struct MessageRow: View, Equatable {
         case "edit":
             if MessageActions.canEdit(message) {
                 Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
+            }
+        case "phototext":
+            // 改为文字图（4.799，不调接口）；由它改过来的那一条：改回文字
+            if MsgConvert.canConvert(message) {
+                Button { onAction?(.textImage) } label: { Label("改为文字图", systemImage: "text.below.photo") }
+            } else if MsgConvert.isTextImage(message) {
+                Button { onAction?(.backToText) } label: { Label("改回文字", systemImage: "text.bubble") }
+            }
+        case "voice":
+            // 改为语音（4.881，调一次语音接口）；由它改过来的那一条：改回文字
+            if MsgConvert.canConvert(message) {
+                Button { onAction?(.toVoice) } label: { Label("改为语音", systemImage: "waveform") }
+            } else if MsgConvert.isVoiced(message) {
+                Button { onAction?(.backToText) } label: { Label("改回文字", systemImage: "text.bubble") }
+            }
+        case "imgvers":
+            // 图片版本（4.861）：各版并排比较，挑一版显示
+            if ImageVersions.can(message) {
+                Button { onAction?(.imageVersions) } label: {
+                    Label(ImageVersions.of(message).count > 1 ? "图片版本（\(ImageVersions.of(message).count)）" : "图片版本", systemImage: "square.stack")
+                }
             }
         case "regen":
             // 最新那一轮的角色消息：重新生成这一轮
@@ -2760,6 +2831,8 @@ struct MessageRow: View, Equatable {
             diceCard
         case "transfer":
             transferCard
+        case "redpacket":
+            redPacketCard
         case "gift":
             giftCard
         case "takeout":
@@ -2812,9 +2885,10 @@ struct MessageRow: View, Equatable {
         let media = message.row.string("media")
         let err = message.row.string("mediaError")
         // 我用文字写的图显示那段描述；角色的图显示生图描述
-        let desc = mine ? message.row.string("imageDesc") : message.row.string("prompt")
+        // 角色那一侧改成文字图的（4.799）同样显示描述，不给重新生成
+        let desc = mine || media == "text" ? message.row.string("imageDesc") : message.row.string("prompt")
         let prompt = desc.isEmpty ? message.content : desc
-        let canRedraw = !mine && SettingsModel.shared.s.imageReady && !(media == "pending" && drawing)
+        let canRedraw = !mine && media != "text" && SettingsModel.shared.s.imageReady && !(media == "pending" && drawing)
         return VStack(alignment: .leading, spacing: 6) {
             card(icon: "photo", text: prompt)
             if media == "pending" {
@@ -3030,8 +3104,11 @@ struct MessageRow: View, Equatable {
             }
             let note = message.row.string("note")
             if !note.isEmpty { Text(note).font(.footnote).foregroundStyle(Theme.secondaryText) }
+            let to = message.row.string("to")
+            if !to.isEmpty { Text("转给\(message.row.string("toName"))").font(.caption).foregroundStyle(Theme.secondaryText) }
             Text(Interact.transferLabel(state)).font(.caption).foregroundStyle(Theme.secondaryText)
-            if !mine && state == "pending" {
+            // 群里只有收款人收得了（4.736）
+            if !mine && state == "pending" && (to.isEmpty || to == GroupChat.me) {
                 HStack {
                     Button("收下") { onAction?(.settle(true)) }
                     Button("退回") { onAction?(.settle(false)) }.foregroundStyle(Theme.secondaryText)
@@ -3040,6 +3117,23 @@ struct MessageRow: View, Equatable {
             }
         }
         .modifier(CardBox(hook: "transfer"))
+    }
+
+    /// 群红包（4.736）：祝福语，底下写种类与「已领 n/m」「已领完」「已过期」。点开看谁领了多少，能领就领
+    private var redPacketCard: some View {
+        let rp = RedPacket.packet(message)
+        let got = rp?.claims.contains { $0.who == GroupChat.me } ?? false
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: Theme.gap) {
+                Image(systemName: "envelope").foregroundStyle(Theme.secondaryText)
+                Text(rp?.note ?? "").font(.headline)
+            }
+            if got { Text("已领取").font(.footnote).foregroundStyle(Theme.secondaryText) }
+            Text(RedPacket.foot(message, chat: (try? Repo.chat(message.chatId)) ?? nil)).font(.caption).foregroundStyle(Theme.secondaryText)
+        }
+        .modifier(CardBox(hook: "transfer"))
+        .contentShape(Rectangle())
+        .onTapGesture { onAction?(.openRedPacket) }
     }
 
     /// 礼物：封面；拆开之后写里面是什么。自己送出去的在对方拆开之前也写明里面是什么（只有自己看得到）。

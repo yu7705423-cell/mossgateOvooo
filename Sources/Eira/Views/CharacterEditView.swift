@@ -11,6 +11,8 @@ struct CharacterEditView: View {
     @State private var name = ""
     @State private var remark = ""
     @State private var signature = ""
+    /// 网名（网页版 4.687、4.947，char.nick）：角色在聊天 app 里的名字，角色也可以自己改
+    @State private var nick = ""
     @State private var gender = ""
     @State private var age = ""
     @State private var birthday = ""
@@ -59,6 +61,7 @@ struct CharacterEditView: View {
                 NavigationLink("头像库") { AvatarPoolView(charId: charId) }
                 TextField("名字", text: $name)
                 TextField("备注（只有你看得到，显示时代替名字）", text: $remark)
+                TextField("网名", text: $nick)
                 TextField("一句话签名（列表里显示这一句）", text: $signature)
             }
             Section("基本") {
@@ -158,7 +161,7 @@ struct CharacterEditView: View {
                 }
             }
         }
-        .onChange(of: [name, remark, signature, gender, age, birthday, persona, scenario, firstMessage, exampleDialogue, core]) { _, _ in
+        .onChange(of: [name, remark, nick, signature, gender, age, birthday, persona, scenario, firstMessage, exampleDialogue, core]) { _, _ in
             saved = false
         }
         .onChange(of: appearance) { _, _ in saved = false }
@@ -247,6 +250,7 @@ struct CharacterEditView: View {
             loaded = c
             archived = c.archived
             name = c.name; remark = c.remark; signature = c.signature
+            nick = c.row.string("nick")
             gender = c.row.string("gender"); age = c.row.string("age"); birthday = c.row.string("birthday")
             region = c.row.string("region")
             persona = c.persona; scenario = c.scenario; firstMessage = c.firstMessage
@@ -262,6 +266,7 @@ struct CharacterEditView: View {
         guard let c = try? Repo.character(charId) ?? loaded else { problem = "这个角色不存在"; return }
         let fields: [String: JSONValue] = [
             "name": .string(name.trimmingCharacters(in: .whitespaces)), "remark": .string(remark), "signature": .string(signature),
+            "nick": .string(GroupMore.clean(nick)),
             "gender": .string(gender), "age": .string(age), "birthday": .string(birthday),
             "region": .string(String(region.trimmingCharacters(in: .whitespaces).prefix(20))),
             "persona": .string(persona), "scenario": .string(scenario), "firstMessage": .string(firstMessage),

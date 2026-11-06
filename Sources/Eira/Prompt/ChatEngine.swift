@@ -30,7 +30,11 @@ enum ChatEngine {
     }
 
     /// 这一轮里有没有角色发的图片。没有就不问
-    static func hasImages(_ t: Turn) -> Bool { t.rows.contains { $0.kind == "image" && $0.role == .char } }
+    /// 改成文字图的那种（4.799，media 为 text、没有图）不算：它不会被送去生图
+    static func hasImages(_ t: Turn) -> Bool { t.rows.contains(where: isDrawn) }
+    static func isDrawn(_ m: Message) -> Bool {
+        m.kind == "image" && m.role == .char && !MsgConvert.isTextImage(m)
+    }
 
     static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, onRow: @escaping OnRow) async throws {
         // 回复在路上：主动消息与群里主动开口据此不插话（网页版 isReplying）
@@ -97,7 +101,9 @@ enum ChatEngine {
             result = try await Provider.$keepThink.withValue(true) {
                 // 自动重试取 1 与用户的 retryMax 里小的那个（默认 0，网页版 streamReply 的 retries: 1）
                 try await LastSent.$chat.withValue(chat.id) {
-                    try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+                    // 这个角色自己选的那套接口（4.828）：只管一对一；群聊照旧用主用
+                    try await AIService.shared.send(task: "chat.reply", charId: chat.isGroup ? nil : char.id,
+                                                    system: built.system, messages: built.messages, retries: 1)
                 }
             }
         } catch {
@@ -137,7 +143,7 @@ enum ChatEngine {
         // 先确认新的切得出内容，再删旧的：模型回了一段空白，不能把原来那一轮也弄没了
         guard !plan(raw: result.text, chat: chat, char: char).plan.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         // 保留图片的两种：图片那几条摘出来不删，新回复里第几个图片标记就放回第几张
-        let held = imageKeep == .all ? [] : (old?.rows ?? []).filter { $0.kind == "image" && $0.role == .char }
+        let held = imageKeep == .all ? [] : (old?.rows ?? []).filter(isDrawn)
         let heldIds = Set(held.map(\.id))
         if let old { try removeRows(old.rows.filter { !heldIds.contains($0.id) }, turnId: old.id, chatId: chat.id) }
         let created = try await write(raw: result.text, chat: chat, char: char, turnId: turnId, versions: versions,
@@ -463,6 +469,12 @@ enum ChatEngine {
     /// 改完状态，需要落一行提示的返回那一行；什么都不落的返回 nil。不是这几样的也返回 nil，交给 row(for:)。
     private static func effect(_ p: ReplyParser.Part, chat: Chat, char: Character, turnId: String) throws -> Message? {
         switch p.type {
+        case .redpacket, .rpclaim, .leave, .selfnick:
+            // 群红包、领红包、退群、改网名（网页版 4.736、4.733、4.947）
+            return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
+        case .transfer where chat.isGroup, .settle where chat.isGroup:
+            // 群里的转账要写明给谁，只有收款人收得了（4.736）
+            return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
         case .mute, .unmute, .muteAll, .nick:
             // 群管理：和你在群资料里点是同一套规矩，管不了的（身份不够）不生效、也不落提示。每次现读，前一条刚改过的也算
             guard let now = try Repo.chat(chat.id) else { return nil }
@@ -641,7 +653,7 @@ enum ChatEngine {
             m.row["faces"] = .number(Double(faces))
             m.row["value"] = .number(Double(value))
         case .transfer:
-            guard let a = p.amount, let t = try? Interact.transfer(make("transfer", ""), amount: a, note: p.text) else { return nil }
+            guard !chat.isGroup, let a = p.amount, let t = try? Interact.transfer(make("transfer", ""), amount: a, note: p.text) else { return nil }
             m = t
         case .gift:
             guard let g = try? Interact.gift(make("gift", ""), cover: p.text, inner: p.extra ?? "") else { return nil }
@@ -668,7 +680,7 @@ enum ChatEngine {
             m.row["awardName"] = .string(name)
             m.row["awardReason"] = .string(reason)
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
-        case .mute, .unmute, .muteAll, .nick:
+        case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick:
             return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft:
             return nil
@@ -722,9 +734,11 @@ enum ChatEngine {
 
     /// 用户发一张图（已经由 Images.save 存好）。content 写 `[图片]`，和网页版存的一样；
     /// 识图交给聊天模型时标成待看，下一次请求带上原图；选了单独的识图接口时标成 pending，由 Vision.describe 读成描述。
-    static func sendImage(imageId: String, chatId: String) throws -> Message {
+    /// quote：一次选了几张时，正在引用的那一条只挂在第一张上（网页版 4.910）
+    static func sendImage(imageId: String, chatId: String, quote: Message? = nil) throws -> Message {
         var m = Message.new(chatId: chatId, role: .user, authorId: "me", content: "[图片]", kind: "image")
         m.row["imageId"] = .string(imageId)
+        if let quote { for (k, v) in MessageActions.quoteFields(of: quote) { m.row[k] = v } }
         let s = AppSettings.load()
         m.row["vision"] = .string(s.visionMode == "chat" ? "chat" : (s.visionMode == "api" && s.visionPreset != nil) ? "pending" : "off")
         m = try Repo.append(m)

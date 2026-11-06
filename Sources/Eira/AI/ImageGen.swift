@@ -437,6 +437,38 @@ enum ImageGen {
 
     private static func draw(_ row: Row, preset: ImagePreset, settings s: AppSettings) async -> Message? {
         let messageId = row.id
+        do {
+            switch try await produce(row, preset: preset, settings: s) {
+            case .image(let id):
+                return try update(messageId) {
+                    $0["imageId"] = .string(id)
+                    $0["media"] = .string("done")
+                    $0["mediaError"] = .string("")
+                    // 有几个版本的（4.861）：新画的这一张接在版本表后面
+                    ImageVersions.noteDrawn(&$0, id)
+                }
+            case .refRejected(let presetId, let why):
+                return try update(messageId) {
+                    $0["media"] = .string("error")
+                    $0["refMulti"] = .string(presetId)
+                    $0["mediaError"] = .string(why)
+                }
+            }
+        } catch is CancellationError {
+            return try? update(messageId) { $0["media"] = .string("off"); $0["mediaError"] = .string("") }
+        } catch {
+            return try? update(messageId) { $0["media"] = .string("error"); $0["mediaError"] = .string(error.localizedDescription) }
+        }
+    }
+
+    enum Produced: Sendable {
+        case image(String)
+        /// 传了几张参考图被拒：记在消息上让用户选（这一套接口的 id、原因）
+        case refRejected(String, String)
+    }
+
+    /// 按这条消息的描述画一张、存好，返回图的 id；不改消息（图片版本页「再生成一版」也用它，4.861）
+    static func produce(_ row: Row, preset: ImagePreset, settings s: AppSettings) async throws -> Produced {
         let char = (try? Repo.character(row.string("authorId"))) ?? nil
         let chatId = row.string("chatId")
         do {
@@ -462,20 +494,13 @@ enum ImageGen {
                         got = try await generateWithRef(prompt: compose(ps), refs: ids, preset: preset)
                     } catch let e as ImageHTTPError {
                         if ids.count > 1 && [400, 413, 415, 422].contains(e.status) {
-                            return try update(messageId) {
-                                $0["media"] = .string("error")
-                                $0["refMulti"] = .string(preset.id)
-                                $0["mediaError"] = .string("生图接口拒绝了这次请求（传了 \(ids.count) 张参考图）。该接口可能不接受多张参考图：\(e.message.prefix(160))")
-                            }
+                            return .refRejected(preset.id, "生图接口拒绝了这次请求（传了 \(ids.count) 张参考图）。该接口可能不接受多张参考图：\(e.message.prefix(160))")
                         }
                         if !e.refUnsupported { throw e }
                         Diagnostics.shared.record("image-ref-unsupported", ["error": e.message])
                     }
                     // 存这一步在外面：存不进去不该把我们送去再画一张
-                    if let got {
-                        let id = try Images.save(got, maxPixel: 1024)
-                        return try update(messageId) { $0["imageId"] = .string(id); $0["media"] = .string("done"); $0["mediaError"] = .string("") }
-                    }
+                    if let got { return .image(try Images.save(got, maxPixel: 1024)) }
                 }
             }
 
@@ -488,16 +513,7 @@ enum ImageGen {
             let ps = parts(prompt: prompt, char: c2, all: all, settings: s, me: m2, lockChar: lockC, lockMe: lockM)
             let data = try await generate(prompt: compose(ps), negative: negativeOf(ps), preset: preset)
             // 存这一步失败不再画：图已经画回来了，重画一张也一样存不进去
-            let id = try Images.save(data, maxPixel: 1024)
-            return try update(messageId) {
-                $0["imageId"] = .string(id)
-                $0["media"] = .string("done")
-                $0["mediaError"] = .string("")
-            }
-        } catch is CancellationError {
-            return try? update(messageId) { $0["media"] = .string("off"); $0["mediaError"] = .string("") }
-        } catch {
-            return try? update(messageId) { $0["media"] = .string("error"); $0["mediaError"] = .string(error.localizedDescription) }
+            return .image(try Images.save(data, maxPixel: 1024))
         }
     }
 
@@ -571,6 +587,8 @@ enum ImageGen {
     /// 用户点了「重新生成」：改回 pending 再画一次。旧图不删：原生版不自己删图，留给「存储」里统一清理（网页版第 20 条）。
     static func regenerate(messageId: String) async throws -> Message? {
         guard var row = try Database.shared.get(Collections.messages, id: messageId), row.string("kind") == "image" else { return nil }
+        // 重画不删旧的那一张（4.861）：它留在版本表里，在「图片版本」页里还能挑回来
+        row["imageVers"] = ImageVersions.json(ImageVersions.of(row))
         row["imageId"] = .null
         row["media"] = .string("pending")
         row["mediaError"] = .string("")
