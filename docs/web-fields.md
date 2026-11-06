@@ -337,3 +337,55 @@ zip 只存不压：`character.json` 加 `images/<id>.<ext>`、`files/<id>.<ext>`
 scenes, works, chapters, beats, trips, spaceItems, skins, days, meals, health, phones, phoneChats, moments, reviews, readnotes, todos, playlists,
 songs, closet, wishes, ties, smsThreads, diaries, dreams, memsnaps, dramas, drafts, impressions, collection, mallPeople, mallItems, pets, cams,
 camLogs, quizRuns, boxes, slips, slipLog}`。群聊与只在群里生效的记忆不带；印象只带 imp 与 note。
+
+## 13. books 与 entries（记账，`ledger.js`，ARCHITECTURE 4.278、4.642、4.643、4.961）
+
+原生版读写经 `Prompt/Ledger.swift`。**余额不入库**：一律由流水现算；聊天里的转账、外卖、情侣账户的存入与动用也不另存流水，
+每次从消息现算（`chatEntries`，id 写成 `msg:<消息id>:<me|char|joint>`，src 为 message）。
+
+books（id 前缀 `bk`，没有查询字段）：
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| name | | 空着建时写「我的账本」（真实）或「未命名账本」 |
+| kind | play | real（真实账本）/ play（虚拟账本）。两种功能完全一样，只是标签 |
+| chatId | '' | 关联的对话（单聊）。关联了就有角色的钱包（owner char，名字是角色名） |
+| currency | 建时的 settings.currency | 这本账的币种；没有记的按设置里那一种 |
+| personaId | 建时的账号（isolate.tagNow） | 账号隔离用。关联了对话的按那段会话的账号算 |
+| accounts | [] | `[{id:'ac…', name, owner:'me'/'char'/'joint', secret:false, pass:'', hint:'', unlocked:false, kind:''/'transit'}]`。私密账户锁着时不计入合计、任何时候不进提示词 |
+| cards | [] | 亲属卡 `[{id:'cd…', from, to, limit, active:true, at}]`，同一个方向只留一张。用掉多少不入库，按时间顺序扫消息现算 |
+| rules | [] | 固定入账 `[{id:'rl…', accountId, day 1 到 31, amount（带符号）, category, note, active:true, by:''/'ai', from（建立时刻，不补此前）}]` |
+| inject | true（`!== false`） | 把余额告诉角色（区块 bill，`[你的钱]`） |
+| strict | true（`!== false`） | 余额不足时不予支付（角色的转账、请客、外卖、存入先核对；角色的钱没生成时不拦） |
+| settle | false | 排新一天日程时结算角色前一天的花销（src day，ref `角色id@日期#i项目id` / `#m餐次`） |
+| charMoney | null | 按角色卡生成的那份说明 `{summary, balance, income:[{day, amount, note}], expenses, at}`（ai/tasks/money.js） |
+
+entries（id 前缀 `en`，按 bookId 查）：`bookId, accountId, amount（正数进账、负数出账，按币种收位数）, category（大类 id）, sub（小类 id，可空）,
+note, at（毫秒）, src（manual / seed 起始余额 / rule 固定入账 / day 日程结算 / move 账户间挪钱 / 其余如 chat 对话里提取）, pending（待确认，不计入）,
+ref（rule 是 `规则id@YYYY-MM-DD`，move 两笔同一个 ref）, tripId（属于哪一次出行）`。seed、rule、day 的那几笔没有 sub、tripId。
+src 为 move 的余额照算，收支与构成不算。
+
+settings：`billBook`（当前看的那一本，'' 为第一本看得见的）、`ledgerCats`（`{tops:[{id:'u…', label, subs:[{id, label}]}], subs:{大类id:[{id, label}]}}`，
+自定义分类所有账本共用；名字最多 8 个字）、`currency`（CNY）、`rates`（`{'CNY>JPY': 20.5}`，一对只存一个方向）。
+
+personas：`isolate {moments, friends, wallet, album}`（4.960、4.961）：wallet 为真时只看这个账号下建的账本；friends 为真时卡包里列出的角色只限好友列表里的。
+原生版只读，开关与新账号的默认值随账号之间隔离一起做。
+
+## 14. 申请与卡包里的消息（`request.js`、`funcard.js`、`pass.js`、`ticket.js`、`member.js`、`idcard.js`，4.278、4.611、4.643、4.644）
+
+卡就是消息：状态全部从这些消息现算，不另存一份。处理过的那一行提示（kind notice）带 `settledId`、`settledKind`，删掉就回到没处理。
+
+| kind | 字段 | 说明 |
+|---|---|---|
+| request | requestKind joint/spend/card/deposit, amount, note, request pending/approved/rejected, currency | 申请。存入发出即 approved。content `[开设情侣账户]`、`[申请：用途 金额]`、`[亲属卡：额度 金额]`、`[存入情侣账户：金额]`，表态后加「（已通过）」「（已驳回）」。提示行 settledKind 'request' |
+| funcard | card {name, desc, uses（0 不限）, expiresAt（0 长期，截到那天最后一刻）, color, confirm}, cardImageId | 娱乐卡。role 是送出的一方，持有的是另一方。content `[送卡：名｜说明｜N 次｜YYYY-MM-DD 前有效｜使用需对方同意]` |
+| funcard-use | cardMsgId, cardName, useState pending/done/declined | 用一次。要确认的先 pending。提示行 settledKind 'funcard' |
+| pass | pass {kind door/key/room, name, place, note, tripId?, tripTitle?} | 门禁卡、钥匙、房卡。房卡挂着出行，出行结束算退房 |
+| pass-act | passMsgId, passName, act use/revoke/grant | 刷卡、收回、恢复。最后一次 revoke / grant 定收没收回 |
+| ticket | ticket {kind movie/show/match/other, title, at（毫秒，0 为未写）, venue, seat, note} | 票。过了开场那天的最后一刻还没检票算过期 |
+| ticket-act | ticketMsgId, ticketTitle, act check | 检票 |
+| member | member {shop, note} | 会员卡，两人共用，同一家店只开一张 |
+| member-act | memberMsgId, memberShop, points, note | 消费一次 |
+
+证件：`characters.idCard`、`personas.idCard`：`{kind work/student/other, org, title, no, dept}`，四项都空的不算有。不进提示词。
+能力 joint 是基线；funcard、pass、ticket、member 是新功能（featureOpt，app 'wallet'，第一次打开卡包时问）。

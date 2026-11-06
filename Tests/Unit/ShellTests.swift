@@ -5,7 +5,7 @@ import XCTest
 /// 导入的版式、壁纸、改过的图标与名字按网页版的读法读；没有存过版式时按默认画、不写回。
 final class ShellTests: StoreTestCase {
     func testShellDataFromWeb() {
-        XCTAssertEqual(Shell.apps.count, 32)
+        XCTAssertEqual(Shell.apps.count, 36)
         XCTAssertEqual(Shell.app("chat")?.name, "聊天")
         XCTAssertEqual(Shell.app("chat")?.icon, "message")
         for a in Shell.apps { XCTAssertNotNil(Shell.icons[a.icon], "\(a.id) 的图标 \(a.icon) 不在图标表里") }

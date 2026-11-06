@@ -3,7 +3,8 @@ import Foundation
 /// 互动：转账、礼物、拍一拍、回应、改备注。照网页版 transfer.js、gift.js、extras.js、reaction.js、remark.js。
 /// 不另调接口；落成的消息与字段和网页版一字不差，两边的备份互相读得懂。
 ///
-/// 余额：网页版在记账里把账本关联到对话时才核对余额。原生版还没有记账，不核对。
+/// 余额：这段对话绑了账本、账本开着「余额不足时不予支付」时，角色的转账、请客、外卖先核对余额（Ledger.broke）。
+/// 收下了的转账、落定的外卖由记账从这些消息现算，不另存流水（Ledger.chatEntries）。
 enum Interact {
     // MARK: - 货币（网页版 currency.js）
 
@@ -39,9 +40,26 @@ enum Interact {
     }
 
     /// 带符号，只给界面用。上下文里一律是纯数字。
+    /// 整数部分每三位一个逗号（网页版 4.768）：只在这里加，format 是写进标记的那个数，加了逗号就切不开了
     static func display(_ n: Double, _ code: String?) -> String {
         let c = currency(code)
-        return c.symbol.isEmpty ? format(n, c.code) : c.symbol + format(n, c.code)
+        let t = grouped(format(n, c.code))
+        return c.symbol.isEmpty ? t : c.symbol + t
+    }
+
+    static func grouped(_ s: String) -> String {
+        var body = s
+        var neg = ""
+        if body.hasPrefix("-") { neg = "-"; body.removeFirst() }
+        let digits = body.prefix { $0.isASCII && $0.isNumber }
+        guard digits.count > 3 else { return s }
+        let rest = body.dropFirst(digits.count)
+        var out = ""
+        for (i, ch) in digits.enumerated() {
+            if i > 0 && (digits.count - i) % 3 == 0 { out.append(",") }
+            out.append(ch)
+        }
+        return neg + out + rest
     }
 
     /// 写进 prompt 的那一句：这段对话用的是什么钱。
@@ -349,6 +367,11 @@ enum Interact {
               let row = try Database.shared.get(Collections.messages, id: id) else { return }
         if notice.row.string("settledKind") == "pact" {
             try Space.unsettlePact(notice)
+        } else if notice.row.string("settledKind") == "request" {
+            // 申请的通过与驳回（网页版 request.unsettle）：回到待处理；建出来的情侣账户与亲属卡留着
+            try LedgerRequest.unsettle(notice)
+        } else if notice.row.string("settledKind") == "funcard" {
+            try WalletCards.Fun.unsettle(notice)
         } else if notice.row.string("settledKind") == "gift" {
             guard row.string("kind") == "gift" else { return }
             try update(id) {

@@ -288,6 +288,8 @@ struct UsageLimitsView: View {
             "self.import": "按分区拆分我的人设",
             "impress.organize": "整理对我的印象",
             "impress.compare": "对照几位角色的印象",
+            "char.money": "按角色卡生成角色的钱",
+            "idcard.read": "从角色卡读取证件",
             "vision": "识图",
             "api.test": "测试连接",
             "image": "生图",

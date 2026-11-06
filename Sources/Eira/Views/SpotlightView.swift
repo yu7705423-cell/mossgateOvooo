@@ -267,7 +267,7 @@ struct FindPlaceView: View {
         "caps", "lore", "memory", "presets", "ban", "regex",
         "api", "routes", "memoryApi", "voice", "image", "music", "weather", "vision", "asr", "translateApi",
         "notify", "bgpush", "limits", "holidays", "appearance", "lockpin", "storage", "help", "feedback", "terms",
-        "time", "stickers", "personas", "favorites", "menuorder", "sent", "convorder", "ooc", "theater", "mcp",
+        "time", "stickers", "personas", "favorites", "menuorder", "sent", "convorder", "ooc", "theater", "mcp", "billCats",
     ]
 
     /// 这一项能不能点过去：没有页面的不能；搜索聊天记录要能打开会话
@@ -346,6 +346,7 @@ struct FindPlaceView: View {
         case "favorites": FavoritesView { c, _ in openChat?(c) }
         case "menuorder": MenuOrderView(kind: "msg")
         case "convorder": MenuOrderView(kind: "conv")
+        case "billCats": CatsView()
         default: EmptyState(title: "该功能没有可前往的页面")
         }
     }

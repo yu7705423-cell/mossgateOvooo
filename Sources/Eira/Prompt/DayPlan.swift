@@ -374,6 +374,8 @@ enum DayPlan {
         let w = await Weather.forChar(char, date: date)
         local["weather"] = w?.json ?? .null
         try save(charId, date: date, local)
+        // 排新一天的时候顺手把昨天的花销记账（网页版 tasks/day.js 的 settleYesterday）。不另调接口；账本上默认关着
+        do { try Ledger.settleYesterday(charId) } catch { Problems.report("昨天的花销未能记账：\(error.localizedDescription)") }
         do {
             let p = try await generatePlan(try Repo.character(charId) ?? char, date: date, settings: s, weather: w)
             return try save(charId, date: date, ["items": .array(p.items), "sleepAuto": .string(p.sleep), "planFailed": .string("")])

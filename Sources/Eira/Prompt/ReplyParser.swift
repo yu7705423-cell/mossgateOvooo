@@ -48,6 +48,10 @@ enum ReplyParser {
         case tool
         // 角色自行进出线下（网页版 4.721）：见面（text 是地点，可空）与回到线上
         case meet, part
+        // 情侣账户与亲属卡（网页版 request.js）：申请（extra 是种类 joint / spend / card / deposit，amount 金额，text 用途）、批准与驳回（flag）
+        case request, vote
+        // 卡包（网页版 4.611、4.643、4.644）：娱乐卡的送、用、同意；门禁卡的给、刷、收回与恢复；票券的送与检；会员卡的开与消费。字段在 info 里
+        case funGive, funUse, funVote, passGive, passAct, ticketGive, ticketCheck, memberOpen, memberVisit
     }
 
     struct Part: Equatable, Sendable {
@@ -74,6 +78,8 @@ enum ReplyParser {
         var html: String?
         /// 调用工具时写坏了的参数原文（不是合法的 JSON 对象）
         var bad: String?
+        /// 卡包那几种标记拆出来的几段（名字、地点、次数……），数字写成网页版拼进字符串的样子
+        var info: [String: String]?
     }
 
     struct Result: Sendable {
@@ -84,7 +90,7 @@ enum ReplyParser {
 
     // MARK: - 正则（网页版原文）
 
-    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|普通红包|专属红包|领红包|抢红包|红包|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改网名|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|卡片|card|小剧场互动|小剧场|theater|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
+    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|普通红包|专属红包|领红包|抢红包|红包|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改网名|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|送卡|用卡|送票|检票|开会员卡|会员卡消费|给门禁卡|给钥匙|给房卡|刷门禁卡|用钥匙|刷房卡|收回门禁卡|收回钥匙|收回房卡|恢复门禁卡|恢复钥匙|恢复房卡|卡片|card|小剧场互动|小剧场|theater|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
 
     private static let mark = regex(markPattern, [.caseInsensitive])
     private static let voiceTrans = regex(#"\s*[\[【(（]?\s*(?:译文|翻译|译|translation)\s*[:：]"#, [.caseInsensitive])
@@ -120,6 +126,11 @@ enum ReplyParser {
         lineMark("覆盖"),
     ]
     static let muteAllLine = lineMark("全员禁言|开启全员禁言")
+    static let jointLine = lineMark("开设情侣账户|开情侣账户|开通情侣账户|开通共同账户|开共同账户")
+    static let okayLine = lineMark("批准|同意|通过")
+    static let denyLine = lineMark("驳回|拒绝|不同意")
+    static let funOkLine = lineMark("同意用卡|允许用卡")
+    static let funNoLine = lineMark("不同意用卡|拒绝用卡")
     // 自行退群（网页版 4.733）：整行就是它
     static let leaveLine = lineMark("退群|退出群聊")
     // 角色自行进出线下（网页版 4.721 的 MEET_LINE、PART_LINE）。整行只能是这一个标记
@@ -492,6 +503,64 @@ enum ReplyParser {
                     p.extra = kind == "请客" ? "treat" : kind == "代付" ? "ask" : "self"
                     push(p)
                 }
+            case "申请", "亲属卡", "存入情侣账户", "存入共同账户":
+                // 和外卖同一种拆法，最后一个数是金额；读不出金额的整条丢掉（网页版 ASK_KINDS、CARD_KINDS、DEPOSIT_KINDS）
+                if let o = Interact.parseTakeout(body), o.amount > 0 {
+                    var p = Part(type: .request, text: kind == "亲属卡" ? "" : o.item)
+                    p.amount = o.amount
+                    p.extra = kind == "申请" ? LedgerRequest.spend : kind == "亲属卡" ? LedgerRequest.card : LedgerRequest.deposit
+                    push(p)
+                }
+            case "送卡":
+                if let o = WalletCards.Fun.parse(body) {
+                    var p = Part(type: .funGive, text: o.name)
+                    p.info = ["name": o.name, "desc": o.desc, "uses": WalletCards.numText(o.uses), "days": WalletCards.numText(o.days),
+                              "until": WalletCards.numText(o.until), "confirm": o.confirm ? "1" : ""]
+                    push(p)
+                }
+            case "用卡":
+                let name = body.trimmingCharacters(in: .whitespaces)
+                if !name.isEmpty { push(Part(type: .funUse, text: name)) }
+            case "送票":
+                let seg = ReplyParser.bars(body)
+                if !seg[0].isEmpty {
+                    var p = Part(type: .ticketGive, text: seg[0])
+                    p.info = ["title": seg[0], "when": seg[1], "venue": seg[2], "seat": seg[3]]
+                    push(p)
+                }
+            case "检票":
+                push(Part(type: .ticketCheck, text: body.trimmingCharacters(in: .whitespaces)))
+            case "开会员卡":
+                let seg = ReplyParser.bars(body)
+                if !seg[0].isEmpty {
+                    var p = Part(type: .memberOpen, text: seg[0])
+                    p.info = ["shop": seg[0], "note": seg[1]]
+                    push(p)
+                }
+            case "会员卡消费":
+                let seg = ReplyParser.bars(body)
+                if !seg[0].isEmpty {
+                    let pts = seg[1].range(of: #"\d+"#, options: .regularExpression).flatMap { Double(seg[1][$0]) } ?? 0
+                    var p = Part(type: .memberVisit, text: seg[0])
+                    p.info = ["shop": seg[0], "points": WalletCards.numText(pts.rounded()), "note": seg[2]]
+                    push(p)
+                }
+            case "给门禁卡", "给钥匙", "给房卡":
+                let seg = ReplyParser.bars(body)
+                var p = Part(type: .passGive, text: seg[0])
+                p.info = ["kind": WalletCards.Pass.kindByMark(kind)?.id ?? "door", "name": seg[0], "place": seg[1], "note": seg[2]]
+                push(p)
+            case "刷门禁卡", "用钥匙", "刷房卡":
+                let name = body.trimmingCharacters(in: .whitespaces)
+                var p = Part(type: .passAct, text: name)
+                p.info = ["act": "use", "kind": WalletCards.Pass.kindByMark(kind)?.id ?? "", "name": name]
+                push(p)
+            case "收回门禁卡", "收回钥匙", "收回房卡", "恢复门禁卡", "恢复钥匙", "恢复房卡":
+                let name = body.trimmingCharacters(in: .whitespaces)
+                let revoke = WalletCards.Pass.revokeMarks[kind] != nil
+                var p = Part(type: .passAct, text: name)
+                p.info = ["act": revoke ? "revoke" : "grant", "kind": WalletCards.Pass.revokeMarks[kind] ?? WalletCards.Pass.grantMarks[kind] ?? "", "name": name]
+                push(p)
             case "备注", "改备注":
                 push(Part(type: .remark, text: body))
             case "换头像":
@@ -672,6 +741,12 @@ enum ReplyParser {
             if ReplyParser.matches(ReplyParser.muteAllLine, t) { var p = Part(type: .muteAll, text: ""); p.flag = true; push(p); return }
             if ReplyParser.matches(ReplyParser.leaveLine, t) { push(Part(type: .leave, text: "")); return }
             if ReplyParser.matches(ReplyParser.rpClaimLine, t) { push(Part(type: .rpclaim, text: "")); return }
+            // 情侣账户：开设、批准、驳回各一行；娱乐卡的同意与不同意在批准、驳回之前认（网页版 reply.js 的顺序）
+            if ReplyParser.matches(ReplyParser.jointLine, t) { var p = Part(type: .request, text: ""); p.extra = LedgerRequest.joint; push(p); return }
+            if ReplyParser.matches(ReplyParser.funNoLine, t) { push(Part(type: .funVote, text: "")); return }
+            if ReplyParser.matches(ReplyParser.funOkLine, t) { var p = Part(type: .funVote, text: ""); p.flag = true; push(p); return }
+            if ReplyParser.matches(ReplyParser.okayLine, t) { var p = Part(type: .vote, text: ""); p.flag = true; push(p); return }
+            if ReplyParser.matches(ReplyParser.denyLine, t) { push(Part(type: .vote, text: "")); return }
             if ReplyParser.unsupportedLines.contains(where: { ReplyParser.matches($0, t) }) { return }
             if ReplyParser.matches(ReplyParser.silenceLine, t) {
                 push(Part(type: .silence, text: ""))
@@ -829,6 +904,13 @@ enum ReplyParser {
 
     static func regex(_ p: String, _ o: NSRegularExpression.Options) -> NSRegularExpression {
         try! NSRegularExpression(pattern: p, options: o)
+    }
+
+    /// 按竖线切成几段、去掉两头空白；不够的补空串（网页版 body.split(/[｜|]/)，取 seg[i] || ''）
+    static func bars(_ body: String, at least: Int = 4) -> [String] {
+        var seg = body.split(omittingEmptySubsequences: false, whereSeparator: { $0 == "|" || $0 == "｜" }).map { $0.trimmingCharacters(in: .whitespaces) }
+        while seg.count < least { seg.append("") }
+        return seg
     }
 
     static func matches(_ re: NSRegularExpression, _ s: String) -> Bool {

@@ -6,7 +6,7 @@ final class PanelTests: XCTestCase {
     func testDefaults() {
         let s = AppSettings(raw: [:])
         XCTAssertEqual(Panel.order(s).first, "lore")
-        XCTAssertEqual(Panel.more(s), ["lore", "video", "share", "dice", "card", "file"])
+        XCTAssertEqual(Panel.more(s), ["lore", "video", "share", "dice", "request", "card", "funcard", "file"])
         XCTAssertFalse(Panel.onPanel(s, group: false).contains("lore"))
         // 群里多了转账与红包（网页版 4.736）；红包只在群里
         XCTAssertEqual(Set(Panel.onPanel(s, group: true)), ["photo", "voice", "song", "offline", "transfer", "redpacket"])

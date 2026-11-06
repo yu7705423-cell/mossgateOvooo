@@ -476,6 +476,9 @@ enum ChatEngine {
     /// 改完状态，需要落一行提示的返回那一行；什么都不落的返回 nil。不是这几样的也返回 nil，交给 row(for:)。
     private static func effect(_ p: ReplyParser.Part, chat: Chat, char: Character, turnId: String) throws -> Message? {
         switch p.type {
+        case let t where LedgerChat.types.contains(t):
+            // 情侣账户与卡包（网页版 request.js、funcard.js、pass.js、ticket.js、member.js）
+            return try LedgerChat.effect(p, chat: chat, char: char, turnId: turnId)
         case .redpacket, .rpclaim, .leave, .selfnick:
             // 群红包、领红包、退群、改网名（网页版 4.736、4.733、4.947）
             return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
@@ -686,13 +689,16 @@ enum ChatEngine {
             m.row["value"] = .number(Double(value))
         case .transfer:
             guard !chat.isGroup, let a = p.amount, let t = try? Interact.transfer(make("transfer", ""), amount: a, note: p.text) else { return nil }
-            m = t
+            // 钱不够就不让这一笔发生，落一行说明（网页版 reply.js 的 broke；没绑账本、没开严格模式一律放行）
+            m = Ledger.broke(make("notice", ""), amount: a, what: "转账 \(Interact.format(a))") ?? t
         case .gift:
             guard let g = try? Interact.gift(make("gift", ""), cover: p.text, inner: p.extra ?? "") else { return nil }
             m = g
         case .takeout:
             guard let t = try? Interact.takeout(make("takeout", ""), kind: p.extra ?? "self", item: p.text, amount: p.amount ?? 0) else { return nil }
-            m = t
+            // 代付是让对方出钱，付不付得起由对方那边决定，不在这儿拦
+            let a = p.amount ?? 0
+            m = (p.extra ?? "self") == "ask" ? t : (Ledger.broke(make("notice", ""), amount: a, what: "\(p.text) \(Interact.format(a))") ?? t)
         case .song:
             m = make("song", "[分享歌曲：\(p.text)]")
             m.row["songQuery"] = .string(p.text)
@@ -721,7 +727,8 @@ enum ChatEngine {
             m = McpTools.make(p, chat: chat, char: char, turnId: turnId, autoRun: draw)
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick, .meet, .part:
             return nil
-        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot:
+        case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot,
+             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

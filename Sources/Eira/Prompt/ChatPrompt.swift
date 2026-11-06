@@ -166,6 +166,8 @@ enum ChatPrompt {
             "userSched": one("userSched") { UserSched.block(char: char, personaId: chat.personaId, userName: me?.name ?? "", settings: s, at: now) },
             // 你记着的事（网页版 context/plan.js）：「待办」里已计入、还没做的几条，条数 planCount
             "plan": one("plan") { Todo.planBlock(userName: me?.name ?? "", settings: s, now: now) },
+            // 你的钱（网页版 context/bill.js）：这段对话绑了账本、账本开着「把余额告诉角色」才有。数字本地按流水折好
+            "bill": one("bill") { Ledger.block(chat, now: now) },
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -433,6 +435,9 @@ enum ChatPrompt {
         func look(_ m: Message) {
             if m.kind == "pact" && m.row.string("pact") == Space.pactOpen { f.openPact = true }
             for k in pendingKinds where m.kind == k && m.row.string(k) == "pending" { f.pending.insert(k) }
+            // 挂着的申请、等同意的用卡（网页版 hasPending(msgs, 'request', …) 与 'funcard-use'）
+            if m.kind == "request" && m.row.string("request") == "pending" { f.pending.insert("request") }
+            if m.kind == "funcard-use" && m.row.string("useState") == "pending" { f.pending.insert("funcard-use") }
         }
         for m in src.msgs { look(m) }
         f.status = src.msgs
@@ -589,11 +594,11 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "impress", "pinned", "time", "recent", "geo", "badges",
-                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet"]
+                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -726,6 +731,47 @@ enum ChatPrompt {
             line: "Share your location: write a line on its own, [位置：place name, address]") {
             let tz = char.row.string("timezone")
             return Templates.render("skeleton.location", ["city": tz.isEmpty ? "" : " (you are in \(tz))"], settings: s)
+        }
+        // 情侣账户与亲属卡（网页版 capabilities.js 的 joint）：这段对话绑了账本才有；有一条申请挂着就给全文
+        cap("joint", on: Ledger.bookOfChat(chat.id) != nil,
+            hot: used(#"^request$|[\[【](申请|亲属卡|开设情侣账户|开通共同账户|存入情侣账户)"#) || pending("request"),
+            line: "Couple account and family card: write a line on its own,"
+                + " [开设情侣账户], [存入情侣账户：500], [申请：what it is for, amount], or [亲属卡：额度 2000];"
+                + " respond to a request with [批准] or [驳回]") {
+            Templates.get("skeleton.joint", settings: s)
+        }
+        // 卡包（网页版 4.611、4.643、4.644）：单聊里才有，新功能默认不注入（第一次打开卡包时问）。只写两边手里有什么
+        let single = !chat.row.bool("group") && chat.characterIds.count == 1
+        let userName: String = {
+            let ps = (try? Repo.personas()) ?? []
+            let n = (ps.first { $0.id == chat.personaId } ?? Isolate.current(ps, s))?.row.string("name") ?? ""
+            return n.isEmpty ? "the other party" : n
+        }()
+        cap("funcard", on: single, hot: used(#"^funcard|[\[【](送卡|用卡)"#) || pending("funcard-use"),
+            line: "Cards: write [送卡：name｜what the holder may ask for｜uses｜valid days] to give one,"
+                + " [用卡：name] to use one you hold; answer a use that needs your consent with [同意用卡] or [不同意用卡]") {
+            let f = WalletCards.Fun.facts(chat.id)
+            return Templates.render("skeleton.funcard", ["userName": userName, "mine": f.mine.isEmpty ? "(none)" : f.mine.joined(separator: "、"),
+                                                         "theirs": f.theirs.isEmpty ? "(none)" : f.theirs.joined(separator: "、"),
+                                                         "waiting": f.waiting.isEmpty ? "" : "\nWaiting for your consent: the other party is using \(f.waiting)."], settings: s)
+        }
+        cap("pass", on: single, hot: used(#"^pass|[\[【](给|刷|用|收回|恢复)(门禁卡|钥匙|房卡)"#),
+            line: "Access cards and keys: [给门禁卡：name｜place｜note] (or 给钥匙 / 给房卡) gives one; [刷门禁卡：name] (用钥匙 / 刷房卡)"
+                + " uses one you hold; [收回门禁卡：name] / [恢复门禁卡：name] takes back or restores access on one you gave") {
+            let f = WalletCards.Pass.facts(chat.id)
+            return Templates.render("skeleton.pass", ["userName": userName, "mine": f.mine.isEmpty ? "(none)" : f.mine.joined(separator: "、"),
+                                                      "given": f.given.isEmpty ? "(none)" : f.given.joined(separator: "、")], settings: s)
+        }
+        cap("ticket", on: single, hot: used(#"^ticket|[\[【](送票|检票)"#),
+            line: "Tickets: [送票：title｜date and time｜venue｜seat] gives one; [检票：title] checks in with one you hold") {
+            let f = WalletCards.Ticket.facts(chat.id)
+            return Templates.render("skeleton.ticket", ["userName": userName, "mine": f.mine.isEmpty ? "(none)" : f.mine.joined(separator: "、"),
+                                                        "theirs": f.theirs.isEmpty ? "(none)" : f.theirs.joined(separator: "、")], settings: s)
+        }
+        cap("member", on: single, hot: used(#"^member|[\[【](开会员卡|会员卡消费)"#),
+            line: "Shared membership cards: [开会员卡：shop｜note] opens one; [会员卡消费：shop｜points｜what was bought] records a visit") {
+            let cards = WalletCards.Member.facts(chat.id)
+            return Templates.render("skeleton.member", ["cards": cards.isEmpty ? "(none)" : cards.joined(separator: "、")], settings: s)
         }
         cap("takeout", on: char.row["canTakeout"]?.bool != false, hot: used(#"^takeout$|[\[【](外卖|请客|代付)"#) || pending("takeout"),
             line: "Order delivery: [外卖：item amount] for yourself, [请客：…] for them, [代付：…] paid by them; for an order they placed, write [要了] or [不要]") {

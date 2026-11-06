@@ -202,6 +202,30 @@ final class WebLogic: @unchecked Sendable {
                 p.bad = nonEmpty(s("bad"))
             case "meet": p = .init(type: .meet, text: str("place"))
             case "part": p = .init(type: .part, text: "")
+            case "request": p = .init(type: .request, text: str("note")); p.amount = num("amount"); p.extra = s("kind")
+            case "vote": p = .init(type: .vote, text: ""); p.flag = bool("ok")
+            case "funcard-give":
+                p = .init(type: .funGive, text: str("name"))
+                p.info = ["name": str("name"), "desc": str("desc"), "uses": WalletCards.numText(num("uses") ?? 0),
+                          "days": WalletCards.numText(num("days") ?? 0), "until": WalletCards.numText(num("until") ?? 0), "confirm": bool("confirm") ? "1" : ""]
+            case "funcard-use": p = .init(type: .funUse, text: str("name"))
+            case "funcard-vote": p = .init(type: .funVote, text: ""); p.flag = bool("ok")
+            case "pass-give":
+                p = .init(type: .passGive, text: str("name"))
+                p.info = ["kind": str("kind"), "name": str("name"), "place": str("place"), "note": str("note")]
+            case "pass-act":
+                p = .init(type: .passAct, text: str("name"))
+                p.info = ["act": str("act"), "kind": str("kind"), "name": str("name")]
+            case "ticket-give":
+                p = .init(type: .ticketGive, text: str("title"))
+                p.info = ["title": str("title"), "when": str("when"), "venue": str("venue"), "seat": str("seat")]
+            case "ticket-check": p = .init(type: .ticketCheck, text: str("title"))
+            case "member-open":
+                p = .init(type: .memberOpen, text: str("shop"))
+                p.info = ["shop": str("shop"), "note": str("note")]
+            case "member-visit":
+                p = .init(type: .memberVisit, text: str("shop"))
+                p.info = ["shop": str("shop"), "points": WalletCards.numText(num("points") ?? 0), "note": str("note")]
             default:
                 unmapped.append(type)
                 continue
@@ -266,6 +290,7 @@ final class WebLogic: @unchecked Sendable {
         if let v = p.to { s += " 给=\(v.debugDescription)" }
         if let v = p.count { s += " 个=\(v)" }
         if p.flag { s += " 真" }
+        if let v = p.info { s += " 段=" + v.keys.sorted().map { "\($0):\(v[$0] ?? "")" }.joined(separator: ",") }
         return s + ")"
     }
 }

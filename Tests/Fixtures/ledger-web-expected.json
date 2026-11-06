@@ -1,0 +1,661 @@
+{
+ "now": 1795176000000,
+ "bookId": "bk_mtvh6dc04a0wid",
+ "ranMid": 4,
+ "ranEnd": 2,
+ "balances": {
+  "acmtvh6dc0z93c": 26969.5,
+  "acmtvh6dc06qhp": -5636,
+  "acmtvi2iqospw2": 340,
+  "acmtvihyaobqt4": 47,
+  "acmtvilt6o76ct": 999
+ },
+ "accounts": [
+  {
+   "id": "acmtvh6dc0z93c",
+   "name": "现金",
+   "owner": "me",
+   "kind": "",
+   "secret": false
+  },
+  {
+   "id": "acmtvh6dc06qhp",
+   "name": "林",
+   "owner": "char",
+   "kind": "",
+   "secret": false
+  },
+  {
+   "id": "acmtvi2iqospw2",
+   "name": "情侣账户",
+   "owner": "joint",
+   "kind": "",
+   "secret": false
+  },
+  {
+   "id": "acmtvihyaobqt4",
+   "name": "地铁卡",
+   "owner": "me",
+   "kind": "transit",
+   "secret": false
+  },
+  {
+   "id": "acmtvilt6o76ct",
+   "name": "小金库",
+   "owner": "char",
+   "kind": "",
+   "secret": true
+  }
+ ],
+ "total": {
+  "all": 21720.5,
+  "me": 27016.5,
+  "char": -5636,
+  "joint": 340
+ },
+ "months": [
+  "2026-11",
+  "2026-10",
+  "2026-09"
+ ],
+ "stats": {
+  "2026-09": {
+   "month": "2026-09",
+   "income": 14187,
+   "expense": 3467.5,
+   "net": 10719.5,
+   "byCategory": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000
+    },
+    {
+     "id": "transfer",
+     "label": "转账",
+     "amount": 1196
+    },
+    {
+     "id": "shopping",
+     "label": "购物",
+     "amount": 120
+    },
+    {
+     "id": "umtvhe340icu",
+     "label": "追星",
+     "amount": 88
+    },
+    {
+     "id": "food",
+     "label": "餐饮",
+     "amount": 60.5
+    },
+    {
+     "id": "transit",
+     "label": "交通",
+     "amount": 3
+    }
+   ]
+  },
+  "2026-10": {
+   "month": "2026-10",
+   "income": 8000,
+   "expense": 2000,
+   "net": 6000,
+   "byCategory": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000
+    }
+   ]
+  },
+  "2026-11": {
+   "month": "2026-11",
+   "income": 8000,
+   "expense": 2000,
+   "net": 6000,
+   "byCategory": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000
+    }
+   ]
+  }
+ },
+ "spending": {
+  "2026-09": {
+   "month": "2026-09",
+   "total": 3467.5,
+   "rows": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000,
+     "count": 1,
+     "share": 0.5767844268204758,
+     "subs": [
+      {
+       "id": "",
+       "label": "未细分",
+       "amount": 2000,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    },
+    {
+     "id": "transfer",
+     "label": "转账",
+     "amount": 1196,
+     "count": 11,
+     "share": 0.34491708723864456,
+     "subs": [
+      {
+       "id": "",
+       "label": "未细分",
+       "amount": 1196,
+       "count": 11,
+       "share": 1
+      }
+     ]
+    },
+    {
+     "id": "shopping",
+     "label": "购物",
+     "amount": 120,
+     "count": 1,
+     "share": 0.03460706560922855,
+     "subs": [
+      {
+       "id": "clothes",
+       "label": "服饰",
+       "amount": 120,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    },
+    {
+     "id": "umtvhe340icu",
+     "label": "追星",
+     "amount": 88,
+     "count": 1,
+     "share": 0.025378514780100937,
+     "subs": [
+      {
+       "id": "",
+       "label": "未细分",
+       "amount": 88,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    },
+    {
+     "id": "food",
+     "label": "餐饮",
+     "amount": 60.5,
+     "count": 2,
+     "share": 0.017447728911319394,
+     "subs": [
+      {
+       "id": "lunch",
+       "label": "午餐",
+       "amount": 35.5,
+       "count": 1,
+       "share": 0.5867768595041323
+      },
+      {
+       "id": "umtvhgnpcifi",
+       "label": "夜宵",
+       "amount": 25,
+       "count": 1,
+       "share": 0.4132231404958678
+      }
+     ]
+    },
+    {
+     "id": "transit",
+     "label": "交通",
+     "amount": 3,
+     "count": 1,
+     "share": 0.0008651766402307138,
+     "subs": [
+      {
+       "id": "metro",
+       "label": "地铁公交",
+       "amount": 3,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    }
+   ]
+  },
+  "2026-10": {
+   "month": "2026-10",
+   "total": 2000,
+   "rows": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000,
+     "count": 1,
+     "share": 1,
+     "subs": [
+      {
+       "id": "",
+       "label": "未细分",
+       "amount": 2000,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    }
+   ]
+  },
+  "2026-11": {
+   "month": "2026-11",
+   "total": 2000,
+   "rows": [
+    {
+     "id": "home",
+     "label": "居住",
+     "amount": 2000,
+     "count": 1,
+     "share": 1,
+     "subs": [
+      {
+       "id": "",
+       "label": "未细分",
+       "amount": 2000,
+       "count": 1,
+       "share": 1
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "cards": [
+  {
+   "id": "cdmtvict407j2p",
+   "from": "char",
+   "to": "me",
+   "limit": 150,
+   "used": 85,
+   "left": 65
+  }
+ ],
+ "chatEntries": [
+  {
+   "id": "msg:msg_mtvhlsw0s475ia:me",
+   "accountId": "acmtvh6dc0z93c",
+   "amount": -200,
+   "cardId": "",
+   "note": "奶茶"
+  },
+  {
+   "id": "msg:msg_mtvhlsw0s475ia:char",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": 200,
+   "cardId": "",
+   "note": "奶茶"
+  },
+  {
+   "id": "msg:msg_mtvhpns02cjlny:char",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -88,
+   "cardId": "",
+   "note": ""
+  },
+  {
+   "id": "msg:msg_mtvhpns02cjlny:me",
+   "accountId": "acmtvh6dc0z93c",
+   "amount": 88,
+   "cardId": "",
+   "note": ""
+  },
+  {
+   "id": "msg:msg_mtvhusyoh3lnwg:char",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -30,
+   "cardId": "",
+   "note": "咖啡"
+  },
+  {
+   "id": "msg:msg_mtvhw39c2rjf7a:me",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -45,
+   "cardId": "cdmtvict407j2p",
+   "note": "寿司"
+  },
+  {
+   "id": "msg:msg_mtvhynuor9z9ps:char",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -33,
+   "cardId": "",
+   "note": "炸鸡"
+  },
+  {
+   "id": "msg:msg_mtvi3t1c2x1vwo:me",
+   "accountId": "acmtvh6dc0z93c",
+   "amount": -300,
+   "cardId": "",
+   "note": "存入情侣账户"
+  },
+  {
+   "id": "msg:msg_mtvi3t1c2x1vwo:joint",
+   "accountId": "acmtvi2iqospw2",
+   "amount": 300,
+   "cardId": "",
+   "note": "存入情侣账户"
+  },
+  {
+   "id": "msg:msg_mtvi53c0z78p2j:char",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -100,
+   "cardId": "",
+   "note": "存入情侣账户"
+  },
+  {
+   "id": "msg:msg_mtvi53c0z78p2j:joint",
+   "accountId": "acmtvi2iqospw2",
+   "amount": 100,
+   "cardId": "",
+   "note": "存入情侣账户"
+  },
+  {
+   "id": "msg:msg_mtvi6dmogexfap:joint",
+   "accountId": "acmtvi2iqospw2",
+   "amount": -60,
+   "cardId": "",
+   "note": "买机票"
+  },
+  {
+   "id": "msg:msg_mtvie3eoya3ke0:me",
+   "accountId": "acmtvh6dc06qhp",
+   "amount": -40,
+   "cardId": "cdmtvict407j2p",
+   "note": "面包"
+  },
+  {
+   "id": "msg:msg_mtvifdpcqhifqm:me",
+   "accountId": "acmtvh6dc0z93c",
+   "amount": -200,
+   "cardId": "",
+   "note": "鞋"
+  },
+  {
+   "id": "msg:msg_mtvigo0056sbbc:me",
+   "accountId": "acmtvh6dc0z93c",
+   "amount": -100,
+   "cardId": "",
+   "note": "电影"
+  }
+ ],
+ "charReady": true,
+ "context": {
+  "name": "和林一起记账",
+  "self": "-5636.00",
+  "selfName": "林",
+  "other": "26969.50",
+  "otherName": "小于",
+  "joint": "340.00",
+  "month": "2000.00",
+  "strict": true,
+  "hasJoint": true,
+  "cardHeld": null,
+  "cardGiven": {
+   "limit": "150.00",
+   "left": "65.00",
+   "to": "小于"
+  }
+ },
+ "bill": "\n\n[你的钱]\nYour balance: -5636.00 (林).\nBalance of 小于: 26969.50.\nCouple account (shared by the two of you): 340.00.\nYour spending this month: 2000.00.\nThese figures are computed by the system from the recorded entries. Write them exactly as given when an amount comes up. Do not substitute another figure, and do not estimate one yourself.\nAn amount you send is deducted from the balance above. A payment larger than the balance does not go through.",
+ "affordable": {
+  "me100": true,
+  "me1e5": false,
+  "char500": false,
+  "char1e5": false
+ },
+ "pending": [
+  "en_mtvhcstcopezi7"
+ ],
+ "labels": [
+  {
+   "id": "en_mtvin3hcfh794u",
+   "label": "其他"
+  },
+  {
+   "id": "en_mtvikiw02ut04k",
+   "label": "地铁公交"
+  },
+  {
+   "id": "en_mtvhhy005ujpir",
+   "label": "夜宵"
+  },
+  {
+   "id": "en_mtvhfdeodn0p74",
+   "label": "追星"
+  },
+  {
+   "id": "en_mtvhbiio88vkyx",
+   "label": "工资"
+  },
+  {
+   "id": "en_mtvha880k5i41h",
+   "label": "服饰"
+  },
+  {
+   "id": "en_mtvh8xxcmo73c3",
+   "label": "午餐"
+  }
+ ],
+ "categories": [
+  {
+   "id": "food",
+   "label": "餐饮",
+   "subs": [
+    "breakfast",
+    "lunch",
+    "dinner",
+    "takeout",
+    "drink",
+    "snack",
+    "fruit",
+    "grocery",
+    "umtvhgnpcifi"
+   ]
+  },
+  {
+   "id": "transit",
+   "label": "交通",
+   "subs": [
+    "metro",
+    "taxi",
+    "fuel",
+    "parking",
+    "train",
+    "flight",
+    "bike"
+   ]
+  },
+  {
+   "id": "shopping",
+   "label": "购物",
+   "subs": [
+    "clothes",
+    "beauty",
+    "digital",
+    "daily",
+    "furnish",
+    "books"
+   ]
+  },
+  {
+   "id": "home",
+   "label": "居住",
+   "subs": [
+    "rent",
+    "utility",
+    "property",
+    "phone",
+    "repair"
+   ]
+  },
+  {
+   "id": "fun",
+   "label": "娱乐",
+   "subs": [
+    "movie",
+    "game",
+    "show",
+    "sub",
+    "travel",
+    "sport"
+   ]
+  },
+  {
+   "id": "health",
+   "label": "医疗",
+   "subs": [
+    "clinic",
+    "medicine",
+    "checkup"
+   ]
+  },
+  {
+   "id": "social",
+   "label": "人情",
+   "subs": [
+    "gift",
+    "treat",
+    "redpacket",
+    "date"
+   ]
+  },
+  {
+   "id": "study",
+   "label": "学习",
+   "subs": [
+    "course",
+    "stationery",
+    "exam"
+   ]
+  },
+  {
+   "id": "pet",
+   "label": "宠物",
+   "subs": [
+    "petfood",
+    "petvet",
+    "petstuff"
+   ]
+  },
+  {
+   "id": "salary",
+   "label": "收入",
+   "subs": [
+    "wage",
+    "bonus",
+    "parttime",
+    "invest",
+    "gotred"
+   ]
+  },
+  {
+   "id": "transfer",
+   "label": "转账",
+   "subs": []
+  },
+  {
+   "id": "umtvhe340icu",
+   "label": "追星",
+   "subs": []
+  },
+  {
+   "id": "other",
+   "label": "其他",
+   "subs": []
+  }
+ ],
+ "funcard": {
+  "mine": [
+   "和好卡（剩 1 次，2030-01-01 前有效，使用需对方同意）"
+  ],
+  "theirs": [
+   "抱抱卡（不限次数）"
+  ],
+  "waiting": ""
+ },
+ "funStates": [
+  {
+   "id": "msg_mtviut9c5hlh0d",
+   "name": "抱抱卡",
+   "status": "active",
+   "used": 0,
+   "left": null,
+   "holder": "user"
+  },
+  {
+   "id": "msg_mtvipo2ozp8d6p",
+   "name": "和好卡",
+   "status": "pending",
+   "used": 1,
+   "left": 1,
+   "holder": "char"
+  }
+ ],
+ "pass": {
+  "mine": [
+   "门禁卡「楼下门禁」 (滨江花园 3 栋) - access revoked"
+  ],
+  "given": [
+   "钥匙「备用钥匙」"
+  ]
+ },
+ "passStates": [
+  {
+   "id": "msg_mtvizyg0gkrr68",
+   "name": "备用钥匙",
+   "revoked": false,
+   "uses": 0,
+   "holder": "user"
+  },
+  {
+   "id": "msg_mtviw3k0q2vavd",
+   "name": "楼下门禁",
+   "revoked": true,
+   "uses": 1,
+   "holder": "char"
+  }
+ ],
+ "ticket": {
+  "mine": [
+   "电影票「《花样年华》重映」 at 2030-10-20 19:30, 百老汇电影中心, seat 7 排 12 座"
+  ],
+  "theirs": []
+ },
+ "ticketStates": [
+  {
+   "id": "msg_mtvj2j1cpgevhd",
+   "title": "演唱会",
+   "at": 1898712000000,
+   "status": "checked",
+   "holder": "user"
+  },
+  {
+   "id": "msg_mtvj18qoqgjetm",
+   "title": "《花样年华》重映",
+   "at": 1918755000000,
+   "status": "active",
+   "holder": "char"
+  }
+ ],
+ "member": [
+  "「街角咖啡」 2 visits, 5 points"
+ ]
+}

@@ -5,6 +5,9 @@ import SwiftUI
 struct ChatMediaState {
     var redPacket = false
     var groupTransfer = false
+    /// 加号面板的「申请」「卡券」（网页版 RequestSheet；娱乐卡送进这段对话）
+    var request = false
+    var funcard = false
     var packetId: String?
     var versionsId: String?
 }
@@ -26,6 +29,12 @@ struct ChatMediaSheets: ViewModifier {
             }
             .sheet(isPresented: $state.groupTransfer, onDismiss: onChange) {
                 NavigationStack { GroupTransferView(chatId: chatId) }
+            }
+            .sheet(isPresented: $state.request, onDismiss: onChange) {
+                NavigationStack { LedgerRequestSheet(chatId: chatId) }
+            }
+            .sheet(isPresented: $state.funcard, onDismiss: onChange) {
+                NavigationStack { NewFunCardView(chatId: chatId) }
             }
             .sheet(item: Binding(get: { state.packetId.map { Target(id: $0) } }, set: { state.packetId = $0?.id }), onDismiss: onChange) { t in
                 NavigationStack { RedPacketDetailView(messageId: t.id) }

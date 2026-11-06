@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 格子多了一屏放不下，分两层：常用的留在面板上，其余收进「更多」。哪些留在面板上、按什么顺序由用户自己定，代码只给默认。
 /// 顺序（settings.panelOrder）与「在不在更多里」（settings.panelMore）分开存，和网页版同两个键：挪进挪出都不动顺序。
-/// 原生版还没有的格子（一起看、申请……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
+/// 原生版还没有的格子（一起看、生成视频……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
 enum Panel {
     struct Item: Identifiable, Equatable {
         let id: String
@@ -26,17 +26,21 @@ enum Panel {
         Item(id: "listen", icon: "headphone", label: "一起听"),
         Item(id: "song", icon: "music", label: "分享音乐"),
         Item(id: "takeout", icon: "bag", label: "外卖"),
+        // 情侣账户与亲属卡的申请（网页版 4.278）：这段对话要先关联账本
+        Item(id: "request", icon: "users", label: "申请"),
         Item(id: "pat", icon: "paw", label: "拍一拍"),
         Item(id: "share", icon: "compass", label: "共享位置"),
         Item(id: "dice", icon: "grid", label: "骰子"),
         Item(id: "offline", icon: "book", label: "线下"),
         Item(id: "file", icon: "folder", label: "文件"),
         Item(id: "card", icon: "layers", label: "卡片"),
+        // 娱乐卡（卡包，4.611）：送这个角色一张和好卡、亲亲卡之类
+        Item(id: "funcard", icon: "ticket", label: "卡券"),
     ]
 
     private static let all = items.map(\.id)
     /// 默认收进「更多」的：网页版 DEFAULT_MORE 里原生版也有的那几格
-    static let defaultMore = ["lore", "video", "share", "dice", "card", "file"]
+    static let defaultMore = ["lore", "video", "share", "dice", "request", "card", "funcard", "file"]
     /// 群里说得通的那几格（网页版 GROUP_TAPS）：转账、礼物、通话这些都是对着一个人的
     static let groupOK: Set<String> = ["photo", "voice", "dice", "song", "offline", "transfer", "redpacket"]
     /// 只在群里有的格子：红包（私聊里不出现）

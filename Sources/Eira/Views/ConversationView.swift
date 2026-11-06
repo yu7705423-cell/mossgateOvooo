@@ -1051,6 +1051,8 @@ struct ConversationView: View {
         case "redpacket": panelButton("gift", "红包") { if isGroup { media.redPacket = true } }
         case "gift": panelButton("gift", "礼物") { composing = .gift }
         case "takeout": panelButton("bag", "外卖") { composing = .takeout }
+        case "request": panelButton("users", "申请") { media.request = true }
+        case "funcard": panelButton("ticket", "卡券") { media.funcard = true }
         case "location": panelButton("map", "位置") { composing = .location }
         case "pat": panelButton("paw", "拍一拍") { post { try ChatEngine.pat(chatId: chatId) } }
         case "share": panelButton("compass", "共享位置") { showGeo = true }
@@ -1798,6 +1800,7 @@ struct ConversationView: View {
             do {
                 let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
                                   : m.kind == "takeout" ? Interact.settleTakeout(m.id, take: yes)
+                                  : LedgerBubble.kinds.contains(m.kind) ? LedgerBubble.settle(m, yes)
                                   : Interact.settleTransfer(m.id, take: yes))
                 if let notice { _ = try Repo.append(notice) }
                 reload()
@@ -2475,7 +2478,7 @@ struct MessageRow: View, Equatable {
                         EmptyView()
                     case "side":
                         sideLine(SpecialCards.sideLabel(message) ?? "")
-                    case let k where SpecialCards.kinds.contains(k):
+                    case let k where SpecialCards.kinds.contains(k) || LedgerBubble.kinds.contains(k):
                         bubbleRow
                     default:
                         centered(message.content)
@@ -2981,6 +2984,8 @@ struct MessageRow: View, Equatable {
         case "forward":
             ForwardCard(message: message)
                 .onTapGesture { onAction?(.openForward) }
+        case let k where LedgerBubble.kinds.contains(k):
+            LedgerBubble(message: message, mine: mine) { onAction?(.settle($0)) }
         case let k where SpecialCards.kinds.contains(k):
             if let face = SpecialCards.face(message) { specialCard(face) } else { bubble(message.content) }
         default:
