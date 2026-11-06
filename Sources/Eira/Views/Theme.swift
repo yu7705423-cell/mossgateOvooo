@@ -41,6 +41,10 @@ enum Theme {
     static let groupLine = pair(hex(0x000000, 0.07), hex(0xFFFFFF, 0.08))
     /// 默认头像与无图格子的底（--cat-bg）
     static let catBg = pair(hex(0xEDEDEC), hex(0x222224))
+    /// 小剧场的幕布（网页版 --th-*，4.769）：深浅两套都是暗的，不跟主题走。只取中性的灰
+    static let curtain = pair(hex(0x171717), hex(0x171717))
+    static let curtainInk = pair(hex(0xF2F2F2), hex(0xF2F2F2))
+    static let curtainDim = pair(hex(0xF2F2F2, 0.64), hex(0xF2F2F2, 0.64))
 
     /// 群聊旁白前面的名字按成员轮着配的八种颜色（网页版 --narr-p1 到 --narr-p8，4.648）。我写的那一行用 text2
     static let narrPalette: [Color] = [

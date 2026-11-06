@@ -79,8 +79,17 @@ extension ChatPrompt {
 
     /// 离场与进场的写法：不止一个人在场、或者有人可以进来时才给。只说标记怎么写，不说什么时候该用（第 16 条）
     private static func sceneExits(_ scene: Row, settings s: AppSettings) -> String {
-        guard Scenes.presentOf(scene).count > 1 || !Scenes.enterable(scene).isEmpty else { return "" }
-        return "\n\n" + Templates.get("skeleton.scene-exits", settings: s)
+        // 角色自己收场（网页版 4.723）：「自行进出线下」开着才告诉它怎么写，关了一个字都没有
+        let end = Meet.sceneEndPiece(scene, s)
+        guard Scenes.presentOf(scene).count > 1 || !Scenes.enterable(scene).isEmpty else { return end }
+        return "\n\n" + Templates.get("skeleton.scene-exits", settings: s) + end
+    }
+
+    /// 篇幅：这一场自己填了的优先，没填用「用量与上限」里那一项，两边都没填不写（网页版 engine.wordsOf，4.690）
+    static func wordsOf(_ scene: Row, _ s: AppSettings) -> Int {
+        let own = scene.number("words") ?? Double(scene.string("words")) ?? 0
+        let v = own > 0 ? own : s.num("sceneWords", 0)
+        return max(0, Int(v.isFinite ? v.rounded() : 0))
     }
 
     private static func sceneBooks(_ scene: Row) -> (off: [String], on: [String]) {
@@ -130,7 +139,7 @@ extension ChatPrompt {
         P["setup"] = sceneSetup(scene, others: others, settings: s)
         // 时刻仍走线上那套协议：模型写 [时间：…]，本地摘下来记在这一段上
         P["time"] = Templates.get("skeleton.time", settings: s)
-        let words = max(0, Int(s.num("sceneWords", 0)))
+        let words = wordsOf(scene, s)
         if words > 0 { P["length"] = Templates.render("skeleton.scene-length", ["words": "\(words)"], settings: s) }
         let style = Templates.fill(Tone.forScene(scene, s), names)
         if !style.isEmpty { P["style"] = Templates.render("skeleton.scene-style", ["text": style], settings: s) }
@@ -189,7 +198,7 @@ extension ChatPrompt {
         P["sceneRules"] = Templates.render("skeleton.scene-ensemble-rules", names, settings: s) + sceneExits(scene, settings: s)
         P["setup"] = sceneSetup(scene, others: cast, settings: s)
         P["time"] = Templates.get("skeleton.time", settings: s)
-        let words = max(0, Int(s.num("sceneWords", 0)))
+        let words = wordsOf(scene, s)
         if words > 0 { P["length"] = Templates.render("skeleton.scene-length", ["words": "\(words)"], settings: s) }
         let style = Templates.fill(Tone.forScene(scene, s), names)
         if !style.isEmpty { P["style"] = Templates.render("skeleton.scene-style", ["text": style], settings: s) }

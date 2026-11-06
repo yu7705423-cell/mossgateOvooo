@@ -32,6 +32,9 @@ struct CanonView: View {
                     NavigationLink { CapsView() } label: {
                         IconRow(title: "能力", icon: "sliders", value: "开启 \(CapsView.onCount(model.s)) / \(CapsView.caps.count)")
                     }
+                    NavigationLink { McpHomeView() } label: {
+                        IconRow(title: "MCP 工具", icon: "plug", value: McpTools.servers(model.s).isEmpty ? "未添加" : "\(McpTools.servers(model.s).count) 台服务器")
+                    }
                 } header: { GroupTitle("角色能做什么") }
             }
             .heroTitle("设定集", heroShown: hero)
@@ -1452,8 +1455,11 @@ struct CapsView: View {
         Cap(id: "location", label: "共享位置", group: "生活", info: "角色可以共享位置"),
         Cap(id: "listen", label: "一起听、点歌、分享歌曲与歌单", group: "一起", info: "角色可以邀请一起听、点歌、分享歌曲与歌单"),
         Cap(id: "ring", label: "打电话过来", group: "一起", info: "角色可以给用户打语音电话。正在看这段会话时响铃，否则记为未接来电。接听后每说一轮调用一次接口，与自己打出去相同"),
+        Cap(id: "theater", label: "小剧场", group: "互动", info: "角色可以在对话里写一页小剧场，以卡片形式显示，点开可全屏查看与互动"),
+        Cap(id: "meet", label: "自行进出线下", group: "一起", info: "角色可以按对话自己提出见面，由你选就在聊天里、单独页面或不去；面对面时角色也可以自己回到线上，线下长文那一场里也可以自己收场"),
+        Cap(id: "mcp", label: "调用工具（MCP）", group: "工具", info: "角色可以调用已连接的 MCP 工具"),
     ]
-    static let groups = ["消息", "互动", "社交", "生活", "一起", "群聊"]
+    static let groups = ["消息", "互动", "社交", "生活", "一起", "群聊", "工具"]
     /// 开关不在这里的
     static let elsewhere: [(label: String, info: String)] = [
         ("旁白", "开关在会话菜单的「旁白」中"), ("心声", "开关、写法与样式在会话菜单的「心声」中"),

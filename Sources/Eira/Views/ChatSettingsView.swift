@@ -156,6 +156,10 @@ struct ChatSettingsView: View {
         }
         add("inner", "玩法", "心声", Self.innerLabel(InnerVoice.mode(c)), keys: "想法 内心 显示方式 样式 字色 字号",
             dest: AnyView(InnerSetPageView(chatId: chatId)))
+        // 小剧场（网页版 4.769）：写法、生成方式、进上下文的方式、文风、字数、框架
+        let theaterOn = NewFeat.anyOn("theater", AppSettings.load(), chars: c.characterIds.compactMap { (try? Repo.character($0)) ?? nil })
+        add("theater", "玩法", "小剧场", !theaterOn ? "未开启" : Theater.cfg(c).mode == Theater.separate ? "打开时生成" : "角色直接写",
+            keys: "小剧场 网页 互动页面 html 剧场", dest: AnyView(TheaterPageView(chatId: chatId)))
         add("extras", "输入栏", "互动", c.isGroup ? "旁白 · 我也写旁白" : "旁白 · 拍一拍 · \(ChatEngine.diceFaces(c)) 面骰子",
             keys: "旁白 我也写旁白 草稿箱 拍一拍 后缀 骰子 几面",
             dest: AnyView(ExtrasPageView(chatId: chatId)))

@@ -2455,7 +2455,8 @@ struct MessageRow: View, Equatable {
             } else {
                 Group {
                     switch message.kind {
-                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card", "redpacket":
+                    case "text", "image", "clip", "voice", "sticker", "location", "dice", "transfer", "gift", "takeout", "call", "song", "forward", "card", "redpacket",
+                         Theater.kind, McpTools.kind, Meet.kind:
                         bubbleRow
                     case "voiceover":
                         // 画外音（4.1018）：居中一行，不算群里谁的消息
@@ -2945,6 +2946,12 @@ struct MessageRow: View, Equatable {
             SongCard(message: message)
         case "card":
             HtmlCardBubble(message: message, char: char, meName: meName, meAvatar: meAvatar, mine: mine)
+        case Theater.kind:
+            TheaterBubble(message: message, char: char, meName: meName, meAvatar: meAvatar)
+        case McpTools.kind:
+            ToolBubble(message: message)
+        case Meet.kind:
+            MeetCard(message: message, char: char)
         case "voice":
             VoiceBubble(message: message, mine: mine) { onAction?(.revoice) }
         case "location":

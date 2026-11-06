@@ -304,6 +304,14 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 | messages | kind 'ooc' | 场外的问与答，不进记忆；visible 时以 [场外：…] / [场外回复：…] 进历史 |
 | messages（这一轮第一条） | oocCheck 'tried' / 'ok' / 'issues' / 'failed', oocIssues [{card, reply, fix}], oocError, oocDismissed | 自动检查的结果。先写 tried 再发 |
 | lorebooks | oocFor | 角色 id：这一本是那个角色的纠偏书（花园公开包不带） |
+| chats | theater {mode:'inline', gen:'free', cardName:'', inject:'text', style:'', words:0, frame:'', bgm:true, bgmAuto:true} | 小剧场的会话设置（4.769、4.862）。separate 为打开时生成 |
+| messages | kind 'theater'、theater {title, brief, html, inject, acts[], gen, card {name, values}, bgm} | 小剧场。content 是上下文里的写法（theater.promptOf）。html 为空是封面。原生版背景音乐只记歌名（bgmQuery），网页版的 bgm 原样留着 |
+| messages | kind 'tool'、toolName、toolTitle、toolServerId、toolArgs {}、toolState ask/running/done/error/denied、toolResult、toolError、toolAt | 调用 MCP 工具（4.179）。content `[调用：名字 {参数}]`；历史里跟一条 `[工具结果：名字]` |
+| settings.services | mcp.servers [{id, name, url, headers, authName, authValue, timeout:60, approve:'ask', toolsOff[], tools[], info, gen, version, checkedAt, error, viaRelay}] | MCP 服务器（4.179、4.973）。令牌与请求头同接口密钥一样处理。原生版不经转发站，viaRelay 原样留着 |
+| characters | mcpServers [] | 这个角色能用哪几台服务器 |
+| settings | mcpFollowUp false, mcpFollowMax 1, mcpResultChars 4000 | 工具结果回来后接着回复（默认关，登记为额外调用）、最多几轮、结果给角色读多少字 |
+| messages | kind 'meet'、meet {place, state 'pending'/'here'/'page'/'declined', sceneId} | 角色提出见面（4.721）。不去时另落一条 kind 'notice'、meetNo、`[未答应见面]` |
+| scenes | words 0 | 这一场的篇幅（4.690），0 用 settings.sceneWords |
 
 ## 11. impressions（角色眼中的你，4.346）
 

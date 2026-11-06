@@ -151,10 +151,14 @@ enum SceneRun {
         let (thought, think) = ReplyParser.stripThink(raw)
         let (stamped, stamp) = ReplyParser.stripStamps(thought)
         let at = stampInner(stamp)
-        let (body0, trans) = splitProse(StatusBar.lift(stamped).text)
+        let (body00, trans) = splitProse(StatusBar.lift(stamped).text)
         guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
+        // 角色自己收场（网页版 4.723）：单独一行 [回到线上]。功能关着时照样从正文里摘掉，但不收场
+        let cut = Meet.takeSceneEnd(body00)
+        let body0 = cut.text
+        let ends = cut.ending && Meet.capOn(char)
         let ex = takeExits(body0, allowed: Scenes.enterable(fresh), alias: alias(fresh))
-        if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty { throw StoreError(message: "模型返回了空内容") }
+        if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty && !ends { throw StoreError(message: "模型返回了空内容") }
         var notes: [String] = []
         var done: Row?
         if !ex.text.isEmpty {
@@ -177,6 +181,11 @@ enum SceneRun {
         if ex.leave { try Scenes.leave(sceneId, char.id); notes.append("\(char.name)离场") }
         if !ex.unknown.isEmpty {
             Diagnostics.shared.record("scene-enter-unknown", ["names": ex.unknown.joined(separator: "、")])
+        }
+        // 和你点「只收场」一样：不调接口、不整理记忆
+        if ends, (Scenes.get(sceneId)?.number("endedAt") ?? 0) == 0 {
+            try Scenes.end(sceneId)
+            notes.append("\(char.name)结束了这一场，回到线上")
         }
         return (done, notes)
     }
@@ -238,6 +247,8 @@ enum SceneRun {
             for char in present {
                 // 这一轮里前面写了 [离场] 的，后面的人看得见；离开了的不再写
                 if let v = Scenes.get(sceneId).flatMap({ Scenes.leftMap($0)[char.id] }), v != .null { continue }
+                // 前面的人收了场，后面的人不再写
+                if (Scenes.get(sceneId)?.number("endedAt") ?? 0) > 0 { break }
                 try await one(char)
             }
             return round
@@ -256,6 +267,7 @@ enum SceneRun {
         guard !sections.isEmpty else { throw StoreError(message: "模型返回了空内容") }
         for sg in sections {
             let cur = Scenes.get(sceneId)
+            if (cur?.number("endedAt") ?? 0) > 0 { break }
             var away = false
             if let cur {
                 let gone = Scenes.leftMap(cur)[sg.char.id].map { v in v != .null } ?? false

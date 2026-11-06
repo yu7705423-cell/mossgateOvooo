@@ -179,6 +179,9 @@ enum MsgPreview {
         case "sticker": return "[表情]"
         case "image": return "[图片]"
         case "charshot": return "[聊天截图]"
+        case "theater": return with("小剧场", r["theater"]?["title"]?.string ?? "")
+        case "tool": return "[调用工具]"
+        case "meet": return "[想见面]"
         case "voice": return "[语音]"
         case "clip": return "[视频]"
         case "silence": return r.bool("reacted") ? "已读，仅回应" : "已读，未回复"

@@ -265,6 +265,8 @@ enum ChatPrompt {
                 // 角色从前那几条带着译文读回去（网页版 engine.js）：历史里没有译文，模型接着就不写了
                 let tr = chat.row.string("translateTo").isEmpty ? "" : m.row.string("translation").trimmingCharacters(in: .whitespacesAndNewlines)
                 out.append(AIMessage(role: .assistant, content: tr.isEmpty ? text : "\(text) [译文：\(tr)]"))
+                // 调用工具：结果紧跟在后面，以对方那一侧的一条读进去（网页版 mcptools.resultFor）
+                if m.kind == McpTools.kind { out.append(AIMessage(role: .user, content: McpTools.resultFor(m, s))) }
             } else {
                 out.append(AIMessage(role: .user, content: text, images: m.role == .user ? imagesOf(m) : []))
             }
@@ -591,12 +593,12 @@ enum ChatPrompt {
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick", "charshot"]
+                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties",
-                                                 "grouppay", "groupleave"]
+                                                 "grouppay", "groupleave", "meet", "theater"]
     /// 新功能里按角色另选过的那几项（网页版 4.882）：on 里已经按这个角色（群里按各成员）算过，不再只看全局
     private static let perCharFeat: Set<String> = ["grouppay", "groupleave", "selfnick"]
 
@@ -785,6 +787,19 @@ enum ChatPrompt {
         let cardHits = phase("caps.cards") { HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s) }
         cap("card", on: !cardHits.isEmpty, hot: true, line: nil) {
             Templates.render("skeleton.card", ["cards": HtmlCard.promptList(cardHits)], settings: s)
+        }
+        // 调用工具（网页版 capabilities.js 的 mcp）：角色卡上勾了服务器、连接过取回了工具才有，一直给整段（不知道参数长什么样就调不对）
+        let mcpList = phase("caps.mcp") { McpTools.toolList(char, s) }
+        cap("mcp", on: !mcpList.isEmpty, hot: true, line: nil) {
+            Templates.render("skeleton.mcp", ["tools": mcpList], settings: s)
+        }
+        // 小剧场（网页版 4.769，新功能默认不注入）：开着就给整段，写页面要知道 eira.say 与用户写的文风、框架
+        cap("theater", on: true, hot: true, line: nil) { Theater.capText(chat, s) }
+        // 自行进出线下（网页版 4.721，新功能默认不注入）：不在线下时给 [见面]，面对面时给 [回到线上]；会话里正演着一场内嵌的线下长文时两样都不给
+        let faceOn = Face.on(chat)
+        cap("meet", on: Meet.openInline(chat.id) == nil, hot: faceOn || recent.contains { $0.kind == Meet.kind },
+            line: faceOn ? "Part ways: write [回到线上] on its own line." : "Meet in person: write [见面：place] on its own line.") {
+            Templates.get(faceOn ? "skeleton.meet-end" : "skeleton.meet", settings: s)
         }
         // 撤回动态那一半（网页版 capabilities.js 的 postLine）：最近一条还挂着的动态是什么。没有就不提
         let livePost = phase("caps.posts") { Moments.by(char.id).first(where: { !$0.recalled }) }

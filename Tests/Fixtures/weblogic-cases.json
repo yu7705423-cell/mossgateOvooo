@@ -270,6 +270,30 @@
   },
   {
    "raw": "\u597d\u7684\n[\u7ea2\u5305\uff1aabc]"
+  },
+  {
+   "raw": "\u597d\u5440\n[\u5c0f\u5267\u573a\uff1a\u5496\u5561\u9986\u70b9\u5355]\n```html\n<div>\u83dc\u5355</div>\n<button onclick=\"eira.say('\u70b9\u4e86\u62ff\u94c1')\">\u62ff\u94c1</button>\n```\n[/\u5c0f\u5267\u573a]\n\u770b\u770b"
+  },
+  {
+   "raw": "[\u5c0f\u5267\u573a\uff1a\u4fdd\u9669\u67dc\uff5c\u4f60\u5f97\u731c\u5bc6\u7801]\n\u5c31\u8fd9\u6837"
+  },
+  {
+   "raw": "[\u5c0f\u5267\u573a\uff1a\u6ca1\u6536\u5c3e]\n<div>a</div>\n<p>b</p>"
+  },
+  {
+   "raw": "[\u5c0f\u5267\u573a\u4e92\u52a8\uff1a\u70b9\u4e86\u62ff\u94c1]\n\u597d"
+  },
+  {
+   "raw": "\u67e5\u4e00\u4e0b\n[\u8c03\u7528\uff1asearch {\"q\": \"a]b\", \"n\": 1}]\n\u7b49\u7b49"
+  },
+  {
+   "raw": "[\u8c03\u7528\uff1aping]"
+  },
+  {
+   "raw": "[\u8c03\u7528\uff1abad {oops}]"
+  },
+  {
+   "raw": "[\u89c1\u9762\uff1a\u5496\u5561\u9986]\n[\u89c1\u9762]\n[\u56de\u5230\u7ebf\u4e0a]"
   }
  ]
 }

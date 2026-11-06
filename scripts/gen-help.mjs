@@ -20,11 +20,11 @@ const APPS = {
   'ApiSettingsView.swift': '设置', 'BgPushView.swift': '设置', 'ExportView.swift': '设置', 'FeedbackView.swift': '设置',
   'ImageSettingsView.swift': '设置', 'ImportView.swift': '设置', 'NotifyView.swift': '设置', 'OnboardingView.swift': '设置',
   'SettingsView.swift': '设置', 'HolidayViews.swift': '设置', 'AppearanceViews.swift': '设置', 'PinViews.swift': '设置', 'TraceViews.swift': '设置', 'StorageView.swift': '设置', 'UsageLimitsView.swift': '设置', 'VoiceViews.swift': '设置',
-  'CanonViews.swift': '设定集', 'LoreViews.swift': '设定集', 'MemoryViews.swift': '设定集',
+  'CanonViews.swift': '设定集', 'LoreViews.swift': '设定集', 'MemoryViews.swift': '设定集', 'McpViews.swift': '设定集',
   'CardImportView.swift': '联系', 'ContactPages.swift': '联系', 'ContactsView.swift': '联系', 'ImpressViews.swift': '联系', 'SelfViews.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系', 'FaceLockViews.swift': '联系', 'AvatarPoolViews.swift': '联系',
   'ChatLookView.swift': '聊天', 'AbilitiesPage.swift': '聊天', 'ChatSettingsView.swift': '聊天', 'ChatMenuPages.swift': '聊天', 'SummaryPage.swift': '聊天', 'ConversationView.swift': '聊天', 'ForwardViews.swift': '聊天', 'ChatUIViews.swift': '聊天', 'ChatMediaViews.swift': '聊天',
   'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'SkinCompareView.swift': '聊天', 'StatusBarViews.swift': '聊天',
-  'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'OocViews.swift': '聊天', 'MetaViews.swift': '聊天', 'NewFeatViews.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天', 'BondViews.swift': '聊天', 'BadgeDefViews.swift': '聊天', 'CardViews.swift': '聊天',
+  'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'OocViews.swift': '聊天', 'MetaViews.swift': '聊天', 'NewFeatViews.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天', 'BondViews.swift': '聊天', 'BadgeDefViews.swift': '聊天', 'CardViews.swift': '聊天', 'TheaterViews.swift': '聊天', 'MeetViews.swift': '聊天',
   'DailyViews.swift': '日常', 'UserSchedViews.swift': '日常', 'DiaryViews.swift': '日记', 'TodoViews.swift': '待办', 'MusicViews.swift': '音乐', 'HomeEditViews.swift': '主屏', 'HomeArrangeViews.swift': '主屏', 'HomeScreen.swift': '主屏', 'CustomWidget.swift': '主屏', 'CustomWidgetData.swift': '主屏',
   'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康', 'TheirsViews.swift': '角色手机',
 };

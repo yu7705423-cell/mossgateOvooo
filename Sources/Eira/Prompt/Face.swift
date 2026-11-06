@@ -90,7 +90,7 @@ enum Face {
 
     /// 线下时给哪些能力：面对面说得通的那几样（转账、外卖、表情、图片、语音、打电话九成不成立）
     static let caps: Set<String> = ["narration", "inner", "time", "translate", "quote", "dice", "gift", "award",
-                                    "closetact", "remark", "recall", "card", "mcp"]
+                                    "closetact", "remark", "recall", "card", "mcp", "meet", "theater"]
 
     /// 历史里「以下当面」那一行：带着地点、时刻
     static func markText(_ info: [String: JSONValue], settings s: AppSettings) -> String {

@@ -188,6 +188,19 @@ struct UsageLimitsView: View {
             }
 
             Section {
+                Toggle("工具结果回来后角色接着回复", isOn: model.bool("mcpFollowUp", false))
+                if s.raw["mcpFollowUp"]?.bool == true {
+                    NumberRow(title: "每条消息最多接着回复几次", value: model.number("mcpFollowMax", 1), unit: "次", placeholder: "不限")
+                }
+                NumberRow(title: "工具结果给角色读多少字", value: model.number("mcpResultChars", 4000), unit: "字", placeholder: "整段")
+            } header: {
+                Text("MCP 工具")
+            } footer: {
+                Text(s.raw["mcpFollowUp"]?.bool == true ? "再调用一次主用接口，让角色读到结果后接着回复。" : "不额外调用接口。")
+                HelpNote("关闭时，工具结果留在对话中，角色在下一次回复时读到。开启后，角色调用的 MCP 工具有了结果（包括失败与被拒绝）之后，再调用一次主用接口，让角色读到结果后接着回复；从你发出一条消息算起，角色调用工具、读到结果、再调用，最多填写的轮数，填 0 表示不限。工具结果在之后每一轮请求中都会随那次调用一并发送，按填写的字数截断，填 0 表示整段发送，结果较长时会明显增加每次请求的长度。", title: "MCP 工具")
+            }
+
+            Section {
                 Toggle("自动生成关系底色", isOn: model.bool("bondAuto", false))
             } footer: {
                 Text("开启后多调用一次接口。")
@@ -284,6 +297,7 @@ struct UsageLimitsView: View {
             "memory.bond": "压缩关系底色",
             "memory.extract": "总结记忆",
             "inner.voice": "心声单独生成",
+            "theater.page": "小剧场 · 单独生成",
             "chat.call": "通话",
             "call.summary": "通话总结",
             "chat.proactive": "主动发起对话",

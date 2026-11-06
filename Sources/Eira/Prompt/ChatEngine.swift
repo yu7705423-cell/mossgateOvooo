@@ -433,6 +433,8 @@ enum ChatEngine {
             m = try Repo.append(m)
             created.append(m)
             onRow(m)
+            // 不用确认的工具调用落下就发出去（要确认的停在 ask，等你点允许）
+            if m.kind == McpTools.kind, m.row.string("toolState") == "running" { McpTools.launch(m.id) }
             if !instant && i < parts.count - 1 {
                 let ms = part.type == .text ? min(1800, 320 + part.text.count * 28) : 700
                 try await Task.sleep(nanoseconds: UInt64(ms) * 1_000_000)
@@ -477,6 +479,15 @@ enum ChatEngine {
         case .redpacket, .rpclaim, .leave, .selfnick:
             // 群红包、领红包、退群、改网名（网页版 4.736、4.733、4.947）
             return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
+        case .meet:
+            // 角色提出见面（网页版 4.721）：落一张见面卡片，由你选在哪儿。功能没开、此刻不能提的，那一行不落
+            guard Meet.capOn(char) else { return nil }
+            return try Meet.propose(chat.id, charId: char.id, place: p.text, turnId: turnId)
+        case .part:
+            // 面对面时回到线上：和你点「回到线上」一样落一条分隔线（Face.leave 自己落）
+            guard Meet.capOn(char) else { return nil }
+            try Meet.partWays(chat.id)
+            return nil
         case .transfer where chat.isGroup, .settle where chat.isGroup:
             // 群里的转账要写明给谁，只有收款人收得了（4.736）
             return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
@@ -701,7 +712,14 @@ enum ChatEngine {
             m.row["awardName"] = .string(name)
             m.row["awardReason"] = .string(reason)
             _ = try? Badges.addAward(chat.id, name: name, reason: reason, by: char.id, to: "me", msgId: m.id)
-        case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick:
+        case .theater:
+            // 小剧场（网页版 4.769）：功能开着才落；页面原样存着，上下文里按这一条的 inject 写
+            guard Theater.capOn(char), !(p.text.isEmpty && (p.html ?? "").isEmpty) else { return nil }
+            m = Theater.make(chat: chat, char: char, title: p.text, brief: p.extra ?? "", html: p.html ?? "", turnId: turnId)
+        case .tool:
+            // 调用 MCP 工具（网页版 4.179）：落一条记着调的是什么；名字对不上、参数写坏的照样落一条失败
+            m = McpTools.make(p, chat: chat, char: char, turnId: turnId, autoRun: draw)
+        case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick, .meet, .part:
             return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot:
             return nil

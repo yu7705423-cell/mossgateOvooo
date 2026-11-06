@@ -104,6 +104,13 @@ enum ExtraCalls {
         ExtraCall(id: "sceneCompress", label: "线下把窗口外的段落压成摘要",
                   isOn: { $0.raw["sceneCompress"]?.bool == true && ($0.raw["sceneWindow"]?.number ?? 0) > 0 },
                   when: { _ in "线下有段落被窗口挡在外面时，写下一段之前一次；失败后要再多出一个窗口的段落才再试（走记忆接口，没单独配时走副用）" }),
+        // 工具结果回来之后让角色接着说（网页版 cost.js 的 mcpFollowUp，4.179），默认关
+        ExtraCall(id: "mcpFollowUp", label: "工具结果回来后角色接着回复",
+                  isOn: { McpTools.followOn($0) },
+                  when: { s in
+                      let n = McpTools.followMax(s)
+                      return "角色调用的工具有了结果之后一次（走主用接口）；" + (n > 0 ? "你每发一条消息，最多接着回复 \(n) 次" : "不限次数")
+                  }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

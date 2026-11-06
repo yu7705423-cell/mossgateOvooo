@@ -35,6 +35,8 @@ enum Scenes {
         var autoEnter = true
         var enterIds: [String]?
         var withTrans = false
+        /// 这一场的篇幅（网页版 scene.words，4.690）：0 用「用量与上限」里那一项
+        var words = 0
     }
 
     @discardableResult
@@ -58,6 +60,7 @@ enum Scenes {
             "inline": .bool(false), "endedAt": .number(0),
             "left": .object([:]), "autoEnter": .bool(d.autoEnter),
             "summary": .string(""), "stage": .null, "withTrans": .bool(d.withTrans),
+            "words": .number(Double(max(0, d.words))),
         ]
         f["enterIds"] = d.enterIds.map { .array(ids($0).map { .string($0) }) } ?? .null
         let row = Row.new(prefix: "sc", f)

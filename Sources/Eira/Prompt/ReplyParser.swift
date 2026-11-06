@@ -42,6 +42,12 @@ enum ReplyParser {
         case redpacket, rpclaim, leave, selfnick
         // 截下聊天记录（网页版 4.904）：text 是冒号后面那一段原样（从「原话」开始|说明|私密）；发一张截过的：text 是说明
         case shot, sendshot
+        // 小剧场（网页版 4.769）：text 是主题，extra 是梗概，html 是整页（空着是封面，点开时单独生成）
+        case theater
+        // 调用 MCP 工具（网页版 4.179）：text 是工具名，extra 是参数（JSON 对象的文字），bad 是写坏了的参数原文
+        case tool
+        // 角色自行进出线下（网页版 4.721）：见面（text 是地点，可空）与回到线上
+        case meet, part
     }
 
     struct Part: Equatable, Sendable {
@@ -64,6 +70,10 @@ enum ReplyParser {
         var to: String?
         /// 红包的个数
         var count: Int?
+        /// 小剧场的整页
+        var html: String?
+        /// 调用工具时写坏了的参数原文（不是合法的 JSON 对象）
+        var bad: String?
     }
 
     struct Result: Sendable {
@@ -74,7 +84,7 @@ enum ReplyParser {
 
     // MARK: - 正则（网页版原文）
 
-    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|普通红包|专属红包|领红包|抢红包|红包|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改网名|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|卡片|card|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
+    static let markPattern = #"[\[【]\s*(图片|照片|image|pic|视频|video|语音|voice|audio|表情|sticker|emoji|转账|transfer|普通红包|专属红包|领红包|抢红包|红包|位置|定位|location|礼物|gift|点歌|建歌单|加入歌单|分享歌曲|分享音乐|调用|tool|约定完成|约定|pact|信|letter|事项完成|事项取消|心声|换头像|改网名|改备注|备注|外卖|请客|代付|申请|亲属卡|存入情侣账户|存入共同账户|旅行|攻略|待办|todo|授予|award|搭配|outfit|换上|借走|借给你|归还|旁白|narration|改密码|卡片|card|小剧场互动|小剧场|theater|文件|file|填写|fill|私信|解除禁言|禁言|改群昵称|心愿达成|私下心愿|心愿|梦境|出题|草稿|开小号|承认小号|解除拉黑|拉黑|删除好友|添加好友|通过好友申请|认出|借号发短信|发短信|入手|点赞|评论|转发帖子|转发|分享商品|想要|出价|下单|挂出|已发货|识破|闲置截图|写纸条|不抽纸条|抽纸条|打开纸条|放回纸条|不回答|完成纸条|转交纸条|给你看纸条|回应纸条|记下回答|封存答案|私人纸条盒)\s*[:：]\s*([^\]】]+)[\]】]"#
 
     private static let mark = regex(markPattern, [.caseInsensitive])
     private static let voiceTrans = regex(#"\s*[\[【(（]?\s*(?:译文|翻译|译|translation)\s*[:：]"#, [.caseInsensitive])
@@ -112,6 +122,9 @@ enum ReplyParser {
     static let muteAllLine = lineMark("全员禁言|开启全员禁言")
     // 自行退群（网页版 4.733）：整行就是它
     static let leaveLine = lineMark("退群|退出群聊")
+    // 角色自行进出线下（网页版 4.721 的 MEET_LINE、PART_LINE）。整行只能是这一个标记
+    static let meetLine = regex(#"^[\[【(（]\s*见面\s*(?:[:：]\s*([^\]】)）]*?))?\s*[\]】)）]$"#, [])
+    static let partLine = regex(#"^[\[【(（]\s*回到线上\s*[\]】)）]$"#, [])
     // 领红包（4.736）：不写发的人就是能领的最近那一个
     static let rpClaimLine = lineMark("领红包|抢红包|拆红包")
     static let unmuteAllLine = lineMark("解除全员禁言|关闭全员禁言")
@@ -164,9 +177,13 @@ enum ReplyParser {
     static func split(_ raw: String, autoSplitAt: Int = 40) -> Result {
         let (body, think) = stripThink(raw)
         let (stamped, stamp) = stripStamps(MarkFold.splitTrailRecall(MarkFold.foldMedia(MarkFold.fold(body.trimmingCharacters(in: .whitespacesAndNewlines)))))
-        let (text, cards) = liftCards(stamped)
+        let (staged, theaters) = liftTheater(stamped)
+        let (called, calls) = liftCalls(staged)
+        let (text, cards) = liftCards(called)
         var state = State()
         state.cards = cards
+        state.theaters = theaters
+        state.calls = calls
 
         let ns = text as NSString
         var last = 0
@@ -240,11 +257,123 @@ enum ReplyParser {
         return (out + ns.substring(from: last), cards)
     }
 
+    // MARK: - 小剧场（网页版 liftTheater，ARCHITECTURE 4.769）
+
+    // 角色写的是一整段页面：[小剧场：主题]、HTML（可以包在 ```html 里）、[/小剧场]。只写一行 [小剧场：主题｜梗概]、
+    // 后面不跟页面的，是一张封面。和卡片一样先整段摘出来，原位换成 [小剧场：#序号]。
+    // 漏写收尾的：紧跟着的是页面（以 < 或 ``` 开头）就收到这一轮末尾，否则当封面
+    private static let theaterHead = regex(#"[\[【]\s*(?:小剧场|theater)\s*[:：]\s*([^\]】\n#][^\]】\n]*?)\s*[\]】]"#, [.caseInsensitive])
+    private static let theaterEnd = regex(#"[\[【]\s*/\s*(?:小剧场|theater)\s*[\]】]"#, [.caseInsensitive])
+    private static let pageStart = regex(#"^\s*(?:<|```)"#, [])
+
+    static func unfence(_ s: String) -> String {
+        s.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"^```[a-zA-Z]*[ \t]*\n?"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"\n?```\s*$"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func liftTheater(_ text: String) -> (String, [(title: String, brief: String, html: String)]) {
+        let ns = text as NSString
+        var list: [(title: String, brief: String, html: String)] = []
+        var out = ""
+        var last = 0
+        var from = 0
+        while from < ns.length, let m = theaterHead.firstMatch(in: text, range: NSRange(location: from, length: ns.length - from)) {
+            let head = ns.substring(with: m.range(at: 1)).trimmingCharacters(in: .whitespaces)
+            let bar = head.firstIndex { $0 == "|" || $0 == "｜" }
+            let title = (bar.map { String(head[..<$0]) } ?? head).trimmingCharacters(in: .whitespaces)
+            let brief = bar.map { String(head[head.index(after: $0)...]).trimmingCharacters(in: .whitespaces) } ?? ""
+            let start = m.range.location + m.range.length
+            let restRange = NSRange(location: start, length: ns.length - start)
+            var body = ""
+            var stop = start
+            if let e = theaterEnd.firstMatch(in: text, range: restRange) {
+                body = ns.substring(with: NSRange(location: start, length: e.range.location - start))
+                stop = e.range.location + e.range.length
+            } else {
+                let rest = ns.substring(with: restRange)
+                if matches(pageStart, rest) {
+                    body = rest
+                    stop = ns.length
+                }
+            }
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last)) + "\n[小剧场：#\(list.count)]\n"
+            list.append((title, brief, unfence(body)))
+            last = stop
+            from = max(stop, m.range.location + 1)
+        }
+        return (out + ns.substring(from: last), list)
+    }
+
+    // MARK: - 调用工具（网页版 liftCalls，ARCHITECTURE 4.179）
+
+    // [调用：名字 {JSON 参数}]。参数里常有方括号与换行，标记那条正则在第一个 ] 就收口了。
+    // 所以先单独扫一遍：按花括号配对（认得字符串里的括号与转义）把整段取出来，原位换成 [调用：#序号]
+    private static let callHead = regex(#"[\[【]\s*(?:调用|tool)\s*[:：]\s*"#, [.caseInsensitive])
+
+    /// 从 at 那个 { 开始，找到与它配对的 } 的位置（UTF-16 下标）。没配上返回 nil
+    static func braceEnd(_ u: [UInt16], _ at: Int) -> Int? {
+        var depth = 0, str = false, esc = false
+        var i = at
+        while i < u.count {
+            let c = u[i]
+            if str {
+                if esc { esc = false } else if c == 0x5C { esc = true } else if c == 0x22 { str = false }
+            } else if c == 0x22 { str = true }
+            else if c == 0x7B { depth += 1 }
+            else if c == 0x7D { depth -= 1; if depth == 0 { return i } }
+            i += 1
+        }
+        return nil
+    }
+
+    /// 参数对象写成文字：键排好序，两边读出来的一样
+    static func argsText(_ v: Any) -> String {
+        guard let d = try? JSONSerialization.data(withJSONObject: v, options: [.sortedKeys, .withoutEscapingSlashes]) else { return "{}" }
+        return String(decoding: d, as: UTF8.self)
+    }
+
+    static func liftCalls(_ text: String) -> (String, [(name: String, args: String, bad: String)]) {
+        let ns = text as NSString
+        let u = Array(text.utf16)
+        func isSpace(_ c: UInt16) -> Bool { c == 0x20 || c == 0x09 || c == 0x0A || c == 0x0D || c == 0x3000 || c == 0xA0 }
+        var calls: [(name: String, args: String, bad: String)] = []
+        var out = ""
+        var last = 0
+        var from = 0
+        while from < ns.length, let m = callHead.firstMatch(in: text, range: NSRange(location: from, length: ns.length - from)) {
+            from = m.range.location + m.range.length
+            let i = from
+            var j = i
+            while j < u.count, !isSpace(u[j]), u[j] != 0x7B, u[j] != 0x5D, u[j] != 0x3011 { j += 1 }
+            let name = ns.substring(with: NSRange(location: i, length: j - i)).trimmingCharacters(in: .whitespaces)
+            var k = j
+            while k < u.count, isSpace(u[k]) { k += 1 }
+            var args = "{}", bad = ""
+            if k < u.count, u[k] == 0x7B {
+                guard let end = braceEnd(u, k) else { continue }
+                let raw = ns.substring(with: NSRange(location: k, length: end - k + 1))
+                if let v = try? JSONSerialization.jsonObject(with: Data(raw.utf8)), v is [String: Any] { args = argsText(v) } else { bad = raw }
+                k = end + 1
+                while k < u.count, isSpace(u[k]) { k += 1 }
+            }
+            guard !name.isEmpty, k < u.count, u[k] == 0x5D || u[k] == 0x3011 else { continue }
+            out += ns.substring(with: NSRange(location: last, length: m.range.location - last)) + "[调用：#\(calls.count)]"
+            calls.append((name, args, bad))
+            last = k + 1
+            from = last
+        }
+        return (out + ns.substring(from: last), calls)
+    }
+
     // MARK: - 逐段
 
     private struct State {
         var parts: [Part] = []
         var cards: [(name: String, body: String)] = []
+        var theaters: [(title: String, brief: String, html: String)] = []
+        var calls: [(name: String, args: String, bad: String)] = []
         var pendingQuote: String?
         var pendingInner: (String, String?)?
         var pendingTrans: String?
@@ -419,6 +548,22 @@ enum ReplyParser {
                     p.extra = cards[i].body
                     push(p)
                 }
+            case "小剧场", "theater":
+                if body.hasPrefix("#"), let i = Int(body.dropFirst()), theaters.indices.contains(i) {
+                    var p = Part(type: .theater, text: theaters[i].title)
+                    p.extra = theaters[i].brief
+                    p.html = theaters[i].html
+                    push(p)
+                }
+            case "小剧场互动":
+                break   // 你在小剧场里点的那几下，历史里一行一条；角色照着写回来的不落成气泡
+            case "调用", "tool":
+                if body.hasPrefix("#"), let i = Int(body.dropFirst()), calls.indices.contains(i) {
+                    var p = Part(type: .tool, text: calls[i].name)
+                    p.extra = calls[i].args
+                    if !calls[i].bad.isEmpty { p.bad = calls[i].bad }
+                    push(p)
+                }
             case "草稿":
                 let t = body.trimmingCharacters(in: .whitespacesAndNewlines)
                 if !t.isEmpty { push(Part(type: .draft, text: t)) }
@@ -487,6 +632,12 @@ enum ReplyParser {
             }
 
             if ReplyParser.matches(ReplyParser.listenLine, t) { push(Part(type: .listen, text: "")); return }
+            // 见面、回到线上（网页版 4.721）。见面落一张卡片，回到线上落一条分隔线，都不是一条气泡
+            if let m = ReplyParser.match(ReplyParser.meetLine, t) {
+                push(Part(type: .meet, text: m.count > 1 ? m[1].trimmingCharacters(in: .whitespaces) : ""))
+                return
+            }
+            if ReplyParser.matches(ReplyParser.partLine, t) { push(Part(type: .part, text: "")); return }
             if let m = ReplyParser.match(ReplyParser.settleLine, t) {
                 var p = Part(type: .settle, text: "")
                 p.flag = !m[1].contains("退")

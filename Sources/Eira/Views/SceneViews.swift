@@ -127,6 +127,12 @@ struct SceneSetupView: View {
                 Toggle("正文附带译文", isOn: $draft.withTrans)
                 HelpNote("开启后，角色说的话后面附上译文，目标语言与这段会话的翻译设置相同；会话未开启翻译时不生效。译文显示在原话后面的括号里，不进入之后的上下文。不另外调用接口，回复会长一些。", title: "线下：正文附带译文")
             }
+            Section {
+                let global = Int(AppSettings.load().num("sceneWords", 0))
+                NumberRow(title: "篇幅", value: Binding(get: { Double(draft.words) }, set: { draft.words = max(0, Int($0)) }),
+                          unit: "字", placeholder: global > 0 ? "\(global)" : "不写")
+                HelpNote("每段正文大约多少字，写进这一场的提示词，是目标不是上限。不填时用「设置 - 用量与上限」里的「每段大约多少字」；两处都不填时提示词里不写篇幅。", title: "线下：篇幅")
+            }
             toneSection
             booksSection
             ProblemSection(text: problem)
@@ -283,6 +289,7 @@ struct SceneSetupView: View {
             draft.offBookIds = r.strings("offBookIds"); draft.bookIds = r.strings("bookIds")
             draft.autoEnter = r["autoEnter"]?.bool != false
             draft.withTrans = r.bool("withTrans")
+            draft.words = max(0, Int(r.number("words") ?? 0))
             draft.enterIds = r["enterIds"]?.array?.compactMap(\.string)
             left = Scenes.leftMap(r)
             // 这一场拉进来的会话外的角色也要列出来
@@ -312,6 +319,7 @@ struct SceneSetupView: View {
                     "tones": .array(draft.tones.map { .string($0) }), "toneText": .string(draft.toneText),
                     "offBookIds": .array(draft.offBookIds.map { .string($0) }), "bookIds": .array(draft.bookIds.map { .string($0) }),
                     "autoEnter": .bool(draft.autoEnter), "withTrans": .bool(draft.withTrans),
+                    "words": .number(Double(draft.words)),
                 ]
                 patch["enterIds"] = draft.enterIds.map { .array($0.map { .string($0) }) } ?? .null
                 try Scenes.update(sceneId, patch)

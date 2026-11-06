@@ -194,6 +194,14 @@ final class WebLogic: @unchecked Sendable {
             case "selfnick": p = .init(type: .selfnick, text: str("name"))
             case "shot": p = .init(type: .shot, text: str("raw"))
             case "sendshot": p = .init(type: .sendshot, text: str("query"))
+            case "theater":
+                p = .init(type: .theater, text: str("title")); p.extra = s("brief"); p.html = s("html")
+            case "tool":
+                p = .init(type: .tool, text: str("name"))
+                p.extra = ReplyParser.argsText(d["args"] as? [String: Any] ?? [:])
+                p.bad = nonEmpty(s("bad"))
+            case "meet": p = .init(type: .meet, text: str("place"))
+            case "part": p = .init(type: .part, text: "")
             default:
                 unmapped.append(type)
                 continue
