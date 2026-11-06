@@ -344,7 +344,10 @@ enum CharPack {
         for c in cast { let id = c["id"]!.string!; idMap[id] = copied ? Ids.make("char") : id }
         func remap(_ id: String) -> String { idMap[id] ?? id }
         func who(_ id: String) -> String { id == "me" || id.isEmpty ? id : remap(id) }
-        func whoV(_ v: JSONValue?) -> JSONValue { v?.string.map { .string(who($0)) } ?? (v ?? .null) }
+        func whoV(_ v: JSONValue?) -> JSONValue {
+            if let s = v?.string { return .string(who(s)) }
+            return v ?? .null
+        }
         for c in cast {
             var row = c
             row["id"] = .string(remap(c["id"]!.string!))

@@ -37,7 +37,8 @@ struct SpotlightView: View {
                 case .chat(let id): ConversationView(chatId: id)
                 case .personas: PersonaListView()
                 case .archived: ArchivedCharsView()
-                case .cardImport: EmptyView()
+                case .cardImport, .packImport: EmptyView()
+                case .alts: AltsPageView()
                 }
             }
         }
