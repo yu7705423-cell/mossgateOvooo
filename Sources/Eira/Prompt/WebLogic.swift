@@ -185,6 +185,8 @@ final class WebLogic: @unchecked Sendable {
             case "muteall": p = .init(type: .muteAll, text: ""); p.flag = bool("on")
             case "nick": p = .init(type: .nick, text: str("name")); p.extra = s("nick")
             case "wear": p = .init(type: .wear, text: str("name"))
+            case "shot": p = .init(type: .shot, text: str("raw"))
+            case "sendshot": p = .init(type: .sendshot, text: str("query"))
             default:
                 unmapped.append(type)
                 continue

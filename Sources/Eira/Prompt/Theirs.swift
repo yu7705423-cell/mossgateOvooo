@@ -332,6 +332,11 @@ enum Theirs {
     struct Photo: Identifiable, Equatable {
         var id: String, albumId: String, note: String, noteTrans: String, imageId: String, from: String
         var cropped: Bool, at: Double
+        /// 角色截下的聊天记录（网页版 4.904）：kind 为 shot，msgs 是冻起来的消息副本，shotId 是那一刻的美化快照
+        var kind = ""
+        var msgs: [JSONValue] = []
+        var shotId = ""
+        var chatId = ""
     }
 
     static func keepOn(_ charId: String) -> Bool { get(charId)?["keepOn"]?.bool == true }
@@ -345,7 +350,9 @@ enum Theirs {
         list(charId, "photos").map {
             Photo(id: $0["id"]?.string ?? "", albumId: $0["albumId"]?.string ?? "", note: $0["note"]?.string ?? "",
                   noteTrans: $0["noteTrans"]?.string ?? "", imageId: $0["imageId"]?.string ?? "", from: $0["from"]?.string ?? "",
-                  cropped: $0["cropped"]?.bool == true, at: $0["at"]?.number ?? 0)
+                  cropped: $0["cropped"]?.bool == true, at: $0["at"]?.number ?? 0,
+                  kind: $0["kind"]?.string ?? "", msgs: $0["msgs"]?.array ?? [], shotId: $0["shotId"]?.string ?? "",
+                  chatId: $0["chatId"]?.string ?? "")
         }
     }
 
@@ -394,7 +401,9 @@ enum Theirs {
         let clean: [[String: JSONValue]] = rows.enumerated().compactMap { i, r in
             let note = cap(r["note"]?.string, 200)
             let img = r["imageId"]?.string ?? ""
-            guard !note.isEmpty || !img.isEmpty else { return nil }
+            let msgs = r["msgs"]?.array ?? []
+            let shot = r["kind"]?.string == "shot" && !msgs.isEmpty
+            guard !note.isEmpty || !img.isEmpty || shot else { return nil }
             var o: [String: JSONValue] = [
                 "id": .string("pp_\(base)_\(i)"), "albumId": .string(cap(r["albumId"]?.string ?? albumId, 40)),
                 "note": .string(note), "imageId": img.isEmpty ? .null : .string(img),
@@ -402,6 +411,13 @@ enum Theirs {
                 "at": .number(r["at"]?.number ?? now),
             ]
             if let t = r["noteTrans"]?.string, !t.isEmpty { o["noteTrans"] = .string(cap(t, 600)) }
+            // 角色截下的聊天记录（网页版 theirs.js 的 shot）：消息副本与美化快照原样留着
+            if shot {
+                o["kind"] = .string("shot")
+                o["msgs"] = .array(msgs)
+                o["shotId"] = .string(r["shotId"]?.string ?? "")
+                o["chatId"] = .string(r["chatId"]?.string ?? "")
+            }
             return o
         }
         guard !clean.isEmpty else { return 0 }

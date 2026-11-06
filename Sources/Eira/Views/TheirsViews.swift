@@ -788,7 +788,10 @@ struct TheirsAlbumView: View {
     private func shot(_ p: Theirs.Photo) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             Group {
-                if p.imageId.isEmpty {
+                if p.kind == "shot" {
+                    // 角色截下的聊天记录（网页版 4.904）：画冻下来的那几条
+                    CharShotCard(msgs: p.msgs, limit: 4)
+                } else if p.imageId.isEmpty {
                     ZStack { Theme.surface2; Image(systemName: "photo").foregroundStyle(Theme.text3) }
                 } else {
                     LocalImage(id: p.imageId, maxPixel: 400)
@@ -849,6 +852,9 @@ private struct TheirsPhotoEditor: View {
             Form {
                 if let p = Theirs.photos(charId).first(where: { $0.id == photoId }) {
                     if let problem { Text(problem).foregroundStyle(Theme.danger) }
+                    if p.kind == "shot" {
+                        CharShotCard(msgs: p.msgs).listRowBackground(Color.clear)
+                    }
                     if !p.imageId.isEmpty {
                         LocalImage(id: p.imageId, maxPixel: 900, fit: true).frame(maxWidth: .infinity, maxHeight: 300)
                             .onTapGesture { viewing = true }

@@ -25,6 +25,8 @@ const dir = mkdtempSync(join(tmpdir(), 'tpl-'));
 try {
   const file = join(dir, 'templates.mjs');
   writeFileSync(file, body);
+  // templates.js 引的 tplparts.js（格式句与说明句的切分，网页版 4.701）没有别的 import，原样放在旁边
+  writeFileSync(join(dir, 'tplparts.js'), readFileSync(join(resolve(web), 'src/system/ai/tplparts.js'), 'utf8'));
   const { DEFAULT_TEMPLATES } = await import(pathToFileURL(file).href);
   const sorted = Object.fromEntries(Object.keys(DEFAULT_TEMPLATES).sort().map(k => [k, DEFAULT_TEMPLATES[k]]));
   const here = dirname(fileURLToPath(import.meta.url));

@@ -135,53 +135,58 @@ struct ChatSettingsView: View {
             // 角色主页（网页版 Conversation.js 的「角色主页」）：朋友圈式的个人页，人设不在那里出现
             add("profile", "这个角色", "角色主页", keys: "主页 朋友圈 精选", action: { profilePath = NavigationPath(); profileChar = charId })
         }
-        let how = "这段对话怎么聊"
+        // 分组照网页版新版会话菜单（4.917）：回复、玩法、输入栏、基础、提示词、记忆……各组先后按 settings.convMenuOrder
         let autoOn = c.isGroup ? AutoReply.membersOn(c) > 0 || AutoReply.isOn(c, AutoReply.mine) : !AutoReply.listTag(c).isEmpty
-        add("pace", how, "节奏与自动回复", Self.paceLabel(c) + (autoOn ? " · 自动回复" : ""),
+        add("pace", "回复", "节奏与自动回复", Self.paceLabel(c) + (autoOn ? " · 自动回复" : ""),
             keys: "回复节奏 按按钮 发完就回 延迟回复 自动回复 忙碌 休息 成员的自动回复 休息时不回复",
             dest: AnyView(MenuPage("节奏与自动回复") { PaceSection(chatId: chatId) }))
         if c.isGroup {
             // 群里一段时间没有消息时由成员先开口，以及各成员私下给你发消息，都在群资料里（网页版 4.649）
-            add("proactive", how, "主动发起对话", GroupProactive.config(c).on ? "已开启" : "关闭",
+            add("proactive", "回复", "主动发起对话", GroupProactive.config(c).on ? "已开启" : "关闭",
                 keys: "主动消息 群里主动开口 成员私下找你 私信 间隔 免打扰",
                 dest: AnyView(groupPage))
         } else if let charId = c.characterIds.first {
             let char = try? Repo.character(charId)
-            add("proactive", how, "主动发起对话", Proactive.config(char).on ? "已开启" : "关闭",
+            add("proactive", "回复", "主动发起对话", Proactive.config(char).on ? "已开启" : "关闭",
                 keys: "主动消息 间隔 免打扰 深夜",
                 dest: AnyView(MenuPage("主动发起对话") { ProactiveSection(charId: charId) }))
         }
-        add("inner", how, "心声", Self.innerLabel(InnerVoice.mode(c)), keys: "想法 内心 显示方式 样式 字色 字号",
+        add("inner", "玩法", "心声", Self.innerLabel(InnerVoice.mode(c)), keys: "想法 内心 显示方式 样式 字色 字号",
             dest: AnyView(InnerSetPageView(chatId: chatId)))
-        add("extras", how, "互动", c.isGroup ? "旁白 · 我也写旁白" : "旁白 · 拍一拍 · \(ChatEngine.diceFaces(c)) 面骰子",
+        add("extras", "输入栏", "互动", c.isGroup ? "旁白 · 我也写旁白" : "旁白 · 拍一拍 · \(ChatEngine.diceFaces(c)) 面骰子",
             keys: "旁白 我也写旁白 草稿箱 拍一拍 后缀 骰子 几面",
             dest: AnyView(ExtrasPageView(chatId: chatId)))
         if !c.isGroup {
-            add("status", how, "状态栏", StatusBar.active(c) ? "已开启" : "关闭", keys: "心情 所在地 进度条",
+            // 场外（网页版 4.819）：场外问答与自动检查，单聊才有
+            add("ooc", "输入栏", "场外", Ooc.menuLabel(c), keys: "OOC 检查 纠偏 场外问答 自动检查 重写 元",
+                dest: AnyView(OocPageView(chatId: chatId)))
+        }
+        if !c.isGroup {
+            add("status", "玩法", "状态栏", StatusBar.active(c) ? "已开启" : "关闭", keys: "心情 所在地 进度条",
                 dest: AnyView(StatusBarSettingsView(chatId: chatId)))
-            add("share", how, "共享位置", Self.geoLabel(c), keys: "位置 距离 城市 坐标",
+            add("share", "基础", "共享位置", Self.geoLabel(c), keys: "位置 距离 城市 坐标",
                 dest: AnyView(GeoView(chatId: chatId)))
         }
         let lang = c.row.string("translateTo").trimmingCharacters(in: .whitespaces)
-        add("translate", how, "翻译", lang.isEmpty ? "关闭" : lang, keys: "译文 语言 显示哪一种 译文怎么显示 只显示译文 只显示原文",
+        add("translate", "基础", "翻译", lang.isEmpty ? "关闭" : lang, keys: "译文 语言 显示哪一种 译文怎么显示 只显示译文 只显示原文",
             dest: AnyView(TranslatePageView(chatId: chatId)))
-        add("preset", how, "预设", ChatPresetPage.label(c), keys: "提示词 条目 参数",
+        add("preset", "提示词", "预设", ChatPresetPage.label(c), keys: "提示词 条目 参数",
             dest: AnyView(ChatPresetPage(chatId: chatId)))
-        add("history", how, "历史范围", HistoryRangePage.label(c), keys: "上下文 历史 读几条 条数 轮数",
+        add("history", "记忆", "历史范围", HistoryRangePage.label(c), keys: "上下文 历史 读几条 条数 轮数",
             dest: AnyView(HistoryRangePage(chatId: chatId)))
         // 上一轮发送的内容（网页版 4.776）：这段会话最近一轮回复发给模型的原文，只在内存里
-        add("sent", how, "上一轮发送的内容", LastSent.shared.last(chatId) == nil ? "" : "已记录",
+        add("sent", "记忆", "上一轮发送的内容", LastSent.shared.last(chatId) == nil ? "" : "已记录",
             keys: "提示词 读到了什么 发送的内容 原文 核对 调试",
             dest: AnyView(SentPageView(chatId: chatId)))
         if c.isGroup {
-            add("lore", how, "世界书", "在各成员的角色资料里设置", keys: "设定 词条",
+            add("lore", "提示词", "世界书", "在各成员的角色资料里设置", keys: "设定 词条",
                 dest: AnyView(GroupLorePage(chatId: chatId)))
         } else if let charId = c.characterIds.first {
             let names = Self.loreNames(charId)
-            add("lore", how, "世界书", names.isEmpty ? "没有生效的世界书" : "生效中：\(names)", keys: "设定 词条 内置卡片",
+            add("lore", "提示词", "世界书", names.isEmpty ? "没有生效的世界书" : "生效中：\(names)", keys: "设定 词条 内置卡片",
                 dest: AnyView(LoreQuickView(charId: charId)))
         }
-        add("time", how, "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
+        add("time", "基础", "时间感知", Self.timeState(AppSettings.load()), keys: "时区 时间 日期 虚拟时间",
             dest: AnyView(TimeSettingsView()))
         add("summary", "记忆", "记忆总结", summaryState, keys: "总结 记住",
             dest: AnyView(SummaryPage(chatId: chatId)))
@@ -199,6 +204,9 @@ struct ChatSettingsView: View {
             add("ties", "好友与拉黑", "好友与拉黑", Self.tieLabel(c), keys: "拉黑 删除好友 好友申请",
                 dest: AnyView(MenuPage("好友与拉黑") { TiesSection(chatId: chatId) }))
         }
+        // 各组的先后（网页版 4.917）：在「调整顺序」那一页拖动，和长按消息、加号面板同一页
+        add("convorder", "更多", "调整分组顺序", ConvOrder.changed(AppSettings.load()) ? "已调整" : "",
+            keys: "排序 分组 顺序 自定义", dest: AnyView(MenuOrderView(kind: "conv")))
         add("more", "更多", "更多", c.isGroup ? "表情包、每轮的接口调用" : "表情包、每轮的接口调用、清空数据",
             keys: "表情包 每轮的接口调用 清空聊天记录 清空记忆",
             dest: AnyView(ChatMorePageView(chatId: chatId)))
@@ -244,7 +252,9 @@ struct ChatSettingsView: View {
                         ForEach(recent) { e in entryRow(e) }
                     } header: { Text("最近打开") }
                 }
-                let groups = all.filter { !$0.searchOnly }.reduce(into: [String]()) { if !$0.contains($1.group) { $0.append($1.group) } }
+                let found = all.filter { !$0.searchOnly }.reduce(into: [String]()) { if !$0.contains($1.group) { $0.append($1.group) } }
+                // 各组先后按 settings.convMenuOrder（网页版 4.917）；「更多」不参与排，固定在最后
+                let groups = ConvOrder.sort(found, AppSettings.load(), by: ConvOrder.idOf)
                 ForEach(groups, id: \.self) { g in
                     Section {
                         ForEach(all.filter { $0.group == g && !$0.searchOnly }) { e in entryRow(e) }

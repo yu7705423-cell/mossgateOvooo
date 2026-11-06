@@ -246,6 +246,22 @@ historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
 |---|---|---|
 | settings | panelOrder, panelMore | 加号面板的先后与收进「更多」的几格（panel.js）。没设过取默认 |
 | settings | msgMenuOrder | 长按消息那几格的先后（menuorder.js 的 MSG_ITEMS，三十个 id）。读时丢掉不认识的、补上缺的；恢复默认写 null |
-| settings | convMenuOrder | 会话菜单分组的先后（原生版暂不读，原样留着） |
+| settings | convMenuOrder | 会话菜单分组的先后（menuorder.js 的 CONV_GROUPS，十一个 id）。读法同 msgMenuOrder；原生版没有的 scene、display 两组位置不动 |
 | stickers | myUsedAt | 毫秒。自己从表情面板点出去的最近一次（4.935「最近常用」）；useCount 另算，角色发的也算 |
 
+## 9. 新功能、角色截图、元模式与场外
+
+| 在哪儿 | 字段 | 说明 |
+|---|---|---|
+| settings | featureOpt | {功能 id: 'on' / 'off'}，没有就是还没问过、不注入（newfeat.js） |
+| characters | featOpt | {功能 id: 'on' / 'off'}，这个角色自己选的；没有跟随全局（4.882） |
+| phones | photos[].kind / msgs / shotId / chatId | kind 'shot' 是角色截下的聊天记录（4.904）：msgs 是冻起来的消息副本（role 两边对调，角色自己的是 user），_name、_avatar 是当时的名字与头像 |
+| shots | id、css | 截图与卡片那一刻的美化 CSS。id 是 SHA-256 的前 12 字节（十六进制），同样内容共用一份 |
+| messages | kind 'charshot'、shot {msgs, shotId, note} | 角色发进聊天的截图，正文 `[聊天截图：说明]` |
+| chats | meta, metaName, metaSystem, metaPresetId, metaBooks, metaCaps {sticker, image, voice}, metaVoiceId, metaApiId, metaTime, metaGap, metaSplit, metaMemory | 元模式（4.817、4.832）。chat_meta / char_meta 是最早那一个，之后的 chat_meta_xxx 对应 char_meta_xxx；元不在 characters 里。原生版不读 metaCaps.image / voice、metaVoiceId、metaMemory，原样留着 |
+| settings | metaPlace | 'group'（默认，单独一组）或 'mix'（融入消息列表） |
+| lorebooks | metaFor | 这一本是哪个元自己的那一本（存为世界书时建） |
+| chats | ooc {on, trigger:'ooc', visible, style:'auto', customReview, customCheck, check, checkMode:'mark', rewriteMax:1, bookId} | 场外（4.819）。全部默认关 |
+| messages | kind 'ooc' | 场外的问与答，不进记忆；visible 时以 [场外：…] / [场外回复：…] 进历史 |
+| messages（这一轮第一条） | oocCheck 'tried' / 'ok' / 'issues' / 'failed', oocIssues [{card, reply, fix}], oocError, oocDismissed | 自动检查的结果。先写 tried 再发 |
+| lorebooks | oocFor | 角色 id：这一本是那个角色的纠偏书（花园公开包不带） |

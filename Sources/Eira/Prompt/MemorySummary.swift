@@ -22,7 +22,8 @@ enum MemorySummary {
         return at > 0 ? list.filter { $0.createdAt > at } : list
     }
 
-    private static func usableOnline(_ m: Message) -> Bool { !m.isError && !m.content.isEmpty && !AutoReply.localOnly(m) }
+    /// 场外的问答不进记忆（网页版 4.819 的 pendingOf）
+    private static func usableOnline(_ m: Message) -> Bool { !m.isError && !m.content.isEmpty && !AutoReply.localOnly(m) && m.kind != Ooc.kind }
 
     /// 线上的消息，加上线下各场的正文（按时间排在一起，网页版 4.375）：见面发生的事也要进记忆。
     /// since 给了时线上的只读 createdAt 不早于它的那些（线下的照旧全读，条数少）
@@ -60,7 +61,8 @@ enum MemorySummary {
 
     /// 还没总结过的。
     static func pending(chatId: String) throws -> [Message] {
-        guard let chat = try Repo.chat(chatId) else { return [] }
+        // 元模式的会话永远没有待总结的消息（网页版 4.817：元的记忆原生版暂未做）
+        guard let chat = try Repo.chat(chatId), !Meta.isMeta(chat) else { return [] }
         let mark = chat.row.string("memoryUpTo"), at = chat.row.number("memoryUpToAt") ?? 0
         let beats = Scenes.beatsAsMessages(chatId: chatId)
         let since = try pendingFloor(chatId: chatId, mark: mark, at: at, beats: beats)

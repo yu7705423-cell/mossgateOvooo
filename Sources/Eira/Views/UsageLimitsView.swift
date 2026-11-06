@@ -258,6 +258,8 @@ struct UsageLimitsView: View {
         [
             "chat.reply": "对话回复",
             "chat.compare": "换一套接口对比",
+            "chat.ooc": "场外问答",
+            "ooc.check": "OOC 自动检查",
             "chat.vision-describe": "发给角色的图写成描述",
             "card.import": "读取角色卡",
             "card.core": "生成核心设定",

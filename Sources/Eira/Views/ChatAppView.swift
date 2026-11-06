@@ -34,7 +34,10 @@ struct ChatAppView: View {
                 .navigationTitle(Self.tabs.first { $0.id == tab }?.label ?? "消息")
                 .navigationBarTitleDisplayMode(.inline)
                 .safeAreaInset(edge: .bottom, spacing: 0) { tabBar }
-                .navigationDestination(for: String.self) { id in ConversationView(chatId: id) }
+                // 元模式的会话打开自己那一页（网页版 4.817：/chat/chat_meta 也转到 MetaChat）
+                .navigationDestination(for: String.self) { id in
+                    if Meta.isMetaChatId(id) { MetaChatView(chatId: id) } else { ConversationView(chatId: id) }
+                }
                 .navigationDestination(for: ChatRoute.self) { r in
                     switch r {
                     case .profile(let id): ProfileView(subjectId: id, path: $path)
@@ -59,6 +62,8 @@ struct ChatAppView: View {
             open(id)
         }
         .onReceive(NotificationCenter.chatChangesSettled) { _ in unread = Shell.chatUnread() }
+        // 新功能第一次打开聊天时问一次（网页版 4.486）
+        .newFeatAsk(app: "chat")
     }
 
     private func open(_ chatId: String) {
