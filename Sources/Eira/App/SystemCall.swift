@@ -27,7 +27,7 @@ final class SystemCall: NSObject, ObservableObject {
     static let ringSec: TimeInterval = 30
     static let testId = "phone-callkit-test"
     static let unknownId = "phone-push-unknown"
-    private static let lastKey = "callkit.last"
+    nonisolated private static let lastKey = "callkit.last"
 
     nonisolated static func isOn(_ s: AppSettings = .load()) -> Bool { s.raw["callKit"]?.bool == true }
 
@@ -203,8 +203,7 @@ final class SystemCall: NSObject, ObservableObject {
 
     /// 过几秒响一通「测试来电」，人在这几秒里锁屏或切出去，看系统弹不弹得出来。接了或没接都直接收掉，不进通话
     func test(delay: Double = 3) async -> String? {
-        var bg = UIBackgroundTaskIdentifier.invalid
-        bg = UIApplication.shared.beginBackgroundTask { UIApplication.shared.endBackgroundTask(bg) }
+        let bg = UIApplication.shared.beginBackgroundTask(withName: "callkit-test", expirationHandler: nil)
         defer { UIApplication.shared.endBackgroundTask(bg) }
         try? await Task.sleep(nanoseconds: UInt64(max(0, min(delay, 10)) * 1_000_000_000))
         calls[Self.testId] = nil

@@ -25,11 +25,11 @@ final class EiraPush: NSObject, ObservableObject {
     /// 网页版那一台的 topic 是网页版外壳的包标识，原生版的推送地址交给它，苹果会回 DeviceTokenNotForTopic
     nonisolated static let siteRelay = ""
 
-    private static let regKey = "eira-push-reg"
-    private static let relayKey = "eira-push-relay"
-    private static let wantedKey = "eira-push-wanted"
-    private static let alertKey = "eira-push-alert"
-    private static let voipKey = "eira-push-voip"
+    nonisolated private static let regKey = "eira-push-reg"
+    nonisolated private static let relayKey = "eira-push-relay"
+    nonisolated private static let wantedKey = "eira-push-wanted"
+    nonisolated private static let alertKey = "eira-push-alert"
+    nonisolated private static let voipKey = "eira-push-voip"
 
     struct Tok: Codable, Equatable { var token: String; var cred: String }
 
