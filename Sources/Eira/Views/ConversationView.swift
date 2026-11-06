@@ -119,7 +119,11 @@ struct ConversationView: View {
     /// 火花（互动标识）
     @State private var fire: Badges.StreakState?
     @State private var panelMore = false
+    /// 加号面板翻到第几页
+    @State private var panelPage: Int? = 0
     @State private var editingPanel = false
+    /// 长按菜单最后一格「调整顺序」（网页版 4.917）
+    @State private var showMenuOrder = false
     @State private var sendingCard = false
     @FocusState private var typing: Bool
     @Environment(\.dismiss) private var dismiss
@@ -417,7 +421,7 @@ struct ConversationView: View {
             Button("好") { notice = nil }
         }
         .navigationDestination(isPresented: $showScenes) { SceneListView(chatId: chatId) }
-        .navigationDestination(isPresented: $editingPanel) { PanelEditView() }
+        .navigationDestination(isPresented: $editingPanel) { MenuOrderView(kind: "panel") }
         .navigationDestination(isPresented: $showGeo) { GeoView(chatId: chatId) }
         .sheet(item: $comparing) { t in
             NavigationStack {
@@ -504,7 +508,7 @@ struct ConversationView: View {
                 VStack(alignment: .leading, spacing: Theme.sp3) {
                     Text("没有找到名为「\(m.row.string("stickerName"))」的表情。选择一个之后，这条消息将显示该表情；这个名称会一并记为它的关键词，之后再写同一个名称即可自动匹配。")
                         .font(.footnote).foregroundStyle(Theme.text3).padding(.horizontal, Theme.sp4)
-                    StickerPanel { st in
+                    StickerPanel(noteRecent: false) { st in
                         bindingSticker = nil
                         do { replace(try StickerMatch.bind(m, to: st.row)) }
                         catch { problem = "指认未能保存：\(error.localizedDescription)" }
@@ -563,6 +567,7 @@ struct ConversationView: View {
                 .presentationDetents([.medium, .large])
                 .presentationBackgroundInteraction(.enabled(upThrough: .medium))
         }
+        .navigationDestination(isPresented: $showMenuOrder) { MenuOrderView(kind: "msg") }
         .sheet(isPresented: $showSearch) {
             NavigationStack {
                 SearchChatView(chatId: chatId) { _, m in showSearch = false; jump(m) }
@@ -914,42 +919,80 @@ struct ConversationView: View {
         }
     }
 
-    /// 加号面板（.composer-panel .panel-grid）：一行四格，浅灰圆角方块里一个线条图标，下面一行小字
+    /// 加号面板（.composer-panel .panel-grid）：浅灰圆角方块里一个线条图标，下面一行小字。
+    /// 一页两行四列，左右滑动翻页，底下一排圆点写明一共几页、在第几页，点圆点也能翻；只有一页时不画圆点（网页版 4.901）。
+    /// 「更多」排在最后一格，点开换成收在里面的那几格，最后一格「收起」
     private var plusPanel: some View {
         let st = SettingsModel.shared.s
         let group = chat?.isGroup == true
-        let shown = Panel.onPanel(st, group: group)
         let more = Panel.inMore(st, group: group)
+        var cells: [String] = panelMore && !more.isEmpty ? more + ["@back"] : Panel.onPanel(st, group: group)
+        if !(panelMore && !more.isEmpty) {
+            if group { cells.append("@mention") }
+            if !more.isEmpty { cells.append("@more") }
+        }
+        let pages = Panel.pages(cells)
         return VStack(spacing: Theme.sp3) {
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
-                ForEach(shown, id: \.self) { id in panelTile(id) }
-                if let chat, chat.isGroup {
-                    Menu {
-                        ForEach(GroupChat.members(chat)) { c in
-                            Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(alignment: .top, spacing: 0) {
+                    ForEach(Array(pages.enumerated()), id: \.offset) { p, page in
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
+                            ForEach(page, id: \.self) { id in panelCell(id) }
                         }
-                    } label: { panelItem("users", "提到成员") }
+                        .padding(.horizontal, Theme.sp4)
+                        .containerRelativeFrame(.horizontal)
+                        .id(p)
+                    }
                 }
-                if !more.isEmpty {
-                    Button { withAnimation { panelMore.toggle() } } label: { panelItem("more", panelMore ? "收起" : "更多") }
-                        .buttonStyle(.plain)
-                }
+                .scrollTargetLayout()
             }
-            if panelMore && !more.isEmpty {
-                Theme.border.frame(height: 1)
-                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.sp2), count: 4), spacing: Theme.sp4) {
-                    ForEach(more, id: \.self) { id in panelTile(id) }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $panelPage)
+            .frame(height: Self.panelGridHeight(rows: pages.count > 1 || cells.count > 4 ? 2 : 1))
+            if pages.count > 1 {
+                HStack(spacing: Theme.sp2) {
+                    ForEach(0..<pages.count, id: \.self) { p in
+                        Button { withAnimation { panelPage = p } } label: {
+                            Circle().fill(p == (panelPage ?? 0) ? Theme.text2 : Theme.text3.opacity(0.35))
+                                .frame(width: 6, height: 6)
+                                .padding(4)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("第 \(p + 1) 页，共 \(pages.count) 页")
+                    }
                 }
             }
             if panelMore {
-                Button("整理面板") { showPanel = false; editingPanel = true }
+                Button("调整顺序") { showPanel = false; editingPanel = true }
                     .font(.system(size: 13)).foregroundStyle(Theme.text2)
             }
         }
-        .padding(.horizontal, Theme.sp4)
         .padding(.top, Theme.sp3)
         .padding(.bottom, Theme.sp5)
         .overlay(alignment: .top) { Theme.border.frame(height: 1) }
+        .onChange(of: panelMore) { _, _ in panelPage = 0 }
+    }
+
+    /// 格子高 52 加字一行（约 6 + 14），两行之间 sp4
+    static func panelGridHeight(rows: Int) -> CGFloat { CGFloat(rows) * 72 + CGFloat(max(0, rows - 1)) * Theme.sp4 }
+
+    @ViewBuilder private func panelCell(_ id: String) -> some View {
+        switch id {
+        case "@mention":
+            if let chat {
+                Menu {
+                    ForEach(GroupChat.members(chat)) { c in
+                        Button(GroupChat.nameIn(chat, c)) { draft += "@\(GroupChat.nameIn(chat, c)) " }
+                    }
+                } label: { panelItem("users", "提到成员") }
+            }
+        case "@more":
+            Button { withAnimation { panelMore = true } } label: { panelItem("more", "更多") }.buttonStyle(.plain)
+        case "@back":
+            Button { withAnimation { panelMore = false } } label: { panelItem("more", "收起") }.buttonStyle(.plain)
+        default:
+            panelTile(id)
+        }
     }
 
     /// 一格。哪几格出现、按什么顺序由 Panel 定（用户在「整理面板」里排）
@@ -1083,8 +1126,43 @@ struct ConversationView: View {
         } catch { problem = "删除失败：\(error.localizedDescription)" }
     }
 
-    /// 多选时底下那一条：取消、删除
+    /// 往下全选、选中间（网页版 4.757）
+    private func pickSpan(toEnd: Bool) {
+        guard let p = picking else { return }
+        let ids = messages.map(\.id)
+        let out = Picking.span(ids: ids, picked: p, toEnd: toEnd)
+        pickOrder = Picking.order(pickOrder, ids: ids, picked: out)
+        picking = out
+    }
+
+    /// 多选时底下那一条：上面一行往下全选、选中间（一条都没勾时是一句提示），下面取消、转发、存为图片、删除
     private var pickBar: some View {
+        VStack(spacing: Theme.sp1) {
+            let ids = messages.map(\.id)
+            let p = picking ?? []
+            if p.isEmpty {
+                Text("点击消息进行选择，长按选到这一条").font(.system(size: 12)).foregroundStyle(Theme.text3)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, Theme.sp2)
+            } else {
+                HStack(spacing: Theme.sp4) {
+                    Button("往下全选") { pickSpan(toEnd: true) }
+                        .disabled(!Picking.belowGap(ids: ids, picked: p))
+                    Button("选中间") { pickSpan(toEnd: false) }
+                        .disabled(!Picking.spanGap(ids: ids, picked: p))
+                    Spacer()
+                }
+                .font(.system(size: 14))
+                .padding(.horizontal, Theme.sp4)
+                .padding(.top, Theme.sp2)
+            }
+            pickActions
+        }
+        .modifier(BottomBarLook(bar: look.bottom))
+        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
+    }
+
+    private var pickActions: some View {
         HStack {
             Button("取消") { picking = nil }.buttonStyle(EiraButtonStyle(kind: .ghost))
             Spacer()
@@ -1100,8 +1178,6 @@ struct ConversationView: View {
         }
         .padding(.horizontal, Theme.sp4)
         .padding(.vertical, Theme.sp2)
-        .modifier(BottomBarLook(bar: look.bottom))
-        .overlay(alignment: .top) { Theme.border.frame(height: 1) }
     }
 
     private func post(_ make: () throws -> Message) {
@@ -1295,6 +1371,9 @@ struct ConversationView: View {
         var sbarByTurn: [String: Message] = [:]
         var firstOfTurn: [String: String] = [:]
         var statusItems: [String: StatusBar.Item] = [:]
+        /// 状态栏的折叠设置与最大高度（网页版 4.802、4.857）
+        var statusCfg = StatusBar.Config()
+        var statusMH: Double?
         /// 被拒收的那几条下面写的一行（好友与拉黑）
         var rejects: [String: String] = [:]
         var innerCard = false
@@ -1329,6 +1408,8 @@ struct ConversationView: View {
                                    uniquingKeysWith: { _, b in b }),
             firstOfTurn: Dictionary(messages.filter { !$0.turnId.isEmpty }.map { ($0.turnId, $0.id) }, uniquingKeysWith: { a, _ in a }),
             statusItems: Dictionary((chat.map { StatusBar.config($0).items } ?? []).map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a }),
+            statusCfg: chat.map { StatusBar.config($0) } ?? StatusBar.Config(),
+            statusMH: chat.flatMap { StatusBar.maxHeight($0) },
             rejects: Ties.notes(messages, chat: chat),
             innerCard: chat.map { InnerVoice.style($0, settings: st) == "card" } ?? false,
             meAvatar: ChatFaces.of(chat, key: ChatFaces.me, fallback: me?.avatar ?? ""),
@@ -1383,6 +1464,11 @@ struct ConversationView: View {
         return ctx.firstOfTurn[m.turnId] == m.id ? (holder, top) : nil
     }
 
+    private func statusBlock(_ m: Message, top: Bool, _ ctx: RowContext) -> some View {
+        StatusBlockView(message: m, items: ctx.statusItems, cfg: ctx.statusCfg, maxHeight: ctx.statusMH,
+                        foldKey: StatusFolds.key(chatId: chatId, msgId: m.id, top: top))
+    }
+
     /// 时刻与已读回执（网页版 receipt.js）：按间隔时两条中间插一行时间；逐条时写在气泡旁边或下方
     @ViewBuilder
     private func messageCell(_ m: Message, _ ctx: RowContext) -> some View {
@@ -1395,10 +1481,10 @@ struct ConversationView: View {
                 timeSep(Receipt.sepOf(m.createdAt))
             }
             let status = statusFor(m, ctx)
-            if let status, status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.bottom, Theme.sp2) }
+            if let status, status.top { statusBlock(status.msg, top: true, ctx).padding(.bottom, Theme.sp2) }
             // 行的内容没变就不重画（打字、计时器等让整页重算时，几十行气泡不跟着重算）
             messageRow(m, ctx, sep: sep).equatable()
-            if let status, !status.top { StatusBlockView(message: status.msg, items: ctx.statusItems).padding(.top, Theme.sp2) }
+            if let status, !status.top { statusBlock(status.msg, top: false, ctx).padding(.top, Theme.sp2) }
         }
         // 一轮与一轮之间 16；同一个人 3 分钟内接着说的收紧到 5（网页版 --bubble-gap / .is-cont）
         .padding(.top, top)
@@ -1661,6 +1747,11 @@ struct ConversationView: View {
             pickOrder = [m.id]
         case .pickTo:
             pickTo(m.id)
+        case .fav:
+            // 不弹提示：长按菜单里这一格随之变成「取消收藏」；收藏页在聊天「主页」右上角
+            do { replace(try Favorites.set(m, !Favorites.isOn(m))) } catch { problem = "收藏未能保存：\(error.localizedDescription)" }
+        case .menuOrder:
+            showMenuOrder = true
         case .settle(let yes):
             do {
                 let notice = try (m.kind == "gift" ? Interact.settleGift(m.id, open: yes)
@@ -2153,7 +2244,7 @@ struct MessageRow: View, Equatable {
             && a.chatCharIds == b.chatCharIds && a.narrName == b.narrName && a.narrTone == b.narrTone && a.innerLook == b.innerLook
     }
 
-    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare,
+    enum Action { case copy, quote, edit, recall, delete, settle(Bool), react(String), redraw, revoice, remember, example, served, think, copySong, select, pickTo, openForward, translate, editTrans, jumpQuote, moreReact, regenerate, bindSticker, innerCard, saveAlbum, resummarize, pat, recognize, compare, fav, menuOrder,
                   textImage, backToText, toVoice, imageVersions, openRedPacket }
 
     let message: Message
@@ -2354,82 +2445,123 @@ struct MessageRow: View, Equatable {
             }
             Button { onAction?(.moreReact) } label: { Label("更多回应", systemImage: "face.smiling") }
         }
-        Button { onAction?(.quote) } label: { Label("引用", systemImage: "quote.bubble") }
-        if message.kind == "song" {
-            Button { onAction?(.copySong) } label: { Label("复制歌名", systemImage: "doc.on.doc") }
-        } else {
-            Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
-        }
-        if MessageActions.canEdit(message) {
-            Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
-        }
-        // 改为文字图（4.799，不调接口）、改为语音（4.881，调一次语音接口）、改回文字
-        if MsgConvert.canConvert(message) {
-            Button { onAction?(.textImage) } label: { Label("改为文字图", systemImage: "text.below.photo") }
-            Button { onAction?(.toVoice) } label: { Label("改为语音", systemImage: "waveform") }
-        }
-        if MsgConvert.isTextImage(message) || MsgConvert.isVoiced(message) {
-            Button { onAction?(.backToText) } label: { Label("改回文字", systemImage: "text.bubble") }
-        }
-        // 图片版本（4.861）：各版并排比较，挑一版显示
-        if ImageVersions.can(message) {
-            Button { onAction?(.imageVersions) } label: {
-                Label(ImageVersions.of(message).count > 1 ? "图片版本（\(ImageVersions.of(message).count)）" : "图片版本", systemImage: "square.stack")
+        // 先后按「调整顺序」里排的（settings.msgMenuOrder，网页版 4.917）；每一格出不出现仍按这条消息自己的情况定
+        ForEach(MenuOrder.order(SettingsModel.shared.s), id: \.self) { id in menuItem(id) }
+        Divider()
+        Button { onAction?(.menuOrder) } label: { Label("调整顺序", systemImage: "arrow.up.arrow.down") }
+    }
+
+    @ViewBuilder private func menuItem(_ id: String) -> some View {
+        switch id {
+        case "reply":
+            Button { onAction?(.quote) } label: { Label("引用", systemImage: "quote.bubble") }
+        case "copy":
+            if message.kind == "song" {
+                Button { onAction?(.copySong) } label: { Label("复制歌名", systemImage: "doc.on.doc") }
+            } else {
+                Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
             }
-        }
-        // 最新那一轮的角色消息：重新生成这一轮
-        if canRegen {
-            Button { onAction?(.regenerate) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
-        }
-        if TranslateOne.can(message, lang: translateLang) {
-            Button { onAction?(.translate) } label: { Label(translation.isEmpty ? "翻译" : "重新翻译", systemImage: "character.bubble") }
-        }
-        // 改译文：正文的译文，有心声译文的连心声的一起（网页版 4.438）
-        if !message.isRecalled && (TranslateOne.can(message, lang: translateLang) || !translation.isEmpty || !innerTrans.isEmpty) {
-            Button { onAction?(.editTrans) } label: { Label("改译文", systemImage: "pencil.line") }
-        }
-        if MessageActions.canRecall(message) {
-            Button { onAction?(.recall) } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
-        }
-        if !mine && message.kind == "image" && SettingsModel.shared.s.imageReady && !message.row.string("prompt").isEmpty {
-            Button { onAction?(.redraw) } label: { Label("重画图片", systemImage: "arrow.clockwise") }
-        }
-        // 识别图片 / 重新识别（网页版 4.594）：我发的图在单独的识图接口那一档可以再识一次，一次识图调用
-        if Vision.canRedo(message, settings: SettingsModel.shared.s) {
-            Button { onAction?(.recognize) } label: {
-                Label(message.row.string("vision") == "done" ? "重新识别" : "识别图片", systemImage: "eye")
+        case "fav":
+            // 收藏（网页版 4.853）：消息上的记号，聊天「主页」右上角进收藏页
+            Button { onAction?(.fav) } label: {
+                Label(Favorites.isOn(message) ? "取消收藏" : "收藏", systemImage: Favorites.isOn(message) ? "bookmark.slash" : "bookmark")
             }
+        case "edit":
+            if MessageActions.canEdit(message) {
+                Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
+            }
+        case "phototext":
+            // 改为文字图（4.799，不调接口）；由它改过来的那一条：改回文字
+            if MsgConvert.canConvert(message) {
+                Button { onAction?(.textImage) } label: { Label("改为文字图", systemImage: "text.below.photo") }
+            } else if MsgConvert.isTextImage(message) {
+                Button { onAction?(.backToText) } label: { Label("改回文字", systemImage: "text.bubble") }
+            }
+        case "voice":
+            // 改为语音（4.881，调一次语音接口）；由它改过来的那一条：改回文字
+            if MsgConvert.canConvert(message) {
+                Button { onAction?(.toVoice) } label: { Label("改为语音", systemImage: "waveform") }
+            } else if MsgConvert.isVoiced(message) {
+                Button { onAction?(.backToText) } label: { Label("改回文字", systemImage: "text.bubble") }
+            }
+        case "imgvers":
+            // 图片版本（4.861）：各版并排比较，挑一版显示
+            if ImageVersions.can(message) {
+                Button { onAction?(.imageVersions) } label: {
+                    Label(ImageVersions.of(message).count > 1 ? "图片版本（\(ImageVersions.of(message).count)）" : "图片版本", systemImage: "square.stack")
+                }
+            }
+        case "regen":
+            // 最新那一轮的角色消息：重新生成这一轮
+            if canRegen {
+                Button { onAction?(.regenerate) } label: { Label("重新生成", systemImage: "arrow.clockwise") }
+            }
+        case "translate":
+            if TranslateOne.can(message, lang: translateLang) {
+                Button { onAction?(.translate) } label: { Label(translation.isEmpty ? "翻译" : "重新翻译", systemImage: "character.bubble") }
+            }
+        case "transedit":
+            // 改译文：正文的译文，有心声译文的连心声的一起（网页版 4.438）
+            if !message.isRecalled && (TranslateOne.can(message, lang: translateLang) || !translation.isEmpty || !innerTrans.isEmpty) {
+                Button { onAction?(.editTrans) } label: { Label("改译文", systemImage: "pencil.line") }
+            }
+        case "recall":
+            if MessageActions.canRecall(message) {
+                Button { onAction?(.recall) } label: { Label("撤回", systemImage: "arrow.uturn.backward") }
+            }
+        case "redraw":
+            if !mine && message.kind == "image" && SettingsModel.shared.s.imageReady && !message.row.string("prompt").isEmpty {
+                Button { onAction?(.redraw) } label: { Label("重画图片", systemImage: "arrow.clockwise") }
+            }
+        case "vision":
+            // 识别图片 / 重新识别（网页版 4.594）：我发的图在单独的识图接口那一档可以再识一次，一次识图调用
+            if Vision.canRedo(message, settings: SettingsModel.shared.s) {
+                Button { onAction?(.recognize) } label: {
+                    Label(message.row.string("vision") == "done" ? "重新识别" : "识别图片", systemImage: "eye")
+                }
+            }
+        case "keep":
+            // 存相册（网页版 MsgMenu 的 keep）：存的是同一张图，不另压一份
+            if (message.kind == "image" && !message.imageId.isEmpty) || (message.kind == "sticker" && !message.row.string("stickerId").isEmpty) {
+                Button { onAction?(.saveAlbum) } label: { Label("存相册", systemImage: "photo.on.rectangle") }
+            }
+            // 存储语音：交给系统的分享面板，可存到「文件」或发给别人
+            if message.kind == "voice", case let aid = message.row.string("audioId"), !aid.isEmpty,
+               let url = Files.exportURL(aid, name: "语音-\(String(message.row.string("voiceText").prefix(12)))") {
+                ShareLink(item: url) { Label("存储语音", systemImage: "square.and.arrow.down") }
+            }
+        case "remember":
+            if !MessageActions.bodyText(message).isEmpty {
+                Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
+            }
+        case "rewind":
+            if summarized {
+                Button { onAction?(.resummarize) } label: { Label("从这条起重新总结", systemImage: "arrow.counterclockwise") }
+            }
+        case "example":
+            if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {
+                Button { onAction?(.example) } label: { Label("收进示例", systemImage: "text.quote") }
+            }
+        case "think":
+            if !mine && hasThink {
+                Button { onAction?(.think) } label: { Label("查看思考", systemImage: "text.bubble") }
+            }
+        case "served":
+            if !mine && !message.turnId.isEmpty {
+                Button { onAction?(.served) } label: { Label("生成信息", systemImage: "info.circle") }
+            }
+        case "compare":
+            // 换接口对比（网页版 4.561）：只在一对一会话、最新一轮
+            if canRegen && chatCharIds.count <= 1 {
+                Button { onAction?(.compare) } label: { Label("换接口对比", systemImage: "square.split.2x1") }
+            }
+        case "multi":
+            Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
+        case "delete":
+            Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
+        default:
+            EmptyView()
         }
-        // 存相册（网页版 MsgMenu 的 keep）：存的是同一张图，不另压一份
-        if (message.kind == "image" && !message.imageId.isEmpty) || (message.kind == "sticker" && !message.row.string("stickerId").isEmpty) {
-            Button { onAction?(.saveAlbum) } label: { Label("存相册", systemImage: "photo.on.rectangle") }
-        }
-        // 存储语音：交给系统的分享面板，可存到「文件」或发给别人
-        if message.kind == "voice", case let aid = message.row.string("audioId"), !aid.isEmpty,
-           let url = Files.exportURL(aid, name: "语音-\(String(message.row.string("voiceText").prefix(12)))") {
-            ShareLink(item: url) { Label("存储语音", systemImage: "square.and.arrow.down") }
-        }
-        if !MessageActions.bodyText(message).isEmpty {
-            Button { onAction?(.remember) } label: { Label("记住这句", systemImage: "brain") }
-        }
-        if summarized {
-            Button { onAction?(.resummarize) } label: { Label("从这条起重新总结", systemImage: "arrow.counterclockwise") }
-        }
-        if !mine && !MessageActions.bodyText(message).isEmpty && message.kind != "narration" {
-            Button { onAction?(.example) } label: { Label("收进示例", systemImage: "text.quote") }
-        }
-        if !mine && hasThink {
-            Button { onAction?(.think) } label: { Label("查看思考", systemImage: "text.bubble") }
-        }
-        if !mine && !message.turnId.isEmpty {
-            Button { onAction?(.served) } label: { Label("生成信息", systemImage: "info.circle") }
-        }
-        // 换接口对比（网页版 4.561）：只在一对一会话、最新一轮
-        if canRegen && chatCharIds.count <= 1 {
-            Button { onAction?(.compare) } label: { Label("换接口对比", systemImage: "square.split.2x1") }
-        }
-        Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
-        Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
     }
 
     private var translation: String { (message.row["translation"]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines) }

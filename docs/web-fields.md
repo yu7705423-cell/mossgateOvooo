@@ -81,6 +81,9 @@
 | faces | {charId 或 'me': 图片id} | 本会话里的头像 |
 | memoryUpTo / memoryUpToAt / memoryTriedId / memoryTriedAt | | 记忆整理的进度 |
 
+状态栏：`statusBar.{online,offline}` 为 `{on, carry, at, items, fold:false, folded:true, brief:'', css:''}`（4.399、4.802、4.857）；
+最大高度在 `look.status.{online,offline}.mh`（40 到 1200，不填不限）。原生版只读写 online，css 原样留着。
+
 群聊另有：admins、nicks、mutes、muteAll、groupProactive；
 charLeave（Bool，缺省假，角色可以自行退群，4.733）、groupMode（'member' 'watch' 'voice'，缺省 member，4.1018）、
 groupAmbient（{page: false, pageMin: 3, perOpen: 10}，本群页面打开时接着聊，4.1018）。上下文长度、记忆、模板**不按会话存**，都在 settings 里，
@@ -105,6 +108,8 @@ groupAmbient（{page: false, pageMin: 3, perOpen: 10}，本群页面打开时接
 | reactions | [{e, by, at}] | 回应 |
 | translation, inner, innerTrans | String | 翻译与心声 |
 | readAt | 毫秒 | 已读 |
+| fav, favAt | Bool, 毫秒 | 收藏（4.853）。取消时写 false 与 0，不另存一份 |
+| forward | {title, from, count, items: [{who, mine, kind, text, at, imageId?, stickerId?, face?, trans?}]} | 转发的记录；stickerId、face 为 4.937 起，trans 为译文 |
 
 主要 kind 与附加字段：
 
@@ -241,3 +246,13 @@ Anthropic 一律这样，OpenAI 除非 midSystem 为 'system'。输出去掉 `<t
 提示词预设：settings.presets `[{id, name, data}]`，会话的 presetId 选一份叠在 settings 上，叠的键见 `presets.js` 的 KEYS：
 promptLayout promptCustom promptTemplates injectOrder msgMin msgMax smsMin smsMax narrationMin synopsisMin synopsisMax
 historyMode historyLimit historyTurns scanWindow contextBudget promptLean。
+
+## 8. 聊天界面的几项设置与记号
+
+| 在哪儿 | 字段 | 说明 |
+|---|---|---|
+| settings | panelOrder, panelMore | 加号面板的先后与收进「更多」的几格（panel.js）。没设过取默认 |
+| settings | msgMenuOrder | 长按消息那几格的先后（menuorder.js 的 MSG_ITEMS，三十个 id）。读时丢掉不认识的、补上缺的；恢复默认写 null |
+| settings | convMenuOrder | 会话菜单分组的先后（原生版暂不读，原样留着） |
+| stickers | myUsedAt | 毫秒。自己从表情面板点出去的最近一次（4.935「最近常用」）；useCount 另算，角色发的也算 |
+

@@ -266,7 +266,7 @@ struct FindPlaceView: View {
         "caps", "lore", "memory", "presets", "ban", "regex",
         "api", "routes", "memoryApi", "voice", "image", "music", "weather", "vision", "asr", "translateApi",
         "notify", "bgpush", "limits", "holidays", "appearance", "lockpin", "storage", "help", "feedback", "terms",
-        "time", "stickers", "personas",
+        "time", "stickers", "personas", "favorites", "menuorder", "sent",
     ]
 
     /// 这一项能不能点过去：没有页面的不能；搜索聊天记录要能打开会话
@@ -277,7 +277,7 @@ struct FindPlaceView: View {
 
     /// 挂在一段对话上的那几页
     static let perChat: Set<String> = ["abilities", "pace", "proactive", "inner", "extras", "status", "translate", "summary", "bond",
-                                       "badges", "skin", "look", "search", "card", "ties", "more"]
+                                       "badges", "skin", "look", "search", "card", "ties", "more", "sent"]
 
     var body: some View {
         if Self.perChat.contains(dest) { chatPage } else { globalPage }
@@ -303,6 +303,7 @@ struct FindPlaceView: View {
         case "card": FindCardEdit(charId: charId)
         case "ties": MenuPage("好友与拉黑") { TiesSection(chatId: chatId) }
         case "more": ChatMorePageView(chatId: chatId)
+        case "sent": SentPageView(chatId: chatId)
         default: EmptyView()
         }
     }
@@ -338,6 +339,8 @@ struct FindPlaceView: View {
         case "time": TimeSettingsView()
         case "stickers": StickerManagerView()
         case "personas": PersonaListView()
+        case "favorites": FavoritesView { c, _ in openChat?(c) }
+        case "menuorder": MenuOrderView(kind: "msg")
         default: EmptyState(title: "该功能没有可前往的页面")
         }
     }

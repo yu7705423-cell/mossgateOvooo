@@ -75,7 +75,7 @@ struct ChatSettingsView: View {
                         case .moment(let id): MomentDetailView(momentId: id, path: $profilePath)
                         case .editChar(let id): CharacterEditView(charId: id, path: $profilePath)
                         case .editPersona(let id): PersonaEditView(personaId: id)
-                        case .search: EmptyView()
+                        case .search, .favorites: EmptyView()
                         case .focus(let c, let m): ConversationView(chatId: c, focusId: m)
                         }
                     }
@@ -172,6 +172,10 @@ struct ChatSettingsView: View {
             dest: AnyView(ChatPresetPage(chatId: chatId)))
         add("history", how, "历史范围", HistoryRangePage.label(c), keys: "上下文 历史 读几条 条数 轮数",
             dest: AnyView(HistoryRangePage(chatId: chatId)))
+        // 上一轮发送的内容（网页版 4.776）：这段会话最近一轮回复发给模型的原文，只在内存里
+        add("sent", how, "上一轮发送的内容", LastSent.shared.last(chatId) == nil ? "" : "已记录",
+            keys: "提示词 读到了什么 发送的内容 原文 核对 调试",
+            dest: AnyView(SentPageView(chatId: chatId)))
         if c.isGroup {
             add("lore", how, "世界书", "在各成员的角色资料里设置", keys: "设定 词条",
                 dest: AnyView(GroupLorePage(chatId: chatId)))

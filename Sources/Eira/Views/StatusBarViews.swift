@@ -1,29 +1,66 @@
 import SwiftUI
 
-/// 会话里那一块状态栏（网页版 StatusBits.StatusBlock）：一行一栏，自定义的可以画成进度条
+/// 每一块各自折起、展开（网页版 StatusBits 的 own，ARCHITECTURE 4.857）。设置里的「默认」是还没点过的那几块的样子，
+/// 点过的记在这里（按会话、线上、这一块），离开会话页再回来照旧；关掉应用后回到默认。只在内存里，不落库
+@MainActor
+final class StatusFolds: ObservableObject {
+    static let shared = StatusFolds()
+    @Published private(set) var own: [String: Bool] = [:]
+
+    nonisolated static func key(chatId: String, msgId: String, top: Bool) -> String { "\(chatId):\(StatusBar.mode):\(top ? "b" : "a")-\(msgId)" }
+
+    func folded(_ key: String, _ cfg: StatusBar.Config) -> Bool { cfg.fold && (own[key] ?? cfg.folded) }
+
+    func toggle(_ key: String, _ cfg: StatusBar.Config) {
+        let next = !folded(key, cfg)
+        if next == cfg.folded { own[key] = nil } else { own[key] = next }
+    }
+}
+
+/// 会话里那一块状态栏（网页版 StatusBits.StatusBlock）：一行一栏，自定义的可以画成进度条。
+/// 开了「可以折叠」时右上角一个箭头，点整块即可折起展开；折起时只剩标题那一行，展开后标题留在最上面加粗（4.802、4.857）。
+/// 设了最大高度时超出的在框里滚动，不带着聊天一起滚
 struct StatusBlockView: View {
     let message: Message
     let items: [String: StatusBar.Item]
+    var cfg = StatusBar.Config()
+    var maxHeight: Double?
+    var foldKey = ""
+    @ObservedObject private var folds = StatusFolds.shared
+    @State private var bodyHeight: CGFloat = 0
 
     var body: some View {
         let vals = StatusBar.values(message)
         if !vals.isEmpty {
+            let folded = folds.folded(foldKey, cfg)
             VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(vals.enumerated()), id: \.offset) { _, v in
-                    HStack(spacing: Theme.sp2) {
-                        Text(v.label).font(.system(size: 11)).foregroundStyle(Theme.text3)
-                        if let it = items[v.id], it.show == "bar", let pct = StatusBar.percent(it, v.value) {
-                            GeometryReader { g in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(Theme.surface3)
-                                    Capsule().fill(Theme.text2).frame(width: g.size.width * CGFloat(pct) / 100)
-                                }
-                            }
-                            .frame(height: 4)
-                            Text(v.value).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.text2)
-                        } else {
-                            Text(v.value).font(.system(size: 12)).foregroundStyle(Theme.text2)
+                if cfg.fold {
+                    HStack(alignment: .top, spacing: Theme.sp2) {
+                        let brief = StatusBar.briefOf(cfg, vals)
+                        Text(brief.isEmpty ? "状态栏" : brief)
+                            .font(.system(size: 12, weight: folded ? .regular : .semibold))
+                            .foregroundStyle(Theme.text2)
+                            .lineLimit(folded ? 1 : nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.text3)
+                            .rotationEffect(.degrees(folded ? 0 : 180))
+                    }
+                }
+                if !folded {
+                    if let mh = maxHeight {
+                        ScrollView {
+                            rows(vals)
+                                .background(GeometryReader { g in
+                                    Color.clear
+                                        .onAppear { bodyHeight = g.size.height }
+                                        .onChange(of: g.size.height) { _, h in bodyHeight = h }
+                                })
                         }
+                        .frame(height: min(max(bodyHeight, 1), CGFloat(mh)))
+                        .scrollBounceBehavior(.basedOnSize)
+                    } else {
+                        rows(vals)
                     }
                 }
             }
@@ -31,9 +68,36 @@ struct StatusBlockView: View {
             // 美化里写了 .ph-status 就照它画，没写照原样
             .modifier(PhSurface(hooks: ["status"], fallback: PhFallback(fill: Theme.groupFill, radius: Theme.rMd,
                                                                      padH: Theme.sp3, padV: Theme.sp2, alignment: .leading)))
+            .contentShape(Rectangle())
+            .onTapGesture { if cfg.fold { withAnimation(.easeOut(duration: 0.15)) { folds.toggle(foldKey, cfg) } } }
             .padding(.horizontal, Theme.pad)
             .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(cfg.fold ? .isButton : [])
+            .accessibilityHint(cfg.fold ? (folded ? "展开状态栏" : "折叠状态栏") : "")
         }
+    }
+
+    private func rows(_ vals: [(id: String, label: String, value: String)]) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(vals.enumerated()), id: \.offset) { _, v in
+                HStack(spacing: Theme.sp2) {
+                    Text(v.label).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                    if let it = items[v.id], it.show == "bar", let pct = StatusBar.percent(it, v.value) {
+                        GeometryReader { g in
+                            ZStack(alignment: .leading) {
+                                Capsule().fill(Theme.surface3)
+                                Capsule().fill(Theme.text2).frame(width: g.size.width * CGFloat(pct) / 100)
+                            }
+                        }
+                        .frame(height: 4)
+                        Text(v.value).font(.system(size: 11).monospacedDigit()).foregroundStyle(Theme.text2)
+                    } else {
+                        Text(v.value).font(.system(size: 12)).foregroundStyle(Theme.text2)
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -43,6 +107,7 @@ struct StatusBarSettingsView: View {
     @State private var cfg = StatusBar.Config()
     @State private var problem: String?
     @State private var editing: StatusBar.Item?
+    @State private var mhText = ""
 
     var body: some View {
         Form {
@@ -60,6 +125,32 @@ struct StatusBarSettingsView: View {
                     }
                 } footer: {
                     HelpNote("带进下一轮开启时，上一轮的值作为当前状态交给角色；关闭时每轮给初始值。")
+                }
+                Section {
+                    Toggle("可以折叠", isOn: Binding(get: { cfg.fold }, set: { cfg.fold = $0; cfg.folded = true; save() }))
+                    if cfg.fold {
+                        Picker("默认", selection: Binding(get: { cfg.folded }, set: { cfg.folded = $0; save() })) {
+                            Text("折起").tag(true)
+                            Text("展开").tag(false)
+                        }
+                        TextField("标题内容，例如：{{心情}} · {{所在地}}", text: Binding(get: { cfg.brief }, set: { cfg.brief = $0; save() }))
+                        let names = cfg.items.filter { $0.on && $0.supported }.map { "{{\($0.label)}}" }.joined(separator: " ")
+                        Text("可用：\(names.isEmpty ? "（尚未开启栏目）" : names)").font(.caption).foregroundStyle(Theme.text3)
+                    }
+                } header: { Text("折叠") } footer: {
+                    HelpNote("开启后，点状态栏的任意位置即可折起、展开，每一块各自折起、展开。折起时显示标题内容，展开后这一行留在最上面作为标题。标题内容用 {{栏目名称}} 引用那一栏的值，不填则把各栏的值接成一行。尚未点过的状态栏按「默认」显示；点过的保持各自的样子，直到关闭应用。", title: "状态栏：折叠")
+                }
+                Section {
+                    HStack {
+                        Text("最大高度")
+                        TextField("不限", text: $mhText)
+                            .keyboardType(.numberPad).multilineTextAlignment(.trailing)
+                            .onSubmit(saveMH)
+                        Text("pt").foregroundStyle(Theme.text3)
+                    }
+                    .onChange(of: mhText) { _, _ in saveMH() }
+                } header: { Text("样式") } footer: {
+                    HelpNote("最大高度在 40 到 1200 之间。超出的部分在框内滚动。不填则不限高度。只对这段会话生效。", title: "状态栏：最大高度")
                 }
                 Section {
                     ForEach(cfg.items.filter(\.supported)) { it in
@@ -121,6 +212,16 @@ struct StatusBarSettingsView: View {
     private func load() {
         guard let c = try? Repo.chat(chatId) else { return }
         cfg = StatusBar.config(c)
+        mhText = StatusBar.maxHeight(c).map { String(Int($0)) } ?? ""
+    }
+
+    /// 填的是数字才存（钳在 40 到 1200）；清空即不限。输入到一半（比如 1）时也照存，存的是钳过的值，框里照旧是输入的字
+    private func saveMH() {
+        let t = mhText.trimmingCharacters(in: .whitespaces)
+        let v = Double(t)
+        guard t.isEmpty || v != nil else { return }
+        do { try StatusBar.setMaxHeight(chatId, t.isEmpty ? nil : v); problem = nil }
+        catch { problem = "未能保存：\(error.localizedDescription)" }
     }
 
     private func save() {

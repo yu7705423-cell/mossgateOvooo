@@ -95,6 +95,24 @@ enum Panel {
         s.raw["panelOrder"] = .array((list + keepUnknown(s, "panelOrder")).map { .string($0) })
     }
 
+    /// 拖动排序松手（「调整顺序」页，网页版 panel.moveTo）。from、to 是 order(s) 里的位置
+    static func moveTo(_ s: inout AppSettings, from: IndexSet, to: Int) {
+        var list = order(s)
+        list.moveItems(fromOffsets: from, toOffset: to)
+        s.raw["panelOrder"] = .array((list + keepUnknown(s, "panelOrder")).map { .string($0) })
+    }
+
+    /// 与默认不同（「恢复默认」能不能点）
+    static func changed(_ s: AppSettings) -> Bool {
+        order(s) != all || more(s) != Set(defaultMore)
+    }
+
+    /// 加号面板分页（网页版 PanelPager.js，ARCHITECTURE 4.901）：一页两行四列，左右滑动翻页
+    static let perPage = 8
+    static func pages<T>(_ items: [T], per: Int = perPage) -> [[T]] {
+        stride(from: 0, to: items.count, by: max(1, per)).map { Array(items[$0..<min($0 + max(1, per), items.count)]) }
+    }
+
     static func reset(_ s: inout AppSettings) {
         s.raw["panelOrder"] = .array(all.map { .string($0) })
         s.raw["panelMore"] = .array(defaultMore.map { .string($0) })
