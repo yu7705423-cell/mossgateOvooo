@@ -156,8 +156,10 @@ final class ReplyParserTests: XCTestCase {
 
     /// 原生版还没有的那几件事：认出来就不落气泡
     func testUnsupportedActionLinesDropped() {
-        let r = ReplyParser.split("好\n[批准]\n[暂停]\n[同行]\n嗯")
+        let r = ReplyParser.split("好\n[暂停]\n[同行]\n嗯")
         XCTAssertEqual(r.parts.map(\.text), ["好", "嗯"])
+        // 批准、驳回如今是情侣账户的一件事（记账做了）：不占气泡，落成一个表态
+        XCTAssertEqual(ReplyParser.split("好\n[批准]\n嗯").parts.map(\.type), [.text, .vote, .text])
         // 全员禁言如今是群管理的一件事：不占气泡，落成一个动作，由引擎按身份决定生不生效
         XCTAssertEqual(ReplyParser.split("好\n[全员禁言]\n嗯").parts.map(\.type), [.text, .muteAll, .text])
     }

@@ -15,7 +15,7 @@ final class PanelTests: XCTestCase {
 
     func testMoveAndMoreKeepWebIds() {
         var s = AppSettings(raw: ["panelOrder": .array(["watch", "photo", "voice"].map { .string($0) }),
-                                  "panelMore": .array(["request"].map { .string($0) })])
+                                  "panelMore": .array(["makeclip"].map { .string($0) })])
         XCTAssertEqual(Array(Panel.order(s).prefix(3)), ["lore", "photo", "voice"])
         XCTAssertTrue(Panel.more(s).isEmpty)
         Panel.move(&s, "voice", -1)
@@ -23,7 +23,7 @@ final class PanelTests: XCTestCase {
         XCTAssertTrue((s.raw["panelOrder"]?.array ?? []).contains(.string("watch")))
         Panel.setMore(&s, "photo", true)
         XCTAssertEqual(Panel.more(s), ["photo"])
-        XCTAssertTrue((s.raw["panelMore"]?.array ?? []).contains(.string("request")))
+        XCTAssertTrue((s.raw["panelMore"]?.array ?? []).contains(.string("makeclip")))
         XCTAssertFalse(Panel.onPanel(s, group: false).contains("photo"))
     }
 }

@@ -27,7 +27,10 @@ extension CostTests {
     func testLedgerMoneyApplies() async throws {
         let book = try Ledger.create(name: "一起记账", chatId: "chat_a")
         let json = #"{"summary":"一份工作","balance":3200,"income":[{"day":10,"amount":6000,"note":"工资"}],"expenses":[{"day":35,"amount":-1500,"note":""}]}"#
-        MockNet.reset { _, _ in .init(status: 200, body: MockNet.anthropicStream(json)) }
+        // 这件事默认走副用（OpenAI 兼容那一套），主用是 Anthropic：按打到哪一台给对应的流
+        MockNet.reset { req, _ in
+            .init(status: 200, body: req.url?.host == "main.test" ? MockNet.anthropicStream(json) : MockNet.openaiStream(json))
+        }
         let info = try await LedgerAI.generate(book.id)
         XCTAssertEqual(MockNet.count, 1)
         XCTAssertEqual(info["summary"]?.string, "一份工作")

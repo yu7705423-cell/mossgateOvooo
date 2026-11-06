@@ -79,8 +79,10 @@ final class WebLogicTests: XCTestCase {
             ["type": "agenda", "state": "done", "title": "买菜"],
             ["type": "text", "text": "嗯", "quote": "你好", "recall": true, "inner": "其实", "translation": "hm"],
             ["type": "vote", "ok": true],
+            ["type": "gacha-spin"],
         ])
-        XCTAssertEqual(parts.map(\.type), [.transfer, .react, .newlist, .agenda, .text])
+        XCTAssertEqual(parts.map(\.type), [.transfer, .react, .newlist, .agenda, .text, .vote])
+        XCTAssertTrue(parts[5].flag)
         XCTAssertEqual(parts[0].amount, 52)
         XCTAssertEqual(parts[0].text, "奶茶")
         XCTAssertEqual(parts[1].extra, "好的")
@@ -91,7 +93,7 @@ final class WebLogicTests: XCTestCase {
         XCTAssertTrue(parts[4].recall)
         XCTAssertEqual(parts[4].inner, "其实")
         XCTAssertEqual(parts[4].translation, "hm")
-        XCTAssertEqual(unmapped, ["vote"])
+        XCTAssertEqual(unmapped, ["gacha-spin"])
     }
 
     /// 两千行的回复各解析两百次，日志里打出两边的耗时（docs/jscore-pilot.md）。
