@@ -731,6 +731,9 @@ struct ChatMorePageView: View {
         } header: { Text("用量") }
         if !c.isGroup {
             Section {
+                if let cid = c.characterIds.first {
+                    NavigationLink { CharPackExportView(charId: cid) } label: { sub("导出这个角色", "角色包，网页版与本应用都能导入") }
+                }
                 Button { wiping = "history" } label: {
                     sub("清空聊天记录", counts.chats > 1
                         ? "\(counts.messages) 条消息，分布在 \(counts.chats) 段会话中。已提取的记忆保留"
