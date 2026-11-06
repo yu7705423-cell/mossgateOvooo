@@ -3,13 +3,19 @@ import SwiftUI
 
 /// 会话里的表情面板：占住键盘的位置（网页版第 23 条），按分组切换，点一下发出去。
 struct StickerPanel: View {
+    /// 点出去算不算「最近常用」：发送时算，指认表情时不算
+    var noteRecent = true
     let onPick: (Stickers.Item) -> Void
     @State private var items: [Stickers.Item] = []
     @State private var group = ""
     @State private var managing = false
     @State private var problem: String?
 
-    private var groups: [String] { Stickers.groups(items, settings: .load(), onlyUsed: true) }
+    /// 最前面一组「最近常用」（网页版 4.935）：自己从面板点出去过的，最近的在前；一张都没用过时不出现
+    private var groups: [String] { Stickers.panelGroups(items, settings: .load()) }
+    private var shownItems: [Stickers.Item] {
+        current == Stickers.recent ? Stickers.recentMine(items) : items.filter { $0.group == current }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -36,8 +42,8 @@ struct StickerPanel: View {
             } else {
                 ScrollView {
                     LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: Theme.gap), count: 4), spacing: Theme.gap) {
-                        ForEach(items.filter { $0.group == current }) { st in
-                            Button { onPick(st) } label: {
+                        ForEach(shownItems) { st in
+                            Button { pick(st) } label: {
                                 VStack(spacing: 2) {
                                     StickerView(id: st.id, name: st.name).frame(width: 64, height: 64)
                                     Text(st.name).font(.caption2).foregroundStyle(Theme.secondaryText).lineLimit(1)
@@ -59,6 +65,11 @@ struct StickerPanel: View {
     }
 
     private var current: String { groups.contains(group) ? group : (groups.first ?? "") }
+
+    private func pick(_ st: Stickers.Item) {
+        if noteRecent { do { try Stickers.markMine(st.id) } catch { problem = "最近常用未能记下：\(error.localizedDescription)" } }
+        onPick(st)
+    }
 
     private func reload() {
         do { items = try Stickers.all(); problem = nil }

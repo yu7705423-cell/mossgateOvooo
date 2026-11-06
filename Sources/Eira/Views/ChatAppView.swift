@@ -18,6 +18,8 @@ struct ChatAppView: View {
         case search
         /// 打开会话并跳到那一条
         case focus(chatId: String, messageId: String)
+        /// 收藏的消息（网页版 /favorites，4.853）
+        case favorites
     }
 
     struct TabItem: Identifiable { var id: String; var label: String; var icon: String }
@@ -42,6 +44,8 @@ struct ChatAppView: View {
                     case .search:
                         SearchChatView(chatId: nil) { c, m in path.append(ChatRoute.focus(chatId: c, messageId: m)) }
                     case .focus(let c, let m): ConversationView(chatId: c, focusId: m)
+                    case .favorites:
+                        FavoritesView { c, m in path.append(ChatRoute.focus(chatId: c, messageId: m)) }
                     }
                 }
         }
@@ -66,7 +70,14 @@ struct ChatAppView: View {
         switch tab {
         case "contacts": ChatContactsTab(path: $path)
         case "moments": MomentsTab(path: $path)
-        case "me": ProfileView(subjectId: "me", path: $path, embedded: true)
+        case "me":
+            ProfileView(subjectId: "me", path: $path, embedded: true)
+                // 主页右上角的书签进收藏页（网页版 4.853）
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        Button { path.append(ChatRoute.favorites) } label: { NavIcon("bookmark") }.accessibilityLabel("收藏")
+                    }
+                }
         default: ChatListView(path: $path)
         }
     }

@@ -52,6 +52,11 @@ enum StatusBar {
         var carry = true
         var at = "last-bottom"
         var items: [Item] = []
+        /// 折叠（网页版 4.802、4.857）：fold 可以折叠（默认关）；folded 是还没点过的那几块折着没有（默认折着）；
+        /// brief 是折起时那一行，{{栏目名称}} 换成那一栏的值，空着就把各栏的值接成「 · 」一行
+        var fold = false
+        var folded = true
+        var brief = ""
     }
 
     private static func item(_ raw: JSONValue) -> Item? {
@@ -84,7 +89,49 @@ enum StatusBar {
         let at = ["before": "first-top", "after": "last-bottom"][raw["at"]?.string ?? ""] ?? (raw["at"]?.string ?? "")
         c.at = places.contains(where: { $0.id == at }) ? at : "last-bottom"
         c.items = stored + builtin.filter { !seen.contains($0.id) }
+        c.fold = raw["fold"]?.bool == true
+        c.folded = raw["folded"]?.bool != false
+        c.brief = raw["brief"]?.string ?? ""
         return c
+    }
+
+    /// 折着时（展开后当标题）显示的那一行（网页版 briefOf）
+    static func briefOf(_ cfg: Config, _ vals: [(id: String, label: String, value: String)]) -> String {
+        let tpl = cfg.brief.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !tpl.isEmpty else { return vals.map { $0.value }.joined(separator: " · ") }
+        var by: [String: String] = [:]
+        for v in vals where by[v.label] == nil { by[v.label] = v.value }
+        guard let re = try? NSRegularExpression(pattern: #"\{\{\s*([^{}]+?)\s*\}\}"#) else { return tpl }
+        let ns = tpl as NSString
+        var out = ""
+        var at = 0
+        for m in re.matches(in: tpl, range: NSRange(location: 0, length: ns.length)) {
+            out += ns.substring(with: NSRange(location: at, length: m.range.location - at))
+            out += by[ns.substring(with: m.range(at: 1))] ?? ""
+            at = m.range.location + m.range.length
+        }
+        out += ns.substring(from: at)
+        return out.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// 状态栏的最大高度（网页版 chatlook 的 look.status.online.mh，40 到 1200，不填不限）。超出的在框里滚动
+    static func maxHeight(_ chat: Chat) -> Double? {
+        guard let n = chat.row["look"]?.object?["status"]?.object?[mode]?.object?["mh"]?.number, n.isFinite else { return nil }
+        return Swift.max(40, Swift.min(1200, n.rounded()))
+    }
+
+    /// 改最大高度；nil 为不限（照网页版 setStatusLook：空值就把这一项删掉）
+    static func setMaxHeight(_ chatId: String, _ v: Double?) throws {
+        guard var chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
+        var look = chat.row["look"]?.object ?? [:]
+        var st = look["status"]?.object ?? [:]
+        var side = st[mode]?.object ?? [:]
+        if let v, v.isFinite { side["mh"] = .number(Swift.max(40, Swift.min(1200, v.rounded()))) } else { side["mh"] = nil }
+        st[mode] = .object(side)
+        look["status"] = .object(st)
+        chat.row["look"] = .object(look)
+        chat.row.touch()
+        try Repo.save(chat)
     }
 
     private static func plain(_ it: Item) -> JSONValue {
@@ -97,7 +144,11 @@ enum StatusBar {
     static func save(_ chatId: String, _ cfg: Config) throws {
         guard var chat = try Repo.chat(chatId) else { throw StoreError(message: "这段会话不存在") }
         var all = chat.row["statusBar"]?.object ?? [:]
-        all[mode] = .object(["on": .bool(cfg.on), "carry": .bool(cfg.carry), "at": .string(cfg.at), "items": .array(cfg.items.map(plain))])
+        // 原生版不认的几项（网页版的自定义样式 css……）原样留着
+        var side = all[mode]?.object ?? [:]
+        for (k, v) in ["on": JSONValue.bool(cfg.on), "carry": .bool(cfg.carry), "at": .string(cfg.at), "items": .array(cfg.items.map(plain)),
+                       "fold": .bool(cfg.fold), "folded": .bool(cfg.folded), "brief": .string(cfg.brief)] { side[k] = v }
+        all[mode] = .object(side)
         chat.row["statusBar"] = .object(all)
         chat.row.touch()
         try Repo.save(chat)

@@ -57,6 +57,8 @@ actor AIService {
                 let started = Date()
                 // 请求记录（默认关）：开着时把这一轮发了什么、回来什么记在内存里
                 let traceId = await Trace.shared.begin(task: task, preset: preset, system: system, messages: messages)
+                // 会话菜单「上一轮发送的内容」：回复请求每段会话留最近一次（只在内存里，不用先开请求记录）
+                if let c = LastSent.chat { LastSent.shared.keep(c, preset: preset.name, model: preset.model, system: system, messages: messages) }
                 func log(_ status: Int?, _ error: String?) {
                     var f: [String: Any] = ["task": task, "provider": preset.provider.rawValue, "model": preset.model,
                                             "ms": Int(Date().timeIntervalSince(started) * 1000), "attempt": attempt]

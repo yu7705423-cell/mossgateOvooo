@@ -77,6 +77,23 @@ enum Stickers {
         try? update(id) { $0["useCount"] = .number(($0.number("useCount") ?? 0) + 1) }
     }
 
+    /// 最近常用（网页版 stickers.markMine，ARCHITECTURE 4.935）：只记你自己从面板点出去的那一下，角色发的不算
+    static let recent = "最近常用"
+    static func markMine(_ id: String, at: Double = Date().millis) throws {
+        try update(id) { $0["myUsedAt"] = .number(at) }
+    }
+
+    /// 你用过的，最近用的在前。全部列出，不截（第 13 条）
+    static func recentMine(_ items: [Item]) -> [Item] {
+        items.filter { ($0.row.number("myUsedAt") ?? 0) > 0 }
+            .sorted { ($0.row.number("myUsedAt") ?? 0) > ($1.row.number("myUsedAt") ?? 0) }
+    }
+
+    /// 面板上的分组：用过的时候最前面一组「最近常用」，面板打开默认选它
+    static func panelGroups(_ items: [Item], settings s: AppSettings) -> [String] {
+        (recentMine(items).isEmpty ? [] : [recent]) + groups(items, settings: s, onlyUsed: true)
+    }
+
     static func addGroup(_ s: inout AppSettings, _ name: String) -> String {
         let g = String(name.trimmingCharacters(in: .whitespaces).prefix(20))
         guard !g.isEmpty else { return "" }

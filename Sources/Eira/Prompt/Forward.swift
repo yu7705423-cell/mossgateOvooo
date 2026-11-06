@@ -16,6 +16,11 @@ enum Forward {
         var text: String
         var imageId: String
         var at: Double
+        /// 表情的 id 与那一刻的头像（4.937，打开看时按聊天的样子画）；从前转发的没有，空串
+        var stickerId = ""
+        var face = ""
+        /// 译文（4.c158-9）：转发时一起冻下
+        var trans = ""
     }
 
     private static func clip(_ s: String) -> String {
@@ -33,13 +38,20 @@ enum Forward {
 
     /// 把选中的几条冻成副本。按时间排好；名字用本名，自己用这段会话所用身份的名字
     static func snapshot(_ chat: Chat, _ list: [Message]) -> [Item] {
-        let me = ((try? Repo.personas()) ?? []).first { $0.id == chat.personaId }?.name ?? "我"
+        let meRow = ((try? Repo.personas()) ?? []).first { $0.id == chat.personaId }
+        let me = meRow?.name ?? "我"
         return list.sorted { $0.createdAt < $1.createdAt }.map { m in
             let mine = m.role == .user
-            let who = mine ? me : ((try? Repo.character(m.authorId))?.name ?? "对方")
+            let char: Character? = mine ? nil : (try? Repo.character(m.authorId))
+            let who = mine ? me : (char?.name ?? "对方")
+            let tr = m.row.string("translation").trimmingCharacters(in: .whitespacesAndNewlines)
             return Item(who: who, mine: mine, kind: m.kind.isEmpty ? "text" : m.kind,
                         text: clip(m.isRecalled ? "[已撤回]" : m.content),
-                        imageId: m.kind == "image" ? m.imageId : "", at: m.createdAt)
+                        imageId: m.kind == "image" ? m.imageId : "", at: m.createdAt,
+                        stickerId: m.kind == "sticker" ? m.row.string("stickerId") : "",
+                        face: mine ? ChatFaces.of(chat, key: ChatFaces.me, fallback: meRow?.avatar ?? "")
+                                   : ChatFaces.of(chat, key: m.authorId, fallback: char?.avatar ?? ""),
+                        trans: m.isRecalled || tr.isEmpty ? "" : clip(tr))
         }
     }
 
@@ -71,6 +83,9 @@ enum Forward {
                 var o: [String: JSONValue] = ["who": .string(i.who), "mine": .bool(i.mine), "kind": .string(i.kind),
                                               "text": .string(i.text), "at": .number(i.at)]
                 if !i.imageId.isEmpty { o["imageId"] = .string(i.imageId) }
+                if !i.stickerId.isEmpty { o["stickerId"] = .string(i.stickerId) }
+                if !i.face.isEmpty { o["face"] = .string(i.face) }
+                if !i.trans.isEmpty { o["trans"] = .string(i.trans) }
                 return .object(o)
             }),
         ])
@@ -90,9 +105,48 @@ enum Forward {
         let items: [Item] = arr.compactMap { v in
             guard case .object(let i) = v else { return nil }
             return Item(who: i["who"]?.string ?? "", mine: i["mine"]?.bool == true, kind: i["kind"]?.string ?? "text",
-                        text: i["text"]?.string ?? "", imageId: i["imageId"]?.string ?? "", at: i["at"]?.number ?? 0)
+                        text: i["text"]?.string ?? "", imageId: i["imageId"]?.string ?? "", at: i["at"]?.number ?? 0,
+                        stickerId: i["stickerId"]?.string ?? "", face: i["face"]?.string ?? "", trans: i["trans"]?.string ?? "")
         }
         return (title, items)
+    }
+
+    /// 打开看时按聊天的样子画的一行（网页版 ForwardBits 的 asMsgs，4.937）
+    struct Bubble: Identifiable, Equatable {
+        var id: Int
+        var item: Item
+        /// 头像（图片 id）：冻下的那张；从前转发的没有，按名字回原会话里找那位角色，自己用当前身份的头像
+        var face: String
+        /// 说话的不止一位时，左边每条上写名字
+        var label: String
+        /// 与上一条相隔十分钟以上时，两条之间写时刻
+        var time: String
+    }
+
+    static let gap: Double = 10 * 60 * 1000
+
+    /// 表情那一条存的是 `[表情：名字]`，表情图找不到时显示名字
+    static func stickerName(_ text: String) -> String {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard t.hasPrefix("[表情："), t.hasSuffix("]") else { return t }
+        return String(t.dropFirst(4).dropLast())
+    }
+
+    static func bubbles(_ m: Message, meAvatar: String = "", now: Date = Date()) -> [Bubble] {
+        let from = (m.row["forward"]?.object?["from"]?.string).flatMap { try? Repo.chat($0) }
+        let members = (from?.characterIds ?? []).compactMap { try? Repo.character($0) }
+        return bubbles(items(of: m).items, meAvatar: meAvatar, faceByName: { name in members.first { $0.name == name }?.avatar ?? "" }, now: now)
+    }
+
+    static func bubbles(_ items: [Item], meAvatar: String, faceByName: (String) -> String, now: Date = Date()) -> [Bubble] {
+        let many = Set(items.filter { !$0.mine }.map(\.who)).count > 1
+        var last: Double = 0
+        return items.enumerated().map { k, i in
+            let time = i.at > 0 && (last == 0 || i.at - last >= gap) ? Receipt.sepOf(i.at, now: now) : ""
+            if i.at > 0 { last = i.at }
+            let face = !i.face.isEmpty ? i.face : i.mine ? meAvatar : faceByName(i.who)
+            return Bubble(id: k, item: i, face: face, label: !i.mine && many ? i.who : "", time: time)
+        }
     }
 
     enum ForwardError: LocalizedError {

@@ -26,34 +26,72 @@ struct ForwardCard: View {
     }
 }
 
-/// 点开看全部：转发那一刻的副本
+/// 点开看全部：转发那一刻的副本，按聊天的样子画（网页版 4.937）：气泡、头像、图片与表情包，自己说的在右边。
+/// 说话的不止一位时，左边每条上写名字；相隔十分钟以上的两条之间写时刻。用应用默认的气泡样式，不套当前会话的美化
 struct ForwardDetailView: View {
     let message: Message
     var onOpenImage: ((String) -> Void)?
+    @State private var rows: [Forward.Bubble] = []
 
     var body: some View {
-        let fw = Forward.items(of: message)
-        List {
-            ForEach(Array(fw.items.enumerated()), id: \.offset) { _, i in
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(i.at > 0 ? "\(i.who) · \(Receipt.sepOf(i.at))" : i.who)
-                        .font(.system(size: 12)).foregroundStyle(Theme.text3)
-                    if !i.imageId.isEmpty {
-                        LocalImage(id: i.imageId, maxPixel: 600, fit: true)
-                            .frame(maxWidth: 200, maxHeight: 240, alignment: .leading)
-                            .clipShape(RoundedRectangle(cornerRadius: Theme.rMd))
-                            .onTapGesture { onOpenImage?(i.imageId) }
-                    } else {
-                        Text(i.text).font(.system(size: 15)).foregroundStyle(Theme.text).textSelection(.enabled)
+        let title = Forward.items(of: message).title
+        ScrollView {
+            LazyVStack(spacing: Theme.sp3) {
+                ForEach(rows) { b in
+                    VStack(spacing: Theme.sp2) {
+                        if !b.time.isEmpty {
+                            Text(b.time).font(.system(size: 11)).foregroundStyle(Theme.text3)
+                        }
+                        bubbleRow(b)
                     }
                 }
-                .padding(.vertical, 2)
-                .eiraRow()
             }
+            .padding(.horizontal, Theme.pad)
+            .padding(.vertical, Theme.sp4)
         }
-        .listStyle(.insetGrouped)
-        .navigationTitle(fw.title)
+        .background(Theme.bg)
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            let me = (try? Repo.activePersona())?.avatar ?? ""
+            rows = Forward.bubbles(message, meAvatar: me)
+        }
+    }
+
+    private func bubbleRow(_ b: Forward.Bubble) -> some View {
+        let i = b.item
+        return HStack(alignment: .top, spacing: Theme.sp2) {
+            if i.mine { Spacer(minLength: 48) } else { Avatar(imageId: b.face, name: i.who, size: 36) }
+            VStack(alignment: i.mine ? .trailing : .leading, spacing: 3) {
+                if !b.label.isEmpty { Text(b.label).font(.system(size: 11)).foregroundStyle(Theme.text3) }
+                content(i)
+                if !i.trans.isEmpty {
+                    Text(i.trans).font(.system(size: 12)).foregroundStyle(Theme.text3)
+                        .multilineTextAlignment(i.mine ? .trailing : .leading)
+                }
+            }
+            if i.mine { Avatar(imageId: b.face, name: i.who, size: 36) } else { Spacer(minLength: 48) }
+        }
+        .frame(maxWidth: .infinity, alignment: i.mine ? .trailing : .leading)
+    }
+
+    @ViewBuilder private func content(_ i: Forward.Item) -> some View {
+        if !i.imageId.isEmpty {
+            LocalImage(id: i.imageId, maxPixel: 600, fit: true)
+                .frame(maxWidth: 200, maxHeight: 240, alignment: i.mine ? .trailing : .leading)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.rMd))
+                .onTapGesture { onOpenImage?(i.imageId) }
+        } else if i.kind == "sticker", !i.stickerId.isEmpty {
+            StickerView(id: i.stickerId, name: Forward.stickerName(i.text)).frame(width: 96, height: 96)
+        } else {
+            Text(i.kind == "image" ? (i.text.isEmpty ? "[图片]" : i.text) : i.text)
+                .font(.system(size: 15))
+                .foregroundStyle(i.mine ? Theme.bubbleMineText : Theme.bubbleTheirsText)
+                .textSelection(.enabled)
+                .padding(.horizontal, Theme.bubblePadX).padding(.vertical, Theme.bubblePadY)
+                .background(i.mine ? Theme.bubbleMine : Theme.bubbleTheirs,
+                            in: RoundedRectangle(cornerRadius: Theme.bubbleRadius, style: .continuous))
+        }
     }
 }
 

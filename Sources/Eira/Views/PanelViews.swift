@@ -1,39 +1,65 @@
 import SwiftUI
 
-/// 整理加号面板（网页版 PanelPage）：上下挪顺序，放在面板上还是收进「更多」
-struct PanelEditView: View {
+/// 调整顺序（网页版 MenuOrderPage，ARCHITECTURE 4.917、4.918）：加号面板、长按消息的那些格子。按住右侧把手拖动。
+/// 加号面板的先后与「在不在面板上」分两个字段存（settings.panelOrder、panelMore），长按消息存 settings.msgMenuOrder，都与网页版同一个键
+struct MenuOrderView: View {
+    @State var kind: String
     @ObservedObject private var model = SettingsModel.shared
 
     var body: some View {
-        let order = Panel.order(model.s)
-        let more = Panel.more(model.s)
+        let panel = kind == "panel"
         List {
             Section {
-                ForEach(order.indices, id: \.self) { i in
-                    let id = order[i]
-                    if let it = Panel.item(id) {
-                        HStack(spacing: Theme.sp3) {
-                            SvgIcon(name: it.icon, size: 18, color: Theme.text)
-                            Text(it.label)
-                            Spacer()
-                            Button { model.update { Panel.move(&$0, id, -1) } } label: { Image(systemName: "chevron.up") }
-                                .buttonStyle(.borderless).disabled(i == 0).accessibilityLabel("上移")
-                            Button { model.update { Panel.move(&$0, id, 1) } } label: { Image(systemName: "chevron.down") }
-                                .buttonStyle(.borderless).disabled(i == order.count - 1).accessibilityLabel("下移")
-                        }
-                        Toggle("收进「更多」", isOn: Binding(get: { more.contains(id) }, set: { v in model.update { Panel.setMore(&$0, id, v) } }))
-                            .font(.system(size: 14))
-                            .foregroundStyle(Theme.text2)
-                    }
+                Picker("调整哪一处", selection: $kind) {
+                    Text("加号面板").tag("panel")
+                    Text("长按消息").tag("msg")
                 }
-                HelpNote("加号面板里的格子按这里的顺序排列。收进「更多」的格子要先点「更多」才出现。群聊里只出现说得通的几格（图片、语音、骰子、分享音乐、线下）。", title: "整理面板")
+                .pickerStyle(.segmented)
+                .listRowBackground(Color.clear)
+            } footer: {
+                if panel {
+                    HelpNote("按住右侧拖动调整先后。开关决定这一项放在面板上，还是收进面板最后一格「更多」。面板上放几项没有上限。群聊里只出现说得通的几格（图片、语音、骰子、分享音乐、线下）。", title: "调整顺序：加号面板")
+                } else {
+                    HelpNote("按住右侧拖动调整先后。每一项是否出现仍按那条消息自身而定，例如只有角色最新一轮的消息才有「重新生成」。「调整顺序」固定在最后。", title: "调整顺序：长按消息")
+                }
             }
             Section {
-                Button("恢复默认") { model.update { Panel.reset(&$0) } }
+                if panel {
+                    let more = Panel.more(model.s)
+                    ForEach(Panel.order(model.s), id: \.self) { id in
+                        if let it = Panel.item(id) {
+                            Toggle(isOn: Binding(get: { !more.contains(id) }, set: { v in model.update { Panel.setMore(&$0, id, !v) } })) {
+                                HStack(spacing: Theme.sp3) {
+                                    SvgIcon(name: it.icon, size: 18, color: Theme.text)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(it.label)
+                                        Text(more.contains(id) ? "收在更多里" : "在面板上").font(.caption).foregroundStyle(Theme.text3)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .onMove { from, to in model.update { Panel.moveTo(&$0, from: from, to: to) } }
+                } else {
+                    ForEach(MenuOrder.shown(model.s), id: \.self) { id in
+                        if let it = MenuOrder.item(id) {
+                            HStack(spacing: Theme.sp3) {
+                                SvgIcon(name: it.icon, size: 18, color: Theme.text)
+                                Text(it.label)
+                            }
+                        }
+                    }
+                    .onMove { from, to in model.update { MenuOrder.move(&$0, from: from, to: to) } }
+                }
+            }
+            Section {
+                Button("恢复默认") { model.update { if panel { Panel.reset(&$0) } else { MenuOrder.reset(&$0) } } }
+                    .disabled(!(panel ? Panel.changed(model.s) : MenuOrder.changed(model.s)))
             }
             ProblemSection(text: model.problem)
         }
-        .navigationTitle("整理面板")
+        .environment(\.editMode, .constant(.active))
+        .navigationTitle("调整顺序")
         .navigationBarTitleDisplayMode(.inline)
     }
 }

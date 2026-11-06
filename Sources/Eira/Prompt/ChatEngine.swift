@@ -94,7 +94,9 @@ enum ChatEngine {
             // 思考段留在正文里，由 plan 摘出来存在这一轮第一条的 think 上（网页版 4.580）
             result = try await Provider.$keepThink.withValue(true) {
                 // 自动重试取 1 与用户的 retryMax 里小的那个（默认 0，网页版 streamReply 的 retries: 1）
-                try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+                try await LastSent.$chat.withValue(chat.id) {
+                    try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+                }
             }
         } catch {
             if old != nil { throw error }
@@ -157,7 +159,9 @@ enum ChatEngine {
         for c in called.isEmpty ? speaking : called {
             guard let fresh = try Repo.chat(chat.id) else { return }
             let built = try ChatPrompt.buildGroup(chat: fresh, members: [c], settings: settings)
-            let r = try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+            let r = try await LastSent.$chat.withValue(chat.id) {
+                try await AIService.shared.send(task: "chat.reply", system: built.system, messages: built.messages, retries: 1)
+            }
             let raw = r.text.trimmingCharacters(in: .whitespacesAndNewlines)
             if raw.isEmpty { continue }
             // 这一位的话只记在这一位名下：拆分时群里只有它
