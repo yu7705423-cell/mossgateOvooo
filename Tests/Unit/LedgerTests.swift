@@ -326,7 +326,7 @@ final class LedgerTests: StoreTestCase {
 
     /// 回复里的标记（网页版 reply.js）：申请、表态、送卡、用卡、门禁卡、票券、会员卡
     func testReplyMarks() {
-        func parts(_ raw: String) -> [ReplyParser.Part] { ReplyParser.parse(raw).parts }
+        func parts(_ raw: String) -> [ReplyParser.Part] { ReplyParser.split(raw).parts }
         XCTAssertEqual(parts("[开设情侣账户]").first?.type, .request)
         XCTAssertEqual(parts("[开设情侣账户]").first?.extra, LedgerRequest.joint)
         let sp = parts("[申请：买机票 2000]").first
