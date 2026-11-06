@@ -198,7 +198,8 @@ final class ReplyParserTests: XCTestCase {
         for t in ["[语音消息：你好]", "[发语音：你好]", "[语音]你好", "[录音：你好]", "[语音条：你好]", "（语音：你好）"] {
             XCTAssertEqual(kinds(t), [.voice], t)
         }
-        XCTAssertEqual(kinds("[截图：聊天]"), [.text])
+        // 截图不算图片：网页版 4.904 起它是「角色截下聊天记录」那一行（reply.js 的 SHOT_LINE）
+        XCTAssertEqual(kinds("[截图：聊天]"), [.shot])
         XCTAssertEqual(kinds("今天（图片：不算）很好"), [.text])
         XCTAssertEqual(kinds("[图片：夕阳] 好看吧"), [.image, .text])
         XCTAssertEqual(kinds("[图片]"), [.text])
