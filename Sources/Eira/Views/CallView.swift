@@ -304,6 +304,8 @@ final class CallSession: ObservableObject {
         guard !finished else { return }
         finished = true
         self.outcome = outcome
+        // 系统来电界面上接起来的这一通（SystemCall）：系统那边一起收掉
+        SystemCall.shared.finish(chatId)
         job?.cancel()
         hush()
         recorder.cancel()
@@ -426,7 +428,18 @@ struct CallView: View {
         }
         .background(Theme.background)
         .overlay(alignment: .bottom) { if session.phase == .ringing { ringingBar } }
-        .onAppear { session.phase == .ringing ? session.ring() : session.dial() }
+        .onAppear {
+            // 已经在系统来电界面上接起来了：直接接通，不再响第二遍
+            if session.phase == .ringing && SystemCall.shared.claim(session.chatId) { session.accept() }
+            else { session.phase == .ringing ? session.ring() : session.dial() }
+        }
+        // 在系统通话界面上挂断了
+        .onReceive(NotificationCenter.default.publisher(for: .eiraSystemCallEnded)) { note in
+            guard (note.object as? String) == session.chatId, session.phase != .ended else { return }
+            session.hangUp()
+            onEnd()
+            dismiss()
+        }
         .onChange(of: session.outcome) { _, o in
             // 响够了没人接、或者打出去角色没接：通话记录已经记下，收起通话页
             if o == "missed" { onEnd(); dismiss() }

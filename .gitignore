@@ -8,3 +8,6 @@ DerivedData/
 # 网页版纯逻辑的打包结果：网页版仓库是私密的，编译时由 scripts/sync-weblogic.mjs 现取现打，不进本仓库
 Resources/weblogic/reply.bundle.js
 Resources/weblogic/prompt.bundle.js
+Sources/EiraNotify/Info.plist
+Sources/EiraWidgets/Info.plist
+__pycache__/

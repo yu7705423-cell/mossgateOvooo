@@ -104,6 +104,8 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
             c.sound = .default
             c.userInfo = ["chatId": chatId]
             c.threadIdentifier = chatId
+            // 头像：单聊是这段会话里的那张，群聊是群头像（网页版 4.711）
+            if let chat = try? Repo.chat(chatId), let face = FaceThumbs.attachment(chat) { c.attachments = [face] }
             try? await UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: id, content: c, trigger: nil))
             await updateBadge()
         }
@@ -155,6 +157,8 @@ final class Notifier: NSObject, ObservableObject, UNUserNotificationCenterDelega
     /// 返回弹了几条。
     nonisolated static func peekResults() async throws -> Int {
         guard isOn(), BgPush.isOn(), BgPush.device() != nil else { return 0 }
+        // 选了 Eira 推送：服务器替角色开口之后自己推送，这里再弹一遍就重复了
+        if EiraPush.active() { return 0 }
         let got = try await BgPush.api("/results")
         var seen = Set(UserDefaults.standard.stringArray(forKey: notifiedKey) ?? [])
         var n = 0

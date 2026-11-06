@@ -18,7 +18,7 @@ const outPath = join(root, 'Resources/help.json');
 // 文件归哪个 app。新加一个有说明的文件要在这里登记，否则报错
 const APPS = {
   'ApiSettingsView.swift': '设置', 'BgPushView.swift': '设置', 'ExportView.swift': '设置', 'FeedbackView.swift': '设置',
-  'ImageSettingsView.swift': '设置', 'ImportView.swift': '设置', 'NotifyView.swift': '设置', 'OnboardingView.swift': '设置',
+  'ImageSettingsView.swift': '设置', 'ImportView.swift': '设置', 'NotifyView.swift': '设置', 'SystemViews.swift': '设置', 'OnboardingView.swift': '设置',
   'SettingsView.swift': '设置', 'HolidayViews.swift': '设置', 'AppearanceViews.swift': '设置', 'PinViews.swift': '设置', 'TraceViews.swift': '设置', 'StorageView.swift': '设置', 'UsageLimitsView.swift': '设置', 'VoiceViews.swift': '设置',
   'CanonViews.swift': '设定集', 'LoreViews.swift': '设定集', 'MemoryViews.swift': '设定集', 'McpViews.swift': '设定集',
   'CardImportView.swift': '联系', 'ContactPages.swift': '联系', 'ContactsView.swift': '联系', 'ImpressViews.swift': '联系', 'SelfViews.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系', 'FaceLockViews.swift': '联系', 'AvatarPoolViews.swift': '联系',

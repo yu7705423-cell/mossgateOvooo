@@ -446,10 +446,21 @@ enum CallEngine {
 
     /// 角色在回复里写了 [去电]。正看着这段对话就响铃；不在就直接记一条未接来电（网页版：人不在这段对话里就不响铃）。
     /// 打不打由角色自己决定（第 22 条）；这里只落成状态，不调接口。接起来之后每轮的花费和自己打出去一样
+    /// 开了「系统来电界面」（SystemCall，默认关）时，不在看这段对话就交给 iPhone 自己的来电界面响；弹不出来照旧记未接，并发一条来电通知
     @MainActor
     static func ring(chatId: String, charId: String, video: Bool = false) {
         if UIApplication.shared.applicationState == .active && Notifier.shared.visibleChat == chatId {
             NotificationCenter.default.post(name: .eiraIncomingCall, object: chatId, userInfo: ["video": video])
+            return
+        }
+        if SystemCall.isOn() {
+            Task { @MainActor in
+                let name = (try? Repo.character(charId))?.displayName ?? ""
+                guard await SystemCall.shared.ring(chatId: chatId, charId: charId, name: name, video: video) != nil else { return }
+                do { try missed(chatId: chatId, charId: charId, video: video) }
+                catch { Problems.report("未接来电未能记下：\(error.localizedDescription)") }
+                SystemCall.postFallback(chatId: chatId, name: name, video: video)
+            }
             return
         }
         do { try missed(chatId: chatId, charId: charId, video: video) }

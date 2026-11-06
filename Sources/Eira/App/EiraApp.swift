@@ -3,6 +3,8 @@ import SwiftUI
 @main
 struct EiraApp: App {
     @Environment(\.scenePhase) private var phase
+    /// 推送地址、来电推送只经 UIApplicationDelegate 交来（AppDelegate）
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var delegate
 
     init() {
         CrashCollector.shared.start()
@@ -17,6 +19,8 @@ struct EiraApp: App {
     var body: some Scene {
         WindowGroup {
             RootView().eiraLook()
+                // 桌面组件与通知点进来的链接（eiraowo://）
+                .onOpenURL { DeepLink.handle($0) }
         }
         // 主动发起对话与后台消息跟着前后台走：前台本机发，后台交给服务器（BgPush）
         .onChange(of: phase) { _, p in
@@ -25,9 +29,11 @@ struct EiraApp: App {
             case .active:
                 BgPush.shared.didBecomeActive()
                 HealthSync.didBecomeActive()   // 吃药提醒重排、从「健康」自动同步（只在同步成功过一次之后）
+                WidgetFeed.wake()              // 桌面组件：先取回组件上点的那几下，再交一遍
             case .background:
                 BgPush.shared.didEnterBackground()
                 Notifier.scheduleRefresh()
+                WidgetFeed.sync()
                 Task { await Notifier.updateBadge() }
             default: break
             }

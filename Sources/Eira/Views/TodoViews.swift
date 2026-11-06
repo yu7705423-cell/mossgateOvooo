@@ -304,9 +304,9 @@ struct TodoEditView: View {
                 if ms > 0 {
                     HStack(alignment: .top) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(changed ? "时刻已改，尚未重新排入" : !row.alarmId.isEmpty ? "已排入系统提醒" : "尚未排入系统提醒")
+                            Text(changed ? "时刻已改，尚未重新排入" : !row.alarmId.isEmpty ? (TodoAlarm.isKitId(row.alarmId) ? "已排入系统闹钟" : "已排入系统提醒") : "尚未排入系统提醒")
                             Text(changed ? "系统中仍是 \(TodoText.full(row.alarmAt))。点击右侧重新排入。"
-                                 : !row.alarmId.isEmpty ? "将于 \(TodoText.full(ms)) 通知，关闭本应用后仍然有效。"
+                                 : !row.alarmId.isEmpty ? "将于 \(TodoText.full(ms)) \(TodoAlarm.isKitId(row.alarmId) ? "响铃" : "通知")，关闭本应用后仍然有效。"
                                  : TodoAlarm.isFuture(ms) ? "将于 \(TodoText.full(ms)) 在本应用内提醒，关闭本应用后不再提醒。" : "该时刻已经过去。")
                                 .font(.footnote).foregroundStyle(Theme.secondaryText)
                         }
@@ -465,6 +465,7 @@ struct TodoDetectView: View {
 /// 系统提醒：对账。本应用以为排了几个，系统那边实际挂着几个（网页版「系统闹钟」那一页）
 struct TodoAlarmView: View {
     @State private var status: TodoAlarm.Status?
+    @State private var channel: String?
     @State private var ids: [String]?
     @State private var tick = 0
     @State private var confirmAll = false
@@ -478,8 +479,10 @@ struct TodoAlarmView: View {
         List {
             if let notice { Text(notice).foregroundStyle(Theme.text2) }
             Section {
+                LabeledContent("提醒方式", value: channel ?? "正在读取")
+                if SystemAlarm.kit == nil { Text(SystemAlarm.kitWhy + "，当前使用系统通知。").font(.footnote).foregroundStyle(Theme.secondaryText) }
                 HStack {
-                    Text("通知权限")
+                    Text(channel == "系统闹钟" ? "闹钟权限" : "通知权限")
                     Spacer()
                     Text(statusText).foregroundStyle(Theme.secondaryText)
                 }
@@ -492,7 +495,7 @@ struct TodoAlarmView: View {
                         .font(.footnote).foregroundStyle(Theme.secondaryText)
                 }
             } header: { Text("当前状态") } footer: {
-                HelpNote("系统提醒由系统在设定的时刻弹出通知，关闭本应用后仍然有效；不穿透静音与专注模式。未排入系统的待办仅在本应用运行时到点提醒。", title: "系统提醒")
+                HelpNote("iOS 26 起使用系统闹钟：与「时钟」中的闹钟相同，在设定的时刻响铃，穿透静音与专注模式，关闭本应用后仍然有效。系统闹钟不可用或闹钟权限被拒绝时，改用系统通知：到点弹出通知，关闭本应用后仍然有效，不穿透静音与专注模式。未排入系统的待办仅在本应用运行时到点提醒。", title: "系统提醒")
             }
             if !mine.isEmpty {
                 Section {
@@ -555,6 +558,7 @@ struct TodoAlarmView: View {
 
     @MainActor private func refresh() async {
         status = await TodoAlarm.status()
+        channel = await TodoAlarm.channelName()
         ids = await TodoAlarm.listNative()
         tick += 1
     }
@@ -718,7 +722,7 @@ struct TodoAskBar: View {
         guard TodoAlarm.isFuture(at) else { notice = "已计入待办"; tick += 1; return }
         Task { @MainActor in
             let r = await TodoAlarm.schedule(ask.id)
-            notice = r == .scheduled ? "已计入待办，\(When.show(at)) 通知" : "已计入待办，\(When.show(at)) 在本应用内提醒"
+            notice = r == .alarmed ? "已计入待办，\(When.show(at)) 响铃" : r == .scheduled ? "已计入待办，\(When.show(at)) 通知" : "已计入待办，\(When.show(at)) 在本应用内提醒"
             tick += 1
         }
     }
