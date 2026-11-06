@@ -30,6 +30,7 @@ enum Todo {
         var from: String { row.string("from") }
         var chatId: String { row.string("chatId") }
         var charId: String { row.string("charId") }
+        var srcMsgId: String { row.string("srcMsgId") }
         var dueAt: String { row.string("dueAt") }
         /// 几点做（HH:MM，可空），和提醒时刻是两回事
         var time: String { row.string("time") }
