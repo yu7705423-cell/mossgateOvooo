@@ -61,8 +61,12 @@ struct ConversationView: View {
     @State private var innerCardFor: String?
     /// 展开了的那几叠图（按第一张的 id）
     @State private var openStacks: Set<String> = []
-    /// 这段会话的背景与上下栏（chat.look）
-    @State private var look = ChatLook.Look()
+    /// 这段会话的背景与上下栏（chat.look 叠在主题的格子上，ChatTheme.resolve 算好的，浅色、深色各一份）
+    @State private var lookLight = ChatLook.Look()
+    @State private var lookDark = ChatLook.Look()
+    private var look: ChatLook.Look { scheme == .dark ? lookDark : lookLight }
+    /// 主题写了始终浅色或始终深色：这一页按它画（弹出的设置页不跟着变）
+    @State private var forcedScheme: ColorScheme?
     /// 角色已封存：记录照看，不能再发（网页版 4.557）
     @State private var archivedChat = false
     /// 这段会话挂着的美化里原生版画得出来的那几格（气泡、头像、间距）。深色那一份按深色规则里的变量另算，没有写深色规则为 nil
@@ -74,7 +78,8 @@ struct ConversationView: View {
     @State private var cssDark: CssCompiled?
     /// 美化里用到的结构写法后缀（-first、-last……）。空为没用到：消息行不算位置
     @State private var structUse: Set<String> = []
-    @Environment(\.colorScheme) private var scheme
+    @Environment(\.colorScheme) private var envScheme
+    private var scheme: ColorScheme { forcedScheme ?? envScheme }
     /// 此刻用的那一份：系统是深色、美化写了深色规则时用深色那一份
     private var css: CssCompiled? { scheme == .dark ? (cssDark ?? cssLight) : cssLight }
     private var skin: Skins.Look { scheme == .dark ? (skinDark ?? skinLight) : skinLight }
@@ -147,27 +152,31 @@ struct ConversationView: View {
     private let dueTimer = Timer.publish(every: 5, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        withEditors(withPanels(page))
+        withEditors(withPanels(page.modifier(ForcedScheme(scheme: forcedScheme))))
             .environment(\.phSkin, css)
             .environment(\.phRaster, raster)
     }
 
-    /// 读这段会话用的美化：画得出来的几格（Look）、手写 CSS 读成的样式、以及画好的图。
-    /// 这一份还没画过、或 CSS 改过之后没重画的，交给画图的一边在后台画（每份 CSS 只请一次），画完存进库、发通知，再读一遍
+    /// 读这段会话用的主题：样式只有一条路，ChatTheme.resolve 把挂着的主题（原生格子与网页版美化）与这段会话自己的背景、
+    /// 上下栏算成一份（气泡与头像的 Look、经 \.phSkin 往下传的样式、背景与上下栏），再加上画好的图。
+    /// 手写 CSS 还没画过、或改过之后没重画的，交给画图的一边在后台画（每份 CSS 只请一次），画完存进库、发通知，再读一遍
     private func applySkin(_ c: Chat?) {
-        let row = Skins.of(c)
-        let compiled = Skins.compiled(row)
-        cssLight = compiled
-        cssDark = compiled?.hasDark == true ? compiled?.scheme(dark: true) : nil
-        skinLight = Skins.look(row, css: compiled)
-        skinDark = cssDark.map { Skins.look(row, css: $0) }
-        structUse = CssStructural.used(compiled)
-        raster = compiled == nil ? nil : Skins.raster(row)
+        let t = ChatTheme.resolve(c)
+        let row = t.row
+        cssLight = t.light.css
+        cssDark = t.dark.css
+        skinLight = t.light.skin
+        skinDark = t.dark.skin
+        lookLight = t.light.look
+        lookDark = t.dark.look
+        forcedScheme = ChatTheme.colorScheme(t.scheme)
+        structUse = t.structUse
+        raster = t.webCss ? Skins.raster(row) : nil
         let shot = raster.map { r -> String in
             "\(r.cssHash)|\(r.engine)|" + r.images.keys.sorted().map { "\($0)=\(r.images[$0]?.imageId ?? "")" }.joined(separator: ",")
         } ?? ""
-        cssTag = row.map { "\($0.id)|\($0.string("css").hashValue)|\(shot.hashValue)" } ?? ""
-        guard let row, compiled != nil else { return }
+        cssTag = row.map { "\($0.id)|\($0.number("updatedAt") ?? 0)|\($0.string("css").hashValue)|\(shot.hashValue)" } ?? ""
+        guard let row, t.webCss else { return }
         let asked = "\(row.id)|\(row.string("css").hashValue)"
         guard asked != rasterAsked else { return }
         rasterAsked = asked
@@ -474,7 +483,7 @@ struct ConversationView: View {
         // 主动发起对话、后台消息取回落进了这一段：刷新，并当作已读
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatLookChanged)) { note in
             guard (note.object as? String) == chatId, let c = try? Repo.chat(chatId) else { return }
-            look = ChatLook.of(c)
+            applySkin(c)
         }
         .onReceive(NotificationCenter.default.publisher(for: .eiraChatChanged)) { note in
             guard (note.object as? String) == chatId, !isBusy else { return }
@@ -2103,7 +2112,6 @@ struct ConversationView: View {
             do { try Badges.sync(chatId) } catch { Diagnostics.shared.record("badges-sync-failed", ["error": error.localizedDescription]) }
             chat = try Repo.chat(chatId)
             fire = Badges.shown(chat) ? Badges.streak(chat) : nil
-            look = chat.map(ChatLook.of) ?? ChatLook.Look()
             archivedChat = chat.map(Archive.chatArchived) ?? false
             applySkin(chat)
             char = try chat?.characterIds.first.flatMap { try Repo.character($0) }

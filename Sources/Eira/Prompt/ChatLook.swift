@@ -39,6 +39,9 @@ enum ChatLook {
         var top = Bar()
         var bottom = Bar()
         var narr = ""
+        /// 原生主题（ChatTheme）给的两项，不存在 chat.look 上：会话页的底色（#RRGGBB，空为应用的底色）、背景图的模糊
+        var base = ""
+        var blur = 0
 
         var isSet: Bool { !bg.isEmpty || top.isSet || bottom.isSet || !narr.isEmpty }
     }

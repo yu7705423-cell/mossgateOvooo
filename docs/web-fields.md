@@ -338,7 +338,19 @@ scenes, works, chapters, beats, trips, spaceItems, skins, days, meals, health, p
 songs, closet, wishes, ties, smsThreads, diaries, dreams, memsnaps, dramas, drafts, impressions, collection, mallPeople, mallItems, pets, cams,
 camLogs, quizRuns, boxes, slips, slipLog}`。群聊与只在群里生效的记忆不带；印象只带 imp 与 note。
 
-## 13. books 与 entries（记账，`ledger.js`，ARCHITECTURE 4.278、4.642、4.643、4.961）
+## 13. skins（美化与原生聊天主题，skin.js 4.111；原生主题 ChatTheme）
+
+网页版字段：`name, tokens, shape, css, scope: ['chat'|'shell'], gen, frame, frameWho, frameScale, late`，缺省同 `Skins.create`。
+挂法：`chat.skinId`（会话）、`settings.globalSkinId`（全部会话的默认，库里的那一份要带 shell）、`settings.skinOff`（总开关）。
+
+原生版另加一项 `native`（网页版不认，原样带着），见 Prompt/ChatTheme.swift 开头：
+`{v:1, look:{scheme}, palette:{bg,surface,text,text2,accent,onAccent}, wall:{image,blur,dim}, mine/theirs:{fill,text,radius,tail,border,borderWidth,padX,padY},
+avatar:{shape,size,show}, spacing:{gap,gapIn}, nav/composer:{style,color,alpha,fg}, composer.input, font:{family,scale,size}, stamp:{color,size},
+sys:{color,fill}, status:{fill,text,radius,border}, dark:{同上任意几组}}`。不写为跟随默认；认不得的键写回时原样留着。
+内置主题的 id 以 `builtin-` 开头，不在库里（chat.skinId 可以指向它，网页版读到时当没挂）。
+美化包（phone-skin v1）导出时多带 `native`，背景图放在 `native.wall.data`（data: 地址），导入时存成本机图片。
+
+## 14. books 与 entries（记账，`ledger.js`，ARCHITECTURE 4.278、4.642、4.643、4.961）
 
 原生版读写经 `Prompt/Ledger.swift`。**余额不入库**：一律由流水现算；聊天里的转账、外卖、情侣账户的存入与动用也不另存流水，
 每次从消息现算（`chatEntries`，id 写成 `msg:<消息id>:<me|char|joint>`，src 为 message）。
@@ -371,7 +383,7 @@ settings：`billBook`（当前看的那一本，'' 为第一本看得见的）�
 personas：`isolate {moments, friends, wallet, album}`（4.960、4.961）：wallet 为真时只看这个账号下建的账本；friends 为真时卡包里列出的角色只限好友列表里的。
 原生版只读，开关与新账号的默认值随账号之间隔离一起做。
 
-## 14. 申请与卡包里的消息（`request.js`、`funcard.js`、`pass.js`、`ticket.js`、`member.js`、`idcard.js`，4.278、4.611、4.643、4.644）
+## 15. 申请与卡包里的消息（`request.js`、`funcard.js`、`pass.js`、`ticket.js`、`member.js`、`idcard.js`，4.278、4.611、4.643、4.644）
 
 卡就是消息：状态全部从这些消息现算，不另存一份。处理过的那一行提示（kind notice）带 `settledId`、`settledKind`，删掉就回到没处理。
 

@@ -1,142 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// 会话的美化（网页版 chat/pages/SkinPage.js）。只此一处：会话设置里「美化」一行进来。
-/// 挂哪一份、取下、新建、头像形状与显示头像在这一页；尺寸与颜色在下一页，改的是这一份本身，挂着它的每段会话都跟着变。
-struct SkinPageView: View {
-    let chatId: String
-    @State private var tick = 0
-    @State private var problem: String?
-    @State private var naming = false
-    @State private var newName = ""
-    @State private var deleting: Row?
-    /// 从文件读出来、等确认的美化包
-    @State private var importing: Skins.Pack?
-    @State private var picking = false
+// 会话的主题与美化的入口在 ThemeViews.swift（ThemeGalleryView）：内置主题、我的主题、导入导出都在那一页。
 
-    private var chat: Chat? { _ = tick; return try? Repo.chat(chatId) }
-    private var cur: Row? { Skins.get(chat?.row.string("skinId") ?? "") }
-
-    var body: some View {
-        let list = { _ = tick; return Skins.all() }()
-        Form {
-            if let problem { Text(problem).foregroundStyle(Theme.danger) }
-            if AppSettings.load().raw["skinOff"]?.bool == true {
-                Section {
-                    Button("开启美化") {
-                        run {
-                            var st = try AppSettings.loadForWrite()
-                            st.raw["skinOff"] = .bool(false)
-                            try st.save()
-                            NotificationCenter.default.post(name: .eiraSkinChanged, object: nil)
-                        }
-                    }
-                } footer: {
-                    Text("美化总开关已在网页版的「外观」中关闭，所有会话均不显示美化。开启后恢复显示。")
-                }
-            }
-            if let cur {
-                Section {
-                    NavigationLink {
-                        SkinEditView(id: cur.id)
-                    } label: {
-                        HStack {
-                            Text(cur.string("name").isEmpty ? "未命名" : cur.string("name"))
-                            Spacer()
-                            Text("尺寸与颜色").foregroundStyle(Theme.text3)
-                        }
-                    }
-                    Button { run { try Skins.attach(chatId, "") } } label: { Text("从这段会话取下").foregroundStyle(Theme.text) }
-                } header: { Text("这段会话") } footer: {
-                    HelpNote("取下后美化本身保留，其他会话不受影响。")
-                }
-                Section {
-                    Picker("头像形状", selection: Binding(get: { cur.string("shape") }, set: { v in
-                        run { try Skins.update(cur.id) { $0["shape"] = .string(v); Skins.markLate(&$0) } }
-                    })) {
-                        ForEach(Skins.shapes, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                    Picker("显示头像", selection: Binding(get: { Skins.look(cur).show }, set: { v in
-                        run { try Skins.setGen(cur.id, "avatar", "show", .string(v)) }
-                    })) {
-                        ForEach(Skins.faceShow, id: \.id) { Text($0.label).tag($0.id) }
-                    }
-                } footer: {
-                    HelpNote("不显示的那一边连位置一起收起，气泡贴着屏幕边缘。隐藏角色头像后，点头像查看心声随之不可用。")
-                }
-                let skipped = Skins.skipped(cur)
-                if !skipped.isEmpty {
-                    Section {
-                        Text("这份美化中的\(skipped.joined(separator: "、"))在原生版中不显示，原样保留，导出后网页版照常使用。")
-                            .font(.footnote).foregroundStyle(Theme.text2)
-                    }
-                }
-            }
-            Section {
-                if list.isEmpty {
-                    Text("尚无任何美化").foregroundStyle(Theme.text3)
-                }
-                ForEach(list) { r in
-                    Button { run { try Skins.attach(chatId, r.id) } } label: {
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(r.string("name").isEmpty ? "未命名" : r.string("name")).foregroundStyle(Theme.text)
-                                Text("已用于 \(Skins.usedBy(r.id)) 段会话").font(.caption).foregroundStyle(Theme.text3)
-                            }
-                            Spacer()
-                            if cur?.id == r.id { Image(systemName: "checkmark").foregroundStyle(Theme.accent) }
-                        }
-                    }
-                    .swipeActions {
-                        Button("删除", role: .destructive) { deleting = r }
-                    }
-                }
-                Button { newName = ""; naming = true } label: { Label("新建一份", systemImage: "plus") }
-            } header: { Text(cur == nil ? "挂一份现成的" : "换一份") } footer: {
-                HelpNote("美化按会话生效：挂上之后只在这段会话中起作用。网页版导出的备份中的美化随备份导入。自定义 CSS 中读得懂的部分按原生样式显示，读不懂的部分与头像框在原生版中不显示，逐条情况在「尺寸与颜色 - 查看还原情况」中列出。")
-            }
-            Section {
-                Button { picking = true } label: { Label("从文件导入", systemImage: "doc") }
-                NavigationLink { SkinImportView(chatId: chatId) } label: { Label("粘贴导入", systemImage: "doc.on.clipboard") }
-                NavigationLink { SkinImportView(chatId: chatId, mode: .css) } label: { Label("粘贴 CSS", systemImage: "chevron.left.forwardslash.chevron.right") }
-            } header: { Text("导入美化包") } footer: {
-                HelpNote("读取网页版导出的美化包：JSON、TXT、DOCX 文件，或复制的一段文字（连同 BEGIN 与 END 两行标记）。也可以直接粘贴一段 CSS，作为一份只含自定义 CSS 的美化。导入前列出自定义 CSS 的还原情况；导入后新建一份并挂在这段会话上，不覆盖现有的美化。", title: "导入美化包")
-            }
-            ShowSection()
-        }
-        .navigationTitle("美化")
-        .navigationBarTitleDisplayMode(.inline)
-        .documentPicker(isPresented: $picking, types: [UTType.json, UTType.plainText, UTType(filenameExtension: "docx")].compactMap { $0 }) { urls in
-            guard let url = urls.first else { return }
-            do { importing = try Skins.parsePack(DocText.read(url)); problem = nil }
-            catch { problem = "无法导入：\(error.localizedDescription)" }
-        }
-        .navigationDestination(isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } })) {
-            if let importing { SkinImportView(chatId: chatId, pack: importing) { tick += 1 } }
-        }
-        .alert("新建一份美化", isPresented: $naming) {
-            TextField("名称", text: $newName)
-            Button("取消", role: .cancel) {}
-            Button("新建") {
-                run {
-                    let r = try Skins.create(name: newName)
-                    try Skins.attach(chatId, r.id)
-                }
-            }
-        }
-        .confirmationDialog("删除这份美化", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible, presenting: deleting) { r in
-            Button("删除", role: .destructive) { run { try Skins.remove(r.id) } }
-        } message: { r in
-            Text("「\(r.string("name"))」挂在 \(Skins.usedBy(r.id)) 段会话上，删除后这些会话一并取下。此操作不能撤销。")
-        }
-    }
-
-    private func run(_ f: () throws -> Void) {
-        do { try f(); problem = nil } catch { problem = "无法保存美化：\(error.localizedDescription)" }
-        tick += 1
-    }
-}
 
 /// 一份美化的尺寸与颜色（网页版「美化」app 里令牌与生成器「气泡」一组的子集）。改的是这一份本身
 struct SkinEditView: View {
@@ -368,7 +234,8 @@ struct SkinImportView: View {
     private func save(_ p: Skins.Pack) {
         do {
             let r = try Skins.install(p)
-            try Skins.attach(chatId, r.id)
+            // 从「设置 - 主题 - 聊天主题」进来的没有会话：只存进「我的主题」
+            if !chatId.isEmpty { try Skins.attach(chatId, r.id) }
             problem = nil
             // 格子表达不了的部分由 Skins.install 交给画图的一边在后台画（顺带下载 CSS 里引用的网络图片），这里不再请
             onDone?()

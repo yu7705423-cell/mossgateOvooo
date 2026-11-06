@@ -248,13 +248,15 @@ struct ChatBackdrop: View {
 
     var body: some View {
         GeometryReader { g in
+            let base = Skins.color(look.base) ?? Theme.bg
             ZStack {
-                Theme.bg
+                base
                 if !look.bg.isEmpty {
                     LocalImage(id: look.bg, maxPixel: max(g.size.width, g.size.height) * 3)
                         .frame(width: g.size.width, height: g.size.height)
+                        .blur(radius: CGFloat(look.blur), opaque: true)
                         .clipped()
-                    Theme.bg.opacity(Double(look.veil) / 100)
+                    base.opacity(Double(look.veil) / 100)
                 }
             }
         }
