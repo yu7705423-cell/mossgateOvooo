@@ -17,10 +17,15 @@
 | `scripts/sync-weblogic.mjs <网页版目录> prompt` | 打 `Resources/weblogic/prompt.bundle.js`（不进仓库，编译时现取现打） |
 | `Resources/weblogic/prompt-host.js` | 手写：JSContext 缺的几样全局、存储替身、宿主接口 `weblogic.prompt.*`、`buildChat` |
 | `Resources/weblogic/shims.js` | 模块表（两个试点共用），这次加了循环依赖时的 `live` 绑定 |
-| `scripts/check-weblogic.mjs prompt` | Node 的 `vm`（与 JSContext 同条件）里拿 `Tests/Fixtures/data.json` 拼一次，核对、计时 |
-| `Sources/Eira/Prompt/WebPrompt.swift` | 读原生库、灌表、调 `buildChat`、结果换成 `ChatPrompt.Built`；开关；`compare` 对照 |
-| `Tests/Unit/WebPromptTests.swift` | 两份备份两边对照、去掉一轮、改了一条再拼、耗时；开关开着时发一条仍只打一次接口 |
+| `scripts/check-weblogic.mjs prompt [--raw 目录]` | Node 的 `vm`（与 JSContext 同条件）里拿三份备份拼、核对、计时；增量灌与整表灌结果相同；写回的字段；`--raw` 时对照去过注释与原样的两份包 |
+| `scripts/jsstrip.mjs` | 打包时去注释与缩进（见「包体」） |
+| `Sources/Eira/Prompt/WebPrompt.swift` | 调 `buildChat`、结果换成 `ChatPrompt.Built`；开关；`compare` 对照 |
+| `Sources/Eira/Prompt/WebPromptFeed.swift` | 常驻表：第一次整表灌，之后按变更记录只交变了的行，消息按会话开窗 |
+| `Sources/Eira/Prompt/WebPromptWrites.swift` | 拼装途中网页版的写，按字段写回原生库 |
+| `Sources/Eira/Store/ChangeLog.swift` | 原生库的变更记录（`Database.changes`，put / delete / deleteAll / setKV 各记一笔，导入与清空时作废） |
+| `Tests/Unit/WebPromptTests.swift` | 三份备份两边对照、去掉一轮、改了再拼、增量与整表相同、导入后整表重灌、写回、没写回时换回来、写回失败、耗时与内存；`ChangeLogTests`；开关开着时发一条仍只打一次接口、写回了头像已看过 |
 | `Tests/Fixtures/webprompt-rich.json` | 网页版备份格式的手写数据：39 条消息、引用、转账、表情、译文、撤回、群聊、四类记忆、世界书 |
+| `Tests/Fixtures/webprompt-avatar.json` | 我换了头像（`seenAvatar` 是旧的那张）、核心设定、会话与角色上的不认得的字段 |
 
 CI（build.yml、testflight.yml）：回复解析与提示词拼装各打各的，哪一个打不出来只记警告、删掉那一个包，不拦编译。
 
@@ -43,21 +48,40 @@ CI（build.yml、testflight.yml）：回复解析与提示词拼装各打各的�
 2. **JSContext 没有的全局**：`console`（网页版每个区块的 catch 里都调 `console.error`，没有它整次拼装会抛出去）、
    `TextEncoder`（zip.js 顶层建一个）、`structuredClone`（kv 的默认值）、定时器（给了，从不触发，只记次数）。时间可以钉住：`Date.now()` 与 `new Date()` 读宿主给的「此刻」。
 
-## 存储替身
+## 存储替身与常驻表
 
 替换的是最底下的 `db/idb.js`（IndexedDB），不是 `db/index.js`：网页版的 `db/index.js`、`collection.js`（内存镜像、二级索引、
-`messagesOf` 的排序缓存、元模式那一位的 `characters.get`、预设的 `settings.within`）全是原样的。
+`messagesOf` 的排序缓存、元模式那一位的 `characters.get`、预设的 `settings.within`）全是原样的。迁移不跑（`schemaVersion` 回网页版当前的 DATA_VERSION）。
 
-- **读**：每拼一次之前，Swift 从 `Store/Database.swift` 读各数据域的原文（一行一条的 JSON，本来就是网页版的格式），
-  拼成 JSON 数组交进去（`weblogic.prompt.table(name, json)`），kv 交 `settings`、`persona`、`layout`。
-  JS 那边把每张表整表换进内存镜像（先删后放，版本号只增不减：`collection.load()` 会把桶的版本清零，条数相同、内容变了的会话会读到旧的排序缓存，
-  `testSeesChangesBetweenBuilds` 与 check-weblogic 都测着这一条）。迁移不跑（`schemaVersion` 回网页版当前的 DATA_VERSION）。
-- **消息**：这段会话最近 5000 条（`WebPrompt.chatRows`），同一角色的别的会话各最近 300 条（`otherChatRows`）。其余数据域整表交。
-- **写**：一律不落盘，记进结果的 `writes`。在两份备份上只有一处：`avatar.markSeen` 写 `chats.seenAvatar`（「对方换了头像」只说一次）。
-  这一处不回写的后果：开着试点时，换了头像那句每一轮都会出现。正式切换之前要把它接回原生（宿主函数，或原生自己在发送成功之后记）。
-- **读过哪些数据域**（`touched`）：25 个（books、characters、chats、closet、collection、diaries、focuses、impressions、lorebooks、memories、
-  messages、moments、personas、phoneChats、phones、scenes、smsThreads、songs、spaceItems、stickers、ties、todos、trips、userSched、wishes）。
-  数据里开了更多功能时会更多，所以现在不按它裁。
+**表常驻**（`WebPromptFeed`）。JSContext 第一次用时 `boot`（网页版的 `ready`，全是空表），之后网页版的内存镜像一直留着：
+
+- **整表**：第一次、导入备份或清空全部数据之后（`ChangeLog` 作废）、换了一个库（测试里每个用例一份）、变更记录溢出（留 2 万笔）、
+  上一次灌表或拼装途中脚本出错，都把除消息以外的全部数据域整表交一遍（`clearAll` + `replace`），kv 交 `settings`、`persona`、`layout`。
+- **增量**：其余时候问 `Database.changes.since(上次)`，只交变了的行（`upsert` / `remove`），`deleteAll` 那种整批删的：消息拿掉那段会话，
+  别的数据域整个重灌；kv 变了的那一个重新交（网页版的 `makeKV.load` 自己叠默认值，在 `buildChat` 开头等它读完）。
+  变更记录在试点开关关着时（没人问过）只数序号、不留记录，不占内存。
+- **消息开窗**：这段会话最近 5000 条（`WebPrompt.chatRows`），同一角色的别的会话各最近 300 条（`otherChatRows`），和从前每次现灌的一样：
+  这一次用不到的会话从表里拿掉（`dropChat`），新来的消息超出条数时去掉最早的（`trimChat`），删了一条消息的会话整段重灌（窗口要往前补一条）。
+- 版本号只增不减：换表用 `removeWhere` + `put`，不用 `collection.load()`（它把桶的版本清零，`messagesOf` 的排序缓存会认成没变）。
+
+`testIncrementalSameAsFull`（改一条、加一条、删一条、整段删掉群聊、加记忆、改设置、改会话之后增量灌的结果与整表重灌逐字相同）
+与 check-weblogic 都测着；`testImportRefeedsEverything` 测导入之后上一份的数据一行不留。
+
+## 写回
+
+拼装途中网页版的写，`prompt-host.js` 包在每个 collection 的 `update` / `put` / `create` / `remove` / `removeWhere` / `clear` 外面：
+第一次碰一行之前记下它原来的样子，拼完和现在比，交回 `changes`：`patch`（改了的字段 `set`、去掉的 `unset`；原地改了看不出来的整行交、`whole`）、
+`insert`、`delete`、`kv`（只交和原生库里那份不同的几项，没有的项和默认值比）、`mem`（`persist: false`，网页版本来不落盘）、
+`other`（图片、文件这类原生另有一套的）、`clear`。
+
+`WebPrompt.apply` 写回原生库：读原生库里**此刻**的那一行，只盖交来的几个字段，别的字段（原生自己的、不认得的、拼装期间原生刚写的）一个不动；
+拼装期间已经删掉的行不复活。`mem`、`other`、`clear` 不写回。和网页版一样，拼装途中就写，不等请求成功（`engine.js` 在 `buildChatSystem` 里直接 `markSeen`）。
+只有真正发请求的那条路（`replacing`）写回；测量、对照只拼不写。写过的行下一次一律照原生库重灌：写回了是同一份，没写回，表里改过的那份换回来。
+写不进去的逐条摆到屏幕上（`Problems.report`，网页版第 20 条），这一轮照常发。
+
+在三份备份上只有一处写：`avatar.markSeen` 的 `chats.seenAvatar`（加 `updatedAt`，同网页版的 `update`）。`testWritesGoBack`：换了头像的那一轮说一次
+「[对方的头像]」，写回之后下一轮不再说，会话上不认得的字段与拼装之后原生刚改的字段都在；`WebPromptCostTests.testReplyAppliesWrites`：开着试点回复一轮，
+仍只打一次接口，原生库里的 `seenAvatar` 写上了。
 
 ## buildChat 做的事
 
@@ -66,49 +90,70 @@ CI（build.yml、testflight.yml）：回复解析与提示词拼装各打各的�
 不在这里的（都是要调接口或等待的，和网页版没配这些接口时一样）：识图等待、`imagesFor`（原图由原生挂在 `AIMessage.images`，本轮有图就退回原生）、
 向量检索（`queryVec` 为 null）、重排、天气与热点、排日程、身体状态、每日穿搭、关系底色。
 
+## 包体：去注释
+
+`sync-weblogic` 默认把每个模块去掉注释与缩进（`scripts/jsstrip.mjs`，手写的词法扫描，无依赖）：字符串、模板字符串、正则原样照抄，
+换行留着（不改自动分号插入），`/*!`、`@license`、`@preserve` 的注释留着。去之前后各做一次语法检查；再由 `check-weblogic --raw`
+拿同一批样本（回复解析 89 条、提示词四份）对照去过的与原样的两份包，结果逐字相同才用去过的那一份，否则用原样的并报警告。
+本机另用 acorn 解析了两份包，语法树（连字面量原文）完全相同。`--no-strip` 打原样的包。
+
+| | 原样 | 去注释 | gzip |
+|---|---|---|---|
+| 提示词拼装（网页版 `9784477f43`，271 个模块） | 3.97 MB | **2.50 MB**（-37%） | 1.25 MB -> 0.71 MB（本地 `500728ebd1`） |
+| 回复解析（22 个模块） | 542 KB | **306 KB**（-44%） | |
+
+剩下的大半是提示词正文与界面字符串（模板字符串原样留着）。再往下要靠改名压缩，不做：出错时的调用栈与诊断就看不懂了。
+
 ## 结果
 
-CI 编译 [42248105566](https://github.com/yu7705423-cell/mossgateOvooo/actions/runs/42248105566)（iPhone 17 Pro 模拟器，iOS 26.5，网页版 `e7f20f3aa6`），全部 729 项测试通过。
+CI 编译 [42260966504](https://github.com/yu7705423-cell/mossgateOvooo/actions/runs/42260966504)（iPhone 模拟器，网页版 `9784477f43`），全部 781 项测试通过。
 
 | | 数 |
 |---|---|
-| 包 | 271 个模块、6 个存根，3.9 MB（gzip 约 1.3 MB） |
-| 建 JSContext 并执行三份脚本 | 116 ms（一次，之后常驻） |
-| data.json 一次拼装 | Node 里约 2 ms（含灌表） |
-| rich 加 2000 条消息、300 条记忆，每次（20 次平均） | **网页版 23.0 ms**：读库 6.7、灌表 5.0、换表 4.5、拼装 6.1；原生 ChatPrompt 85.4 ms |
-| 灌表 | 2353 行、605 KB |
+| 建 JSContext 并执行三份脚本（去过注释） | 107 ms（从前 116 ms；一次，之后常驻） |
+| 第一次拼装（含建 JSContext、整表灌 2353 行 605 KB） | 411 ms |
+| rich 加 2000 条消息、300 条记忆，常驻、没有改动，每次（20 次平均） | **9.0 ms**：读库 0.1、灌表 0.1、拼装 8.0；每次交 1 行（上一轮写过的那一行） |
+| 同上，每次多一条消息 | **9.4 ms**：读库 0.1、灌表 0.4、拼装 7.5；每次交 2 行 |
+| 同上，每次整表重灌（从前的做法） | 23.0 ms：读库 6.3、灌表 10.1、拼装 5.5；每次交 2373 行 609 KB |
+| 原生 ChatPrompt | 101.9 ms |
+| 内存（phys_footprint） | 建 JSContext 并整表灌之后多 25 MB；再拼 60 次（其中 20 次整表重灌）之后共多 64 MB |
 
-模拟器的 JavaScriptCore 有 JIT，真机没有；拼装那 6 ms 在真机上会慢几倍，读库与灌表（JSON.parse）受影响较小。预算 50 ms 在模拟器上没有超出。
+常驻之后每次的耗时几乎全在拼装本身。拼装那一段常驻时（8 ms）比整表重灌时（5.5 ms）慢一点，三组按顺序跑，整表那一组最后跑、JIT 最热，
+多半是这个原因，没有单独量。内存那一行的 64 MB 里多半是整表重灌那 20 次留下的垃圾（JavaScriptCore 回收了也不一定还给系统），
+只常驻、不整表重灌时涨多少还没单独量。
 
-两份备份上都没有构建失败的区块，没有调到存根，没有排定时器；拼装途中想写的只有 `put chats <会话>`（头像已看过）。
+模拟器的 JavaScriptCore 有 JIT，真机没有；拼装那 8 ms 在真机上会慢几倍。读库、灌表常驻之后已经接近零，不再随库的大小变。
 
-### 网页版与原生的差别（`WebPromptTests.testSameAsNative`）
+### 网页版与原生的差别（`WebPromptTests.testSameAsNative`，三份备份，共 8 处）
 
 - data.json：13 段对 13 段，聊天记录 4 条对 4 条、逐字相同，召回相同。**只有一段不同：`[可用的功能]`**（网页版列的能力比原生多：心愿、旅行、授予标识、外卖、改密码、骰子、备注、回应等）。
 - rich：聊天记录 18 条对 18 条、逐字相同（引用、转账、表情、译文、撤回、时间戳、末尾的此刻与最近记下的），召回相同。
   不同的两段：`[可用的功能]`，以及网页版多出的 `[群聊「三人行」的最近消息]`（私聊与群聊互通，原生没有这一块）。
 
+- avatar（新加）：聊天记录 6 条对 6 条，设定区 12 段对 12 段。不同的：`[可用的功能]`，以及末尾第 5 条（对话末尾的易变区块）里网页版多一块
+  `[对方的头像]`（我换了头像，原生没有这一块，也没有 `seenAvatar`）。核心设定、世界书、召回两边相同。
+
 也就是说原生已经搬过来的部分与网页版一字不差，差的正好是原生还没做的功能。
 
 ## 什么挡着默认打开
 
-1. **灌表的开销随整个库变大。** 现在每拼一次把除消息以外的全部数据域整表交一遍。小库几毫秒，大库（几千条记忆、论坛、联机群消息）
-   会到几十上百毫秒，真机无 JIT 再慢几倍。要改成：JSContext 里的表常驻，原生写库时记脏（Database.put/delete 处加一个变更序号），
-   每次只交变了的行。
-2. **写不回去。** `avatar.markSeen` 之外，开了更多功能的数据上还会有别的写（论坛的 markCarried、召回的 markRecalled 在网页版是发送成功之后调，
-   原生这边已经各有对应）。要在宿主那边把 `writes` 按数据域分：要落盘的写回原生库（「数据不许丢」），其余丢掉，并各加一条测试。
+已经解决的（本批）：灌表随库变大（常驻表、增量）、写不回去（写回原生库，按字段合并）、包体（去注释 -37%，冷启动 116 ms 到 107 ms）。
+
+还挡着的：
+
+1. **回复落库认不全网页版的结果种类。** 网页版拼的是网页版的行为，`[可用的功能]` 比原生多十来项（心愿、旅行、授予标识、外卖、改密码、骰子、备注、回应等），
+   模型会写出原生的 `materialize` 不会处理的标记。回复解析那一个试点已经能解析，落库那一层没接。这是最大的一项。
+2. **真机速度与内存。** 模拟器有 JIT。要从 TestFlight 包里「问题反馈 - 试验 - 测量一次拼装耗时」量：常驻之后每次多少、第一次多少、内存涨多少。
+   第一次拼装 411 ms（模拟器）在真机上可能过一秒，可以在 app 启动后空闲时预热一次（建 JSContext 并整表灌，不发请求）。
 3. **原图、向量、重排、网络那几步** 还在原生。原图那一档现在直接退回原生；向量检索与重排原生本来也没有。
-4. **真机速度。** 模拟器的 JavaScriptCore 有 JIT，真机 app 里没有。要从 TestFlight 包里「问题反馈 - 试验 - 测量一次拼装耗时」量一次。
-5. **包体**：多 3.9 MB 脚本（压缩后约 1.3 MB），冷启动第一次拼装多一次建 JSContext 与执行脚本。可以在打包时去掉注释（大约省一半），或者按需懒加载。
-6. **差异要有人过一遍。** 网页版拼的是网页版的行为，原生不认的标记（心愿、旅行……）模型会写出来，原生的回复解析与落库要先认得它们
-   （回复解析那一个试点已经能解析，落库那一层 `materialize` 还没接）。在那之前切过去，模型会写出原生不会处理的标记。
+4. **别的写。** 三份备份上只有 `seenAvatar` 一处；开了更多功能的数据上可能还有，写回的路已经通了，但每一处要有人看一遍网页版的意思，
+   特别是 `delete`（现在照网页版删）。诊断里有 `webprompt-write-skipped`。
 
 ## 切换的步骤
 
-1. 先接写回（第 2 条）与常驻表、增量灌表（第 1 条），用 StressTests 的规模量。
-2. 回复落库认网页版全部的结果种类（回复解析试点的下一步）。
-3. TestFlight 上开着试点用一段时间，诊断里看 `webprompt-used` 的耗时与 `failed`。
-4. 默认打开，原生 ChatPrompt 留作退路；再把通话、主动消息、群聊、线下逐个换过去（`engine.js` 里分别是 `buildCallSystem`、
+1. 回复落库认网页版全部的结果种类（回复解析试点的下一步），或者在那之前用网页版的能力开关把原生不认的几项关掉。
+2. TestFlight 上开着试点用一段时间，诊断里看 `webprompt-used`（`ms`、`full`、`writes`）与 `webprompt-failed`，真机量一次耗时与内存。
+3. 默认打开，原生 ChatPrompt 留作退路（拼装失败自动退回）；再把通话、主动消息、群聊、线下逐个换过去（`engine.js` 里分别是 `buildCallSystem`、
    `streamReply` 的主动那一档、`buildGroupSystem` / `buildGroupHistory`、`buildSceneSystem` / `buildSceneHistory`，同一个宿主接口多几个入口）。
 
 ## 同一条路还能走的
