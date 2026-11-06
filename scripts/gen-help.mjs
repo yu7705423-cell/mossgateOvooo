@@ -21,7 +21,7 @@ const APPS = {
   'ImageSettingsView.swift': '设置', 'ImportView.swift': '设置', 'NotifyView.swift': '设置', 'OnboardingView.swift': '设置',
   'SettingsView.swift': '设置', 'HolidayViews.swift': '设置', 'AppearanceViews.swift': '设置', 'PinViews.swift': '设置', 'TraceViews.swift': '设置', 'StorageView.swift': '设置', 'UsageLimitsView.swift': '设置', 'VoiceViews.swift': '设置',
   'CanonViews.swift': '设定集', 'LoreViews.swift': '设定集', 'MemoryViews.swift': '设定集',
-  'CardImportView.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系', 'FaceLockViews.swift': '联系', 'AvatarPoolViews.swift': '联系',
+  'CardImportView.swift': '联系', 'ContactPages.swift': '联系', 'ContactsView.swift': '联系', 'ImpressViews.swift': '联系', 'SelfViews.swift': '联系', 'CharacterEditView.swift': '联系', 'PersonaViews.swift': '联系', 'FaceLockViews.swift': '联系', 'AvatarPoolViews.swift': '联系',
   'ChatLookView.swift': '聊天', 'AbilitiesPage.swift': '聊天', 'ChatSettingsView.swift': '聊天', 'ChatMenuPages.swift': '聊天', 'SummaryPage.swift': '聊天', 'ConversationView.swift': '聊天', 'ForwardViews.swift': '聊天', 'ChatUIViews.swift': '聊天', 'ChatMediaViews.swift': '聊天',
   'GroupViews.swift': '聊天', 'MomentsViews.swift': '聊天', 'SkinViews.swift': '聊天', 'SkinCompareView.swift': '聊天', 'StatusBarViews.swift': '聊天',
   'StickerViews.swift': '聊天', 'TimeSettingsView.swift': '聊天', 'OocViews.swift': '聊天', 'MetaViews.swift': '聊天', 'NewFeatViews.swift': '聊天', 'SceneViews.swift': '聊天', 'PanelViews.swift': '聊天', 'BondViews.swift': '聊天', 'BadgeDefViews.swift': '聊天', 'CardViews.swift': '聊天',

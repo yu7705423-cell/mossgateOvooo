@@ -139,6 +139,9 @@ enum ChatPrompt {
             "character": one("character") { characterBlock(char) },
             "loreAfter": one("loreAfter") { loreBlock(lore.after) },
             "user": one("user") { userBlock(me: me, char: char) },
+            // 角色眼中的你（4.346）：该角色对这个账号收下的印象，没有就不写
+            "impress": one("impress") { Impress.block(charId: char.id, personaId: chat.personaId.isEmpty ? (me?.id ?? "") : chat.personaId,
+                                                      userName: me?.name ?? "the user") },
             "pinned": one("pinned") { pinnedBlock(memories, max: Int(s.num("pinnedMax", 8))) },
             "time": one("time") { timeBlock(char: char, msgs: all, settings: s, now: now) },
             // 节日与纪念日：当天与之后三天才有（网页版 context/dates.js），不调接口
@@ -537,19 +540,18 @@ enum ChatPrompt {
     static func userBlock(me: Persona?, char: Character) -> String {
         guard let me else { return "" }
         var bits = ["Name: \(me.name)"]
-        let sections = me.row["sections"]?.object ?? [:]
-        let labels: [(String, String)] = [("personality", "Personality"), ("likes", "Likes"), ("habits", "Habits"),
-                                          ("triggers", "Sore points"), ("life", "Current life")]
-        let filled = labels.compactMap { key, en -> String? in
-            let t = (sections[key]?.string ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            return t.isEmpty ? nil : "\(en):\n\(t)"
+        // 网名（4.687）、生日与年龄（4.775）、所在城市（4.776）：「联系 - 我」里填了才写。年龄按你的时区今天算，不让模型自己减
+        func field(_ k: String) -> String { me.row.string(k).trimmingCharacters(in: .whitespacesAndNewlines) }
+        if !field("nick").isEmpty { bits.append("Screen name in the chat app: \(field("nick"))") }
+        if !field("birthday").isEmpty {
+            bits.append("Birthday: \(field("birthday"))")
+            let s = AppSettings.load()
+            if let a = SelfProfile.age(field("birthday"), now: Clock.now(s), zone: Clock.zone(Clock.userZone(s))) { bits.append("Age: \(a)") }
         }
-        let basics = me.description.trimmingCharacters(in: .whitespacesAndNewlines)
-        if filled.isEmpty {
-            if !basics.isEmpty { bits.append(basics) }
-        } else {
-            bits.append(((basics.isEmpty ? [] : ["Basics:\n\(basics)"]) + filled).joined(separator: "\n\n"))
-        }
+        if !field("city").isEmpty { bits.append("City: \(field("city"))") }
+        // 人设分区与「与角色相关」的条目（4.347）。只填了基础资料时原样写那一段
+        let body = SelfProfile.promptText(me, charId: char.id, userName: me.name)
+        if !body.isEmpty { bits.append(body) }
         var out = "\n\n[对方是谁]\n" + bits.joined(separator: "\n")
         if let parent = me.parentId, !parent.isEmpty, me.row.string("fateLine").isEmpty {
             out += "\n\n[你和这个人的关系]\nYou have only just met. You do not know each other well."
@@ -584,7 +586,7 @@ enum ChatPrompt {
     /// 顺序照网页版 CAPS 数组：图片、语音、表情、引用、转账、礼物、位置、外卖、拍一拍、骰子、改备注、回应、不回复、撤回、旁白、时间戳。
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
-    static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "pinned", "time", "recent", "geo", "badges",
+    static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "impress", "pinned", "time", "recent", "geo", "badges",
                            "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
