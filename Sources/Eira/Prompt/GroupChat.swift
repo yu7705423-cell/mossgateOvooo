@@ -208,9 +208,18 @@ enum GroupChat {
     }
 
     /// 删掉角色那一行提示（重新生成那一轮）：放回改之前那一份
+    /// 两种写法都认：原生版从前写的 { key, prev }，与网页版的 { chatId, prev: { 键: 改之前的值 } }（退群用的是后一种，4.733）
     static func undo(_ notice: Message) throws {
-        guard let u = notice.row["groupUndo"]?.object, let key = u["key"]?.string, var c = try Repo.chat(notice.chatId) else { return }
-        c.row[key] = u["prev"] == .null ? nil : u["prev"]
+        guard let u = notice.row["groupUndo"]?.object else { return }
+        if let key = u["key"]?.string {
+            guard var c = try Repo.chat(notice.chatId) else { return }
+            c.row[key] = u["prev"] == .null ? nil : u["prev"]
+            c.row.touch()
+            try Repo.save(c)
+            return
+        }
+        guard let prev = u["prev"]?.object, var c = try Repo.chat(u["chatId"]?.string ?? notice.chatId) else { return }
+        for (k, v) in prev { c.row[k] = v == .null ? nil : v }
         c.row.touch()
         try Repo.save(c)
     }
@@ -254,6 +263,8 @@ enum GroupChat {
             names.append((c.name, c.id))
             let n = nick(chat, c.id)
             if !n.isEmpty { names.append((n, c.id)) }
+            // 群里显示的名字（备注、网名，网页版 4.947）同样认
+            for extra in [c.remark.trimmingCharacters(in: .whitespaces), GroupMore.netName(c)] where !extra.isEmpty && extra != c.name && extra != n { names.append((extra, c.id)) }
         }
         names.sort { $0.0.count > $1.0.count }
         var ids: [String] = []
@@ -313,7 +324,8 @@ enum GroupChat {
     /// 认名字要宽一点：加粗（**小林**：）、套括号（【小林】：）都认。写成用户名字的那几段整段丢掉（替用户说话）。
     /// 一个名字都没认出来就整段算 fallback（这一轮第一个被 @ 的）或第一个成员。
     static func splitSpeakers(_ raw: String, members: [Character], chat: Chat, userName: String, fallback: String = "") -> [(charId: String, text: String)] {
-        let spoken = ReplyParser.stripThink(raw).0
+        // 画外音是用户从群外写的（网页版 4.1018），成员不能替用户写：模型照着历史写出来的一律去掉
+        let spoken = GroupMore.stripVoiceover(ReplyParser.stripThink(raw).0)
         let (text, stamp) = ReplyParser.stripStamps(spoken.trimmingCharacters(in: .whitespacesAndNewlines))
         var names: [(name: String, id: String)] = []
         for c in members {

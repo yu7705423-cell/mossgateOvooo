@@ -152,7 +152,7 @@ final class WebLogic: @unchecked Sendable {
             case "narration": p = .init(type: .narration, text: str("text"))
             case "dice": p = .init(type: .dice, text: "")
             case "silence": p = .init(type: .silence, text: "")
-            case "transfer": p = .init(type: .transfer, text: str("note")); p.amount = num("amount")
+            case "transfer": p = .init(type: .transfer, text: str("note")); p.amount = num("amount"); p.to = nonEmpty(s("to"))
             case "gift": p = .init(type: .gift, text: str("cover")); p.extra = s("inner")
             case "settle": p = .init(type: .settle, text: ""); p.flag = bool("take")
             case "unwrap": p = .init(type: .unwrap, text: ""); p.flag = bool("open")
@@ -185,6 +185,12 @@ final class WebLogic: @unchecked Sendable {
             case "muteall": p = .init(type: .muteAll, text: ""); p.flag = bool("on")
             case "nick": p = .init(type: .nick, text: str("name")); p.extra = s("nick")
             case "wear": p = .init(type: .wear, text: str("name"))
+            case "redpacket":
+                p = .init(type: .redpacket, text: str("note")); p.amount = num("total")
+                p.count = num("count").map { Int($0.rounded()) }; p.extra = s("rtype"); p.to = nonEmpty(s("to"))
+            case "rpclaim": p = .init(type: .rpclaim, text: str("from"))
+            case "leave": p = .init(type: .leave, text: "")
+            case "selfnick": p = .init(type: .selfnick, text: str("name"))
             default:
                 unmapped.append(type)
                 continue
@@ -246,6 +252,8 @@ final class WebLogic: @unchecked Sendable {
         if let v = p.address { s += " 址=\(v.debugDescription)" }
         if let v = p.amount { s += " 数=\(v)" }
         if let v = p.extra { s += " 附=\(v.debugDescription)" }
+        if let v = p.to { s += " 给=\(v.debugDescription)" }
+        if let v = p.count { s += " 个=\(v)" }
         if p.flag { s += " 真" }
         return s + ")"
     }

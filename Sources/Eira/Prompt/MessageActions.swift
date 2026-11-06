@@ -39,7 +39,8 @@ enum MessageActions {
     static func editableText(_ m: Message) -> String {
         switch m.kind {
         case "image":
-            let v = m.role == .user ? m.row.string("imageDesc") : m.row.string("prompt")
+            // 改成文字图的那种（4.799）改的是描述，不是生图提示词
+            let v = m.role == .user || MsgConvert.isTextImage(m) ? m.row.string("imageDesc") : m.row.string("prompt")
             if !v.isEmpty { return v }
             return unmark(m.content, "图片")
         case "voice", "narration": return bodyText(m)
@@ -53,7 +54,7 @@ enum MessageActions {
     }
 
     /// 角色发的图与语音按描述生成，改了描述要重新生成一份；我发的只改角色读到的文字，媒体不动
-    static func needsRegen(_ m: Message) -> Bool { m.role != .user && (m.kind == "image" || m.kind == "voice") }
+    static func needsRegen(_ m: Message) -> Bool { m.role != .user && (m.kind == "image" || m.kind == "voice") && !MsgConvert.isTextImage(m) }
 
     /// 改一条。正文里的标记跟着改（历史里角色读到的是正文）
     static func edit(_ m: Message, text: String) throws -> Message {
@@ -66,6 +67,8 @@ enum MessageActions {
             if m.role == .user {
                 out.row["imageDesc"] = .string(t)
                 out.row["vision"] = .string("done")
+            } else if MsgConvert.isTextImage(m) {
+                out.row["imageDesc"] = .string(t)
             } else {
                 out.row["prompt"] = .string(t)
             }

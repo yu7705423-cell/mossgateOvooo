@@ -34,11 +34,14 @@ actor AIService {
     ///   - group: 任务组（settings.taskRoutes 的键）。不传时按任务名在 RouteGroup 里找
     ///   - preset: 指定只用这一套（识图接口、测试连接）。给了就不挑、也不换
     ///   - retries: 这件事最多值得重试几次。实际次数还要和用户的 retryMax 取小
-    func send(task: String, group: String? = nil, preset only: ChatPreset? = nil, system: String, messages: [AIMessage],
+    ///   - charId: 这个角色亲自开口的那几样（聊天回复、通话）：角色选了自己的接口（4.828，char.chatApiId）就先用那一套
+    func send(task: String, group: String? = nil, preset only: ChatPreset? = nil, charId: String? = nil, system: String, messages: [AIMessage],
               maxTokens: Int = 0, retries: Int = 0,
               onDelta: @escaping @Sendable (String) -> Void = { _ in }) async throws -> Result {
         let settings = AppSettings.load()
-        let chain = only.map { $0.usable ? [$0] : [] } ?? Self.chain(task: task, group: group ?? RouteGroup.of(task: task), settings: settings)
+        let chain = only.map { $0.usable ? [$0] : [] }
+            ?? Self.chain(task: task, group: group ?? RouteGroup.of(task: task), settings: settings,
+                          charPreset: charId.flatMap { settings.charPreset($0) })
         guard !chain.isEmpty else {
             Diagnostics.shared.record("request-skipped", ["task": task, "reason": "没有可用的接口"])
             throw AIError(status: nil, message: "没有可用的接口。请在「设置 - 接口」中填写密钥与模型。")
@@ -100,12 +103,15 @@ actor AIService {
     }
 
     /// 依次要试的接口。没开 chatFallback 时只有挑中的那一套。
-    static func chain(task: String, group: String?, settings s: AppSettings) -> [ChatPreset] {
+    /// charPreset：角色自己选的那一套（4.828）排第一，失败换下一套时照旧按主用、副用、其余的顺序往后换
+    static func chain(task: String, group: String?, settings s: AppSettings, charPreset: ChatPreset? = nil) -> [ChatPreset] {
         let main = s.mainPreset.flatMap { $0.usable ? $0 : nil }
         let fallback = s.fallbackPreset.flatMap { $0.usable ? $0 : nil }
 
         let picked: ChatPreset?
-        if let group, let routed = s.routedPreset(group: group) {
+        if let own = charPreset, own.usable {
+            picked = own
+        } else if let group, let routed = s.routedPreset(group: group) {
             picked = routed
         } else if mainTasks.contains(task) {
             picked = main ?? fallback
