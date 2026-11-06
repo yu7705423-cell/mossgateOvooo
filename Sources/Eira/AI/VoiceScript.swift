@@ -104,6 +104,8 @@ enum VoiceScript {
         if kind == "eleven" {
             return m.contains("v3") ? Dialect(pause: "tag", sound: "tag", mood: "tag") : Dialect(pause: "break", sound: nil, mood: nil)
         }
+        // Fish Audio（网页版 4.808）：情绪与声音都写在句子里，括号加英文词，例如 (sad)、(sighing)；没有停顿标记，用省略号
+        if kind == "fish" { return Dialect(pause: "dots", sound: "fish", mood: "fish") }
         return Dialect(pause: "dots", sound: nil, mood: "param")
     }
 
@@ -118,7 +120,7 @@ enum VoiceScript {
                 if d.mood == "param" {
                     if spoken(cur) { segs.append(cur) }
                     cur = Segment(mood: tk.v, parts: [])
-                } else if d.mood == "tag" {
+                } else if d.mood == "tag" || d.mood == "fish" {
                     cur.parts.append(tk)
                 }
             } else if tk.t == "pause" {
@@ -155,8 +157,9 @@ enum VoiceScript {
                     return mmSounds.contains(e) ? "(\(e))" : ""
                 }
                 if d.sound == "tag" { return " [\(english(sounds, p.v))] " }
+                if d.sound == "fish" { return " (\(english(sounds, p.v))) " }
                 return ""
-            case "mood": return " [\(english(moods, p.v))] "
+            case "mood": return d.mood == "fish" ? " (\(english(moods, p.v))) " : " [\(english(moods, p.v))] "
             default: return ""
             }
         }.joined()

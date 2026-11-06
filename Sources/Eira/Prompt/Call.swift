@@ -40,6 +40,8 @@ enum CallEngine {
     struct Prepared: Sendable {
         var system: String
         var history: [AIMessage]
+        /// 打电话的这个角色：它选了自己的接口（4.828）就用那一套
+        var charId = ""
     }
 
     /// 接通时拼一次。聊天记录照常带上，后面不挂此刻的状态与召回。
@@ -65,7 +67,7 @@ enum CallEngine {
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         }
         let built = try ChatPrompt.build(chat: chat, char: char, settings: s, call: (rule: rule, script: script))
-        return Prepared(system: built.system, history: built.messages)
+        return Prepared(system: built.system, history: built.messages, charId: char.id)
     }
 
     /// 通话中的一轮。opening 是「电话刚接通，你先开口」这一类一次性的指示。
@@ -80,7 +82,7 @@ enum CallEngine {
             else { messages.append(AIMessage(role: .user, content: "(this is the view from my side)", images: [image])) }
         }
         let max = Int(AppSettings.load().raw["callMaxTokens"]?.number ?? 400)
-        let r = try await AIService.shared.send(task: "chat.call", system: p.system, messages: messages,
+        let r = try await AIService.shared.send(task: "chat.call", charId: p.charId.isEmpty ? nil : p.charId, system: p.system, messages: messages,
                                                 maxTokens: max, retries: 1, onDelta: onDelta)
         return clean(r.text)
     }

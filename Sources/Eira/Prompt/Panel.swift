@@ -17,6 +17,8 @@ enum Panel {
         Item(id: "photo", icon: "image", label: "图片"),
         Item(id: "voice", icon: "mic", label: "语音"),
         Item(id: "transfer", icon: "wallet", label: "转账"),
+        // 群红包（网页版 4.736）：只在群里出现
+        Item(id: "redpacket", icon: "gift", label: "红包"),
         Item(id: "call", icon: "phone", label: "通话"),
         Item(id: "video", icon: "film", label: "视频通话"),
         Item(id: "gift", icon: "gift", label: "礼物"),
@@ -36,7 +38,9 @@ enum Panel {
     /// 默认收进「更多」的：网页版 DEFAULT_MORE 里原生版也有的那几格
     static let defaultMore = ["lore", "video", "share", "dice", "card", "file"]
     /// 群里说得通的那几格（网页版 GROUP_TAPS）：转账、礼物、通话这些都是对着一个人的
-    static let groupOK: Set<String> = ["photo", "voice", "dice", "song", "offline"]
+    static let groupOK: Set<String> = ["photo", "voice", "dice", "song", "offline", "transfer", "redpacket"]
+    /// 只在群里有的格子：红包（私聊里不出现）
+    static let groupOnly: Set<String> = ["redpacket"]
 
     static func item(_ id: String) -> Item? { items.first { $0.id == id } }
 
@@ -57,7 +61,7 @@ enum Panel {
         return Set(raw.compactMap(\.string).filter { all.contains($0) })
     }
 
-    static func visible(_ id: String, group: Bool) -> Bool { !group || groupOK.contains(id) }
+    static func visible(_ id: String, group: Bool) -> Bool { group ? groupOK.contains(id) : !groupOnly.contains(id) }
 
     static func onPanel(_ s: AppSettings, group: Bool) -> [String] {
         let m = more(s)

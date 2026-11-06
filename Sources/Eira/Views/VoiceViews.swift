@@ -288,12 +288,13 @@ struct VoicePresetEditView: View {
                         TextField("GroupId（新版密钥可留空）", text: field("groupId"))
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
-                    if p.kind != "minimax" {
+                    if p.kind != "minimax" && p.kind != "fish" {
                         TextField(p.kind == "eleven" ? "模型（可留空）" : "模型，如 gpt-4o-mini-tts", text: field("model"))
                             .textInputAutocapitalization(.never).autocorrectionDisabled()
                     }
                 }
                 if p.kind == "minimax" { minimaxModels(p) }
+                if p.kind == "fish" { fishModels(p) }
                 Section {
                     Picker("语种", selection: field("lang")) {
                         ForEach(VoicePreset.langs) { Text($0.label).tag($0.id) }
@@ -302,6 +303,7 @@ struct VoicePresetEditView: View {
                 } header: {
                     Text("默认风格")
                 } footer: {
+                    if p.kind == "fish" { Text("Fish Audio 自动识别语种，也没有风格参数，这两项对这一家不发送。") }
                     HelpNote("角色卡上填写了风格与语种时以角色卡为准。MiniMax 的风格只接受固定的情绪词（高兴、难过、生气、害怕、厌恶、惊讶、平静），其余不发送。")
                 }
                 Section {
@@ -357,6 +359,24 @@ struct VoicePresetEditView: View {
         .task(id: p.id + "|" + p.kind) { await loadModels(p) }
     }
 
+    /// Fish Audio 的型号：没有列出型号的接口，列表为内置的常用型号；留空用接口的默认型号，列表外的手填（网页版 4.808）
+    @ViewBuilder private func fishModels(_ p: VoicePreset) -> some View {
+        let current = p.model
+        Section {
+            Picker("模型", selection: field("model")) {
+                Text("接口默认").tag("")
+                if !current.isEmpty && !VoicePreset.fishModels.contains(current) { Text(current).tag(current) }
+                ForEach(VoicePreset.fishModels, id: \.self) { Text($0).tag($0) }
+            }
+            TextField("列表外的型号可在此手填", text: field("model"))
+                .textInputAutocapitalization(.never).autocorrectionDisabled()
+        } header: {
+            Text("语音模型")
+        } footer: {
+            HelpNote("Fish Audio 没有列出型号的接口，列表为内置的常用型号。留空时不发送型号，使用接口的默认型号。型号写在请求头里发送。列表外的型号可以手填。", title: "语音接口：Fish Audio 型号")
+        }
+    }
+
     private func loadModels(_ p: VoicePreset) async {
         guard p.kind == "minimax" else { return }
         fetchingModels = true
@@ -368,6 +388,7 @@ struct VoicePresetEditView: View {
         switch k {
         case "openai": return "走 /v1/audio/speech。OpenAI 本身与绝大多数中转站都是这一种。"
         case "eleven": return "音色填 voice id。模型留空时使用该账号的默认模型。"
+        case "fish": return "音色填声音模型的 id（Fish Audio 网站上声音页面地址中的那一串）。模型留空时使用接口的默认型号。"
         default: return "国内账号用 api.minimaxi.com，国际账号用 api.minimax.io。新版密钥不需要 GroupId。"
         }
     }

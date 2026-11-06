@@ -11,12 +11,16 @@ struct VoicePreset: Identifiable, Equatable, Sendable {
         var iso = ""
     }
 
-    /// 三家（网页版 voice.js 的 KINDS）
+    /// 四家（网页版 voice.js 的 KINDS）。Fish Audio 是 4.808 加的
     static let kinds: [Choice] = [
         Choice(id: "minimax", label: "MiniMax", base: "https://api.minimaxi.com"),
         Choice(id: "openai", label: "OpenAI 兼容", base: "https://api.openai.com/v1"),
         Choice(id: "eleven", label: "ElevenLabs", base: "https://api.elevenlabs.io"),
+        Choice(id: "fish", label: "Fish Audio", base: "https://api.fish.audio"),
     ]
+
+    /// Fish Audio 没有列出型号的接口，内置一份（网页版 FISH_MODELS）；列表外的型号手填
+    static let fishModels = ["s2.1-pro", "s2-pro", "s1", "speech-1.6", "speech-1.5"]
 
     /// 语种（网页版 LANGS）。mm 是 MiniMax 认的名字，iso 是 ElevenLabs 认的码
     static let langs: [Choice] = [
@@ -53,8 +57,8 @@ struct VoicePreset: Identifiable, Equatable, Sendable {
     var lang: String { json["lang"]?.string ?? "" }
     var prompt: String { json["prompt"]?.string ?? "" }
 
-    /// 配全了没有：密钥必填；ElevenLabs 的模型可以留空（网页版 isVoiceReady，不把可选项算成必填）
-    var ready: Bool { !apiKey.isEmpty && (kind == "eleven" || !model.isEmpty) }
+    /// 配全了没有：密钥必填；ElevenLabs 与 Fish Audio 的模型可以留空（网页版 isVoiceReady，不把可选项算成必填）
+    var ready: Bool { !apiKey.isEmpty && (kind == "eleven" || kind == "fish" || !model.isEmpty) }
 
     var base: String {
         let b = baseUrl.replacingOccurrences(of: #"\s+"#, with: "", options: .regularExpression)
@@ -233,6 +237,7 @@ enum VoiceGen {
             switch p.kind {
             case "openai": data = try await openai(p, t, voiceId, speed, prompt, lang)
             case "eleven": data = try await eleven(p, t, voiceId, speed, lang)
+            case "fish": data = try await fish(p, t, voiceId, speed)
             default: data = try await minimax(p, t, voiceId, speed, prompt, lang)
             }
             Diagnostics.shared.record("tts", ["kind": p.kind, "model": p.model, "bytes": data.count,
@@ -329,6 +334,25 @@ enum VoiceGen {
         if let iso = VoicePreset.lang(lang)?.iso, !iso.isEmpty { body["language_code"] = .string(iso) }
         let id = voiceId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? voiceId
         return try await post("\(p.base)/v1/text-to-speech/\(id)", headers: ["xi-api-key": p.apiKey], body: body)
+    }
+
+    /// Fish Audio（网页版 4.808）：POST {base}/v1/tts，Bearer 鉴权；型号写在请求头 model 里（不填就不带，用接口的默认型号）；
+    /// 音色是声音模型的 id，送 reference_id；语速送 prosody.speed，钳在 0.5 到 2。语种自动识别，也没有风格参数：这两项不发送。
+    /// 直接回音频字节。原生版没有跨域的限制，不经网页版那台转发 Worker
+    static func fishRequest(_ p: VoicePreset, _ text: String, _ voiceId: String, _ speed: Double) -> (url: String, headers: [String: String], body: [String: JSONValue]) {
+        let url = p.base.range(of: #"/v\d+$"#, options: .regularExpression) != nil ? "\(p.base)/tts" : "\(p.base)/v1/tts"
+        var body: [String: JSONValue] = ["text": .string(text), "format": .string("mp3"), "mp3_bitrate": .number(128),
+                                         "normalize": .bool(true), "latency": .string("normal"),
+                                         "prosody": .object(["speed": .number(max(0.5, min(2, speed > 0 ? speed : 1))), "volume": .number(0)])]
+        if !voiceId.isEmpty { body["reference_id"] = .string(voiceId) }
+        var headers = ["authorization": "Bearer \(p.apiKey)"]
+        if !p.model.isEmpty { headers["model"] = p.model }
+        return (url, headers, body)
+    }
+
+    private static func fish(_ p: VoicePreset, _ text: String, _ voiceId: String, _ speed: Double) async throws -> Data {
+        let r = fishRequest(p, text, voiceId, speed)
+        return try await post(r.url, headers: r.headers, body: r.body)
     }
 
     static func hex(_ s: String) -> Data? {

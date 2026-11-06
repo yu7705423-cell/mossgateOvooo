@@ -5,7 +5,7 @@ import Foundation
 /// 存在 settings.msgMenuOrder，一串 id，和网页版同一个键、同一份 id：两边互相导入备份，排好的顺序照旧。
 /// 读的时候丢掉不认识的、补上缺的（以后新加一格，老用户那边不会静默少一格）。恢复默认写成 null，与网页版一样。
 /// 每一格出不出现照旧按那条消息自己的情况定，这里只管先后。菜单最后固定一格「调整顺序」，不参与排。
-/// 原生版还没有的那几格（改为语音、衣帽间……）照样留在顺序里，排序页上不列；挪动时它们留在原来的位置上。
+/// 原生版还没有的那几格（衣帽间、收藏馆……）照样留在顺序里，排序页上不列；挪动时它们留在原来的位置上。
 enum MenuOrder {
     struct Item: Identifiable, Equatable {
         let id: String
@@ -50,7 +50,7 @@ enum MenuOrder {
     ]
 
     /// 原生版长按菜单里真有的那几格（排序页只列这些）
-    static let native: Set<String> = ["reply", "copy", "fav", "edit", "regen", "redraw", "recall", "translate", "vision", "think",
+    static let native: Set<String> = ["reply", "copy", "fav", "edit", "phototext", "voice", "imgvers", "regen", "redraw", "recall", "translate", "vision", "think",
                                       "transedit", "remember", "rewind", "example", "served", "compare", "keep", "note", "multi", "delete"]
 
     private static var ids: [String] { all.map(\.id) }
