@@ -112,7 +112,7 @@ struct ChatSettingsView: View {
         add("skin", "", "美化", keys: "气泡 头像形状 显示头像 消息时刻 已读回执", searchOnly: true,
             action: { showSkin = true })
         if c.isGroup {
-            add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称 成员私下找你 私信",
+            add("group", "这个群", "群资料", "\(c.characterIds.count) 人", keys: "成员 群名 群昵称 成员私下找你 私信 我在本群的身份 旁观 画外音 接着聊 自行退群",
                 dest: AnyView(groupPage))
             add("face", "这个群", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "成员的头像 我的头像", dest: AnyView(facePage(c)))
             add("abilities", "这个群", "成员的能力", "\(c.characterIds.count) 人",
@@ -125,6 +125,9 @@ struct ChatSettingsView: View {
                 keys: "能力 开关 语音 图片 发图 表情 转账 通话 电话 来电 一起听 礼物 约定 外卖 拍一拍 备注 锁屏密码 撤回 回应 不回复 骰子 位置 标识 音色 生图提示词 锁脸 长相",
                 dest: AnyView(AbilitiesPage(charId: charId)))
             add("face", "这个角色", "头像", ChatFaces.faces(c).isEmpty ? "" : "已更换", keys: "角色的头像 我的头像", dest: AnyView(facePage(c)))
+            // 这个角色回复用哪一套接口（4.828）
+            add("api", "这个角色", "回复用的接口", CharApi.label(try? Repo.character(charId)), keys: "接口 单独的接口 模型",
+                dest: AnyView(CharApiPage(charId: charId)))
             add("day", "这个角色", "日常与日记", keys: "日程 随机事件 写日记",
                 dest: AnyView(MenuPage("日常与日记") {
                     DayOnSection(charId: charId)
@@ -300,7 +303,10 @@ struct ChatSettingsView: View {
     private var groupPage: some View {
         MenuPage("群资料") {
             GroupMembersSection(chatId: chatId)
+            GroupModeSection(chatId: chatId)
+            GroupAmbientSection(chatId: chatId)
             GroupDMSection(chatId: chatId)
+            GroupLeaveSection(chatId: chatId)
             GroupProactiveSection(chatId: chatId)
         }
     }

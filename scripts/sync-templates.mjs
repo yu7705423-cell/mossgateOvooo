@@ -16,7 +16,9 @@ if (!web) {
 }
 const src = readFileSync(join(resolve(web), 'src/system/ai/templates.js'), 'utf8');
 // 唯一的 import 是 settings（template() 运行时读用户改过的那份），这里用不到，换成空的
-const body = src.replace(/^import \{ settings \} from '\.\.\/db\/index\.js';$/m, 'const settings = { get: () => ({}) };');
+// 说明句的改写（tplparts.js 的 render）只在运行时用，DEFAULT_TEMPLATES 用不到，换成原样返回
+const body = src.replace(/^import \{ settings \} from '\.\.\/db\/index\.js';$/m, 'const settings = { get: () => ({}) };')
+  .replace(/^import \{ render as renderNotes \} from '\.\/tplparts\.js';$/m, 'const renderNotes = b => b;');
 if (body === src) {
   console.error('templates.js 的 import 与预期不同，脚本需要跟着改');
   process.exit(1);
@@ -25,8 +27,6 @@ const dir = mkdtempSync(join(tmpdir(), 'tpl-'));
 try {
   const file = join(dir, 'templates.mjs');
   writeFileSync(file, body);
-  // templates.js 另 import 了同一目录的 tplparts.js（没有别的依赖），一并抄过去
-  writeFileSync(join(dir, 'tplparts.js'), readFileSync(join(resolve(web), 'src/system/ai/tplparts.js'), 'utf8'));
   const { DEFAULT_TEMPLATES } = await import(pathToFileURL(file).href);
   const sorted = Object.fromEntries(Object.keys(DEFAULT_TEMPLATES).sort().map(k => [k, DEFAULT_TEMPLATES[k]]));
   const here = dirname(fileURLToPath(import.meta.url));

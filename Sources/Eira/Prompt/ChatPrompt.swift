@@ -180,7 +180,8 @@ enum ChatPrompt {
     /// older：读到的那一截里没有的消息按 id 去库里找（引用了很早的一条时）
     private static func history(_ src: Source, beats: [Message], chat: Chat, char: Character, settings s: AppSettings,
                                 tail: String, tailDepth: Int, lore: [(Int, String)],
-                                group: [String: String]? = nil, older: @escaping (String) throws -> Message?) throws -> ([AIMessage], [String]) {
+                                group: [String: String]? = nil, followUp: Bool = true,
+                                older: @escaping (String) throws -> Message?) throws -> ([AIMessage], [String]) {
         let all = src.msgs
         // 线下那几场的正文按时间排进来，一起算条数与轮次（网页版 4.375）。场外指示不进
         let timeline = timelineOf(src, beats: beats)
@@ -282,7 +283,7 @@ enum ChatPrompt {
             }
             else { merged.append(m) }
         }
-        if merged.last?.role == .assistant {
+        if followUp && merged.last?.role == .assistant {
             merged.append(AIMessage(role: .user, content: Templates.get("skeleton.follow-up", settings: s)))
         }
 
@@ -585,11 +586,15 @@ enum ChatPrompt {
                            "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
-                         "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate"]
+                         "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
+                         "grouppay", "groupleave", "selfnick"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
-    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties"]
+    private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties",
+                                                 "grouppay", "groupleave"]
+    /// 新功能里按角色另选过的那几项（网页版 4.882）：on 里已经按这个角色（群里按各成员）算过，不再只看全局
+    private static let perCharFeat: Set<String> = ["grouppay", "groupleave", "selfnick"]
 
     /// msgs 是读到的那一截（至少最近 8 条、最近两句我说的）；整段里才查得出来的看 facts
     private static func capabilities(char: Character, chat: Chat, msgs: [Message], facts: Facts, settings s: AppSettings) -> String {
@@ -605,7 +610,7 @@ enum ChatPrompt {
         func cap(_ id: String, on: Bool, hot: Bool, line: String?, detail: () -> String) {
             // 关掉的不进；解析格式的一部分（时间戳、译文）与自己有开关的（旁白、心声）不受这里管（网页版 PROTOCOL、OWN_SWITCH）
             guard on, !off.contains(id) || protocolCaps.contains(id) || ownSwitchCaps.contains(id) else { return }
-            guard NewFeat.capOn(id, s) else { return }
+            guard perCharFeat.contains(id) || NewFeat.capOn(id, s) else { return }
             if chat.isGroup && !groupCaps.contains(id) { return }
             // 见面时只给当面说得通的那几样（网页版 face.CAPS）
             if Face.on(chat) && !Face.caps.contains(id) { return }
@@ -640,6 +645,18 @@ enum ChatPrompt {
         cap("groupadmin", on: chat.isGroup && !(chat.row["admins"]?.array ?? []).isEmpty, hot: used("禁言"),
             line: "Admins manage members who are not admins: [禁言：name 10分钟], [解除禁言：name], [全员禁言], [解除全员禁言], [改群昵称：name|new nickname], each on its own line under the admin's name") {
             Templates.get("skeleton.group-admin", settings: s)
+        }
+        // 群红包与转账、自行退群（网页版 capabilities.js 的 grouppay、groupleave，4.736、4.733）：新功能，群里有一名成员开着就给
+        let groupMembers = chat.isGroup ? GroupChat.members(chat) : []
+        cap("grouppay", on: chat.isGroup && groupMembers.contains { $0.row["canTransfer"]?.bool != false && NewFeat.isOn("grouppay", s, char: $0) },
+            hot: used("红包|[\\[【]转账") || recent.contains { $0.kind == "redpacket" || ($0.kind == "transfer" && $0.row.string("transfer") == "pending") },
+            line: "Red packets and transfers in this group: [红包：total｜count｜greeting], [领红包], [转账：member name｜amount note], each on its own line") {
+            let label = Interact.currencyLabel(s)
+            return Templates.render("skeleton.group-pay", ["currency": label.isEmpty ? "" : "\nMoney in this group is \(label); write amounts on that scale."], settings: s)
+        }
+        cap("groupleave", on: groupMembers.contains { GroupMore.canLeave(chat, $0.id) && NewFeat.isOn("groupleave", s, char: $0) },
+            hot: used("退群|退出了群聊"), line: "Leave this group: under your name, a line on its own, [退群]") {
+            Templates.get("skeleton.group-leave", settings: s)
         }
         // 好友与拉黑（网页版 capabilities.js 的 ties）：改自己这一方，群聊也可用
         cap("ties", on: true, hot: used(#"[\[【](拉黑|解除拉黑|删除好友|添加好友|通过好友申请)"#),
@@ -726,6 +743,11 @@ enum ChatPrompt {
             Templates.render("skeleton.remark", ["current": theirs.isEmpty ? "no name set" : theirs,
                                                  "mine": mineRemark.isEmpty ? "your own name" : mineRemark], settings: s)
         }
+        // 改自己的网名（网页版 capabilities.js 的 selfnick，4.947）：只写写法与现在的网名，改不改由角色定
+        let netName = GroupMore.netName(char)
+        let nickLine = "Change your own screen name in the chat app: write a line on its own, [改网名：new name]."
+            + " Current screen name: \(netName.isEmpty ? "none (your real name is shown)" : netName)."
+        cap("selfnick", on: NewFeat.isOn("selfnick", s, char: char), hot: used("[\\[【]改网名|把网名改为"), line: nickLine) { nickLine }
         cap("react", on: char.row["canReact"]?.bool != false && !msgs.isEmpty,
             hot: recent.contains { !($0.row["reactions"]?.array ?? []).isEmpty || $0.kind == "silence" },
             line: "React to a message with an emoji: write a line on its own, [回应：one emoji：a short excerpt of that message]") {
@@ -1284,6 +1306,8 @@ extension ChatPrompt {
     private static func buildGroupChat(chat: Chat, members: [Character], settings s: AppSettings, now: Date,
                                        excludeTurn: String?, loadAll: Bool) throws -> Built {
         guard let lead = members.first else { throw StoreError(message: "群里没有成员") }
+        // 过了 24 小时的红包，上下文里那一行改成「已过期」（4.736，不调接口）
+        RedPacket.sweep(chat.id)
         let beats = Scenes.beatsAsMessages(chatId: chat.id)
         let src = try source(chat: chat, excludeTurn: excludeTurn, ties: false, beats: beats, settings: s, loadAll: loadAll)
         let all = src.msgs
@@ -1321,7 +1345,8 @@ extension ChatPrompt {
         ]
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         let names = members.map(\.name).joined(separator: "、")
-        P["groupOpening"] = Templates.render("skeleton.group-opening", ["userName": userName, "names": names], settings: s)
+        // 我在本群的身份（4.1018）：旁观、画外音时开场换成「你不在群里」的那一段
+        P["groupOpening"] = Templates.render(GroupMore.openingTemplate(chat), ["userName": userName, "names": names], settings: s)
         P["members"] = memberBlocks.joined(separator: "\n\n")
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
         P["groupRules"] = Templates.render("skeleton.group-rules", ["userName": userName, "example": lead.name], settings: s)
@@ -1341,14 +1366,16 @@ extension ChatPrompt {
 
         // 末尾：此刻的状态，以及这一轮被 @ 的人
         let display = Dictionary(members.map { ($0.id, GroupChat.nameIn(chat, $0)) }, uniquingKeysWith: { a, _ in a })
-        let called = GroupChat.pendingMentions(all).compactMap { display[$0] }
+        // 我不在群里（旁观、画外音）：不点名，也没有「对方还没回」
+        let member = GroupMore.mode(chat) == "member"
+        let called = member ? GroupChat.pendingMentions(all).compactMap { display[$0] } : []
         var tail: [String] = []
         if !arranged.tail.isEmpty { tail.append(arranged.tail) }
         if !called.isEmpty { tail.append(Templates.render("skeleton.group-mention", ["names": called.joined(separator: "、")], settings: s)) }
         if let t = translateTail(chat, settings: s) { tail.append(t) }
 
         let (messages, seen) = try history(src, beats: beats, chat: chat, char: lead, settings: s, tail: tail.joined(separator: "\n\n"),
-                                           tailDepth: max(1, memoryDepth), lore: deep, group: display,
+                                           tailDepth: max(1, memoryDepth), lore: deep, group: display, followUp: member,
                                            older: olderLookup(src, chat: chat, excludeTurn: excludeTurn, ties: false))
         return Built(system: arranged.system, messages: messages, recalled: recalledIds, seenImages: seen)
     }

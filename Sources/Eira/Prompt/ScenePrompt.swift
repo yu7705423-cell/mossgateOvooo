@@ -124,7 +124,7 @@ extension ChatPrompt {
         if !chat.summary.isEmpty { P["summary"] = "[更早之前发生过什么]\n\(chat.summary)" }
         if !scene.string("summary").isEmpty { P["sceneSummary"] = "[这一场之前发生过什么]\n\(scene.string("summary"))" }
         if !others.isEmpty {
-            P["groupNote"] = Templates.render("skeleton.group", ["members": others.map(\.name).joined(separator: "、"), "charName": char.row.string("name")], settings: s)
+            P["groupNote"] = Templates.render("skeleton.group", ["members": others.map(\.name).joined(separator: "、"), "charName": char.name], settings: s)
         }
         P["sceneRules"] = Templates.render("skeleton.scene-rules", names, settings: s) + sceneExits(scene, settings: s)
         P["setup"] = sceneSetup(scene, others: others, settings: s)
