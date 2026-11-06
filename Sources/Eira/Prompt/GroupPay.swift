@@ -222,7 +222,8 @@ enum RedPacket {
               var row = try Database.shared.get(Collections.messages, id: id), var rp = Packet(row["rp"]) else { return false }
         let kept = rp.claims.filter { $0.who != notice.authorId }
         guard kept.count != rp.claims.count else { return false }
-        rp.claims = kept.enumerated().map { i, c in Claim(who: c.who, amount: rp.shares[i], at: c.at) }
+        let shares = rp.shares
+        rp.claims = kept.enumerated().map { i, c in Claim(who: c.who, amount: i < shares.count ? shares[i] : c.amount, at: c.at) }
         row["rp"] = rp.json
         row.touch()
         try Database.shared.put(Collections.messages, row)
