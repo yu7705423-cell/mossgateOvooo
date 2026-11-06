@@ -162,9 +162,20 @@ enum MessageActions {
             return (canRegen ? ["regenerate"] : []) + ["select", "delete"]
         case "narration":
             return (canRegen && m.role != .user ? ["regenerate"] : []) + ["edit", "copy", "select", "delete"]
+        case "side":
+            // 线下分隔线（网页版 4.721）：只是不再显示，那一行照样在历史里读成「以下当面」「以下在手机上」
+            return ["hideLine"]
         default:
             return nil
         }
+    }
+
+    /// 删除线下分隔线：只是不再显示（lineHidden），之后的消息仍按 side 算当面还是在手机上
+    static func hideLine(_ id: String) throws {
+        guard var row = try Database.shared.get(Collections.messages, id: id), row.string("kind") == "side" else { return }
+        row["lineHidden"] = .bool(true)
+        row.touch()
+        try Database.shared.put(Collections.messages, row)
     }
 
     /// 选到这里（网页版 4.586，照 QQ）：从最后勾的那一条到长按的这一条，中间的全部选上。一条都没勾时只选这一条

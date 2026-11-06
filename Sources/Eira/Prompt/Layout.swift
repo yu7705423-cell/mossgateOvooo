@@ -164,6 +164,7 @@ enum Layout {
         "status": Segment(label: "状态栏", desc: "会话开启状态栏时出现。栏目与规则在会话菜单的「状态栏」中", locked: true),
         "inner": Segment(label: "心声", desc: "会话开启「随回复一起」的心声时出现。开关与措辞在会话菜单的「心声」中", locked: true),
         "closet": Segment(label: "衣帽间标记", desc: "线下换装、借还、塞进包里的写法", follow: "跟随衣帽间的开关"),
+        "listen": Segment(label: "一起听", desc: "线下时一起听歌的写法与此刻的状态。正在一起听时出现", follow: "跟随能力开关中的「一起听」与角色卡"),
         "setup": Segment(label: "这一场", desc: "地点、时刻、在场的人、情境", follow: "跟随这一场的设置"),
         "time": Segment(label: "时间写法", desc: "先写出当地时间的那一行", locked: true),
         "length": Segment(label: "篇幅", desc: "每段大约多少字", follow: "跟随线下设置中填写的字数，未填写时不出现"),
@@ -190,8 +191,9 @@ enum Layout {
     private static let defaults: [String: [String]] = [
         "chat": ["opening", "faceOpening", "gender", "@data", "faceSetup", "summary", "groupNote", "rules", "caps", "style",
                  "core", "ban", "genderTail", history, "inner", "status", "grp:now"],
-        "scene": ["opening", "gender", "@data", "ident", "members", "summary", "sceneSummary", "groupNote", "sceneRules", "closet", "setup",
-                  "time", "length", "style", "core", "ban", "genderTail", history, "status", "grp:now"],
+        // 篇幅放在聊天记录下面（网页版 4.692）：放在上面时，前面几段写得短，模型照着前面的长度写
+        "scene": ["opening", "gender", "@data", "ident", "members", "summary", "sceneSummary", "groupNote", "sceneRules", "closet", "listen", "setup",
+                  "time", "style", "core", "ban", "genderTail", history, "length", "status", "grp:now"],
         "group": ["groupOpening", "@data", "members", "summary", "groupRules", "rules", "caps", "ban", "genderTail", history, "inner", "grp:now"],
         "call": ["opening", "gender", "@data", "summary", "groupNote", "core", "ban", "genderTail", "grp:now", "call", "callScript", history],
     ]

@@ -2467,6 +2467,8 @@ struct MessageRow: View, Equatable {
                         centered(message.row.bool("reacted") ? "已读，仅回应" : "已读，未回复", hook: "silence")
                     case "notice":
                         centered(Self.unbracket(message.content))
+                    case "side" where message.row.bool("lineHidden"):
+                        EmptyView()
                     case "side":
                         sideLine(SpecialCards.sideLabel(message) ?? "")
                     case let k where SpecialCards.kinds.contains(k):
@@ -2545,6 +2547,11 @@ struct MessageRow: View, Equatable {
             case "edit": Button { onAction?(.edit) } label: { Label("编辑", systemImage: "pencil") }
             case "copy": Button { onAction?(.copy) } label: { Label("复制", systemImage: "doc.on.doc") }
             case "select": Button { onAction?(.select) } label: { Label("多选", systemImage: "checklist") }
+            case "hideLine":
+                Button(role: .destructive) {
+                    do { try MessageActions.hideLine(message.id) } catch { Problems.report("未能删除这一行：\(error.localizedDescription)") }
+                    NotificationCenter.default.post(name: .eiraChatChanged, object: message.chatId)
+                } label: { Label("删除这一行", systemImage: "trash") }
             default: Button(role: .destructive) { onAction?(.delete) } label: { Label("删除", systemImage: "trash") }
             }
         }

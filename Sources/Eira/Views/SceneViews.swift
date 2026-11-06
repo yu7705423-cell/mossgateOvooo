@@ -385,6 +385,8 @@ struct SceneReadView: View {
     @State private var me: Persona?
     @State private var beats: [Row] = []
     @State private var look = Stage.look(Stage.config())
+    @State private var stageCfg = Stage.config()
+    @State private var pageAt = 0
     @State private var draft = ""
     @State private var director = false
     @State private var hold = false
@@ -407,6 +409,10 @@ struct SceneReadView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            // 翻页那一档（网页版 4.107）：一次一张，生成中不分页，就在滚动的那一份里往下长，落定之后再切张
+            if Stage.layoutOf(stageCfg) == "page" && !writing && !beats.isEmpty {
+                pager
+            } else {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: look.paraGap * 1.6) {
@@ -429,6 +435,7 @@ struct SceneReadView: View {
                 .onChange(of: live) { _, _ in proxy.scrollTo("end", anchor: .bottom) }
                 .onAppear { DispatchQueue.main.async { proxy.scrollTo("end", anchor: .bottom) } }
             }
+            }
             if let problem {
                 Text(problem).font(.footnote).foregroundStyle(Theme.danger)
                     .padding(.horizontal, Theme.sp4).padding(.vertical, Theme.sp2)
@@ -446,6 +453,13 @@ struct SceneReadView: View {
                 Menu {
                     Button("这一场的设置") { showSetup = true }
                     Button("线下的外观") { showLook = true }
+                    // 线下也能一起听（网页版 4.835）：单人场才有，和聊天里加号面板的「一起听」同一处
+                    if !ended, let chat, !chat.isGroup, let scene, Scenes.presentOf(scene).count == 1 {
+                        Button("一起听") {
+                            do { try MusicPlayer.shared.startListen(chatId: chat.id, autoplay: true) }
+                            catch { problem = error.localizedDescription }
+                        }
+                    }
                     if ended {
                         Button("重新开场") { reopen() }
                     } else {
@@ -657,7 +671,77 @@ struct SceneReadView: View {
         let ps = (try? Repo.personas()) ?? []
         me = ps.first { $0.id == chat?.personaId } ?? ((try? Repo.activePersona()) ?? nil)
         beats = Scenes.beatsOf(sceneId)
-        look = Stage.look(Stage.forScene(scene))
+        stageCfg = Stage.forScene(scene)
+        look = Stage.look(stageCfg)
+    }
+
+    // MARK: 翻页
+
+    private struct Leaf: Identifiable {
+        let id: String
+        let beat: Row
+        let text: String
+        let first: Bool
+    }
+
+    /// 每一段切成几张（场外指示不进册子：它是指令，不是正文）
+    private var leaves: [Leaf] {
+        let n = Int(stageCfg["pageChars"]?.number ?? 700)
+        var out: [Leaf] = []
+        for b in beats where b.string("role") != Scenes.DIRECTOR {
+            let sign = scene.map { Scenes.signOf(b, scene: $0, chat: chat, me: me) } ?? Scenes.Sign()
+            let shown = Scenes.withTrans(RegexRules.forDisplay(b.string("text"), .init(who: sign.mine ? "user" : "char", whereIs: "offline",
+                                                                                    charIds: chat?.characterIds ?? [])), b["trans"]?.array ?? [])
+            for (i, t) in Stage.pages(shown, max: n).enumerated() { out.append(Leaf(id: "\(b.id)#\(i)", beat: b, text: t, first: i == 0)) }
+        }
+        return out
+    }
+
+    private var pager: some View {
+        let list = leaves
+        let tap = stageCfg["tapTurn"]?.bool != false
+        return VStack(spacing: 0) {
+            TabView(selection: $pageAt) {
+                ForEach(Array(list.enumerated()), id: \.element.id) { i, leaf in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: Theme.sp3) {
+                            if i == 0 { header }
+                            if leaf.first && look.sign != "none" {
+                                let sign = scene.map { Scenes.signOf(leaf.beat, scene: $0, chat: chat, me: me) } ?? Scenes.Sign()
+                                HStack(spacing: Theme.sp2) {
+                                    if look.sign == "full" && !sign.face.isEmpty { Avatar(imageId: sign.face, name: sign.name, size: 24) }
+                                    Text(sign.name).font(.system(size: 13, weight: .semibold)).foregroundStyle(look.ink)
+                                    if !sign.time.isEmpty { Text(sign.time).font(.system(size: 12)).foregroundStyle(look.dim) }
+                                }
+                            }
+                            Text(leaf.text).font(look.font()).foregroundStyle(look.ink).lineSpacing(look.lineSpacing)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                        .padding(.horizontal, Theme.sp5).padding(.vertical, Theme.sp6)
+                    }
+                    .contextMenu { beatMenu(leaf.beat, versions: Scenes.versions(leaf.beat).count) }
+                    .tag(i)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            // 点两侧翻页（关掉之后左右滑动照常翻页，网页版 4.706）
+            .overlay {
+                if tap {
+                    HStack(spacing: 0) {
+                        Color.clear.contentShape(Rectangle()).frame(width: 56)
+                            .onTapGesture { withAnimation { pageAt = max(0, pageAt - 1) } }
+                        Spacer(minLength: 0).allowsHitTesting(false)
+                        Color.clear.contentShape(Rectangle()).frame(width: 56)
+                            .onTapGesture { withAnimation { pageAt = min(list.count - 1, pageAt + 1) } }
+                    }
+                }
+            }
+            Text("\(min(pageAt, max(0, list.count - 1)) + 1) / \(list.count)").font(.system(size: 12)).foregroundStyle(look.dim)
+                .padding(.vertical, Theme.sp2)
+        }
+        .onAppear { pageAt = max(0, list.count - 1) }
+        .onChange(of: list.count) { _, n in pageAt = max(0, n - 1) }
     }
 
     /// 角色先写的那一场，第一次打开时直接写开场
@@ -802,6 +886,15 @@ struct StageLookView: View {
                                                                                                     set: { Stage.set(["lineHeight": .number(($0 * 10).rounded() / 10)]) }), in: 1.2...2.6, step: 0.1)
                 Stepper(String(format: "段距 %.1f", cfg["paraGap"]?.number ?? 1), value: Binding(get: { cfg["paraGap"]?.number ?? 1 },
                                                                                               set: { Stage.set(["paraGap": .number(($0 * 10).rounded() / 10)]) }), in: 0...3, step: 0.1)
+                Picker("版式", selection: Binding(get: { Stage.layoutOf(cfg) }, set: { Stage.set(["layout": .string($0)]) })) {
+                    ForEach(Stage.layouts, id: \.id) { l in Text(l.label).tag(l.id) }
+                }
+                if Stage.layoutOf(cfg) == "page" {
+                    NumberRow(title: "一张最多多少字", value: Binding(get: { cfg["pageChars"]?.number ?? 700 }, set: { Stage.set(["pageChars": .number(max(0, $0.rounded()))]) }),
+                              unit: "字", placeholder: "不切")
+                    Toggle("点两侧翻页", isOn: Binding(get: { cfg["tapTurn"]?.bool != false }, set: { Stage.set(["tapTurn": .bool($0)]) }))
+                    HelpNote("翻页：一次一张，一段超过填写的字数自动续张，填 0 表示不切、在这一张里滚动；生成中不分页。点两侧翻页：点屏幕左右两侧翻到上一张或下一张；关闭后点屏幕不翻页，左右滑动照常翻页。明信片：竖着滑，一段一张排下去。", title: "线下：版式")
+                }
                 Picker("署名", selection: Binding(get: { cfg["sign"]?.string ?? "full" }, set: { Stage.set(["sign": .string($0)]) })) {
                     ForEach(Stage.signs, id: \.id) { s in Text(s.label).tag(s.id) }
                 }

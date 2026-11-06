@@ -85,6 +85,14 @@ extension ChatPrompt {
         return "\n\n" + Templates.get("skeleton.scene-exits", settings: s) + end
     }
 
+    /// 线下的一起听（网页版 capabilities.sceneListen，4.835）：跟随能力开关里的「一起听」与角色卡；这段会话正在一起听时交回状态，
+    /// 别的时候交回 nil（不给写法）。只写状态，不写该怎么反应。原生版没有一起听的邀请，正在听才算
+    static func sceneListen(_ char: Character, _ chat: Chat, _ s: AppSettings) -> String? {
+        let off = Set((s.raw["capsOff"]?.array ?? []).compactMap(\.string))
+        guard !chat.isGroup, char.row["canListen"]?.bool != false, !off.contains("listen"), MusicListen.active(chat.id) else { return nil }
+        return "\nState: the two of you are listening together right now."
+    }
+
     /// 篇幅：这一场自己填了的优先，没填用「用量与上限」里那一项，两边都没填不写（网页版 engine.wordsOf，4.690）
     static func wordsOf(_ scene: Row, _ s: AppSettings) -> Int {
         let own = scene.number("words") ?? Double(scene.string("words")) ?? 0
@@ -136,6 +144,8 @@ extension ChatPrompt {
             P["groupNote"] = Templates.render("skeleton.group", ["members": others.map(\.name).joined(separator: "、"), "charName": char.name], settings: s)
         }
         P["sceneRules"] = Templates.render("skeleton.scene-rules", names, settings: s) + sceneExits(scene, settings: s)
+        // 一起听（网页版 4.835）：正在一起听才有；群戏不给（一起听只对着一个人）
+        if others.isEmpty, let st = sceneListen(char0, chat, s) { P["listen"] = Templates.get("skeleton.scene-listen", settings: s) + st }
         P["setup"] = sceneSetup(scene, others: others, settings: s)
         // 时刻仍走线上那套协议：模型写 [时间：…]，本地摘下来记在这一段上
         P["time"] = Templates.get("skeleton.time", settings: s)

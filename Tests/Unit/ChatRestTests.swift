@@ -206,21 +206,43 @@ final class MeetTests: MockedChatCase {
         XCTAssertEqual(MockNet.count, 2)
     }
 
+    /// 删除线下分隔线（4.721）：只是不再显示，那一行照样读成「以下当面」
+    func testHideSideLine() throws {
+        let line = try XCTUnwrap(Face.enter("chat_a", place: "便利店", at: "", note: ""))
+        XCTAssertEqual(MessageActions.slimMenu(line, canRegen: true), ["hideLine"])
+        try MessageActions.hideLine(line.id)
+        XCTAssertTrue(try XCTUnwrap(Database.shared.get(Collections.messages, id: line.id)).bool("lineHidden"))
+        let built = try ChatPrompt.build(chat: XCTUnwrap(Repo.chat("chat_a")), char: XCTUnwrap(Repo.character("char_a")), settings: .load())
+        XCTAssertTrue(built.messages.contains { $0.content.contains("便利店") })
+    }
+
+    /// 线下的一起听（4.835）：单独一行的 [一起听]、[点歌：…] 从正文里摘掉；没在一起听时不给写法
+    func testSceneListenLines() throws {
+        let r = SceneRun.takeMusic("他按下播放。\n[点歌：晴天 - 周杰伦]\n[一起听]\n窗外下着雨。")
+        XCTAssertEqual(r.text, "他按下播放。\n窗外下着雨。")
+        XCTAssertEqual(r.acts.map(\.type), [.pick, .listen])
+        XCTAssertEqual(r.acts.first?.text, "晴天 - 周杰伦")
+        XCTAssertNil(ChatPrompt.sceneListen(try XCTUnwrap(Repo.character("char_a")), try XCTUnwrap(Repo.chat("chat_a")), .load()))
+        MusicListen.setActive("chat_a")
+        defer { MusicListen.setActive(nil) }
+        XCTAssertNotNil(ChatPrompt.sceneListen(try XCTUnwrap(Repo.character("char_a")), try XCTUnwrap(Repo.chat("chat_a")), .load()))
+    }
+
     /// 篇幅：这一场自己填了的优先，没填用全局那一项，都没填不写
     func testSceneWords() throws {
         var d = Scenes.Draft()
         d.castIds = ["char_a"]
         let sc = try Scenes.create(chatId: "chat_a", d)
-        func sys() throws -> String {
-            try ChatPrompt.buildScene(scene: XCTUnwrap(Scenes.get(sc.id)), chat: XCTUnwrap(Repo.chat("chat_a")),
-                                      char: XCTUnwrap(Repo.character("char_a")), list: [], settings: .load()).system
-        }
         XCTAssertEqual(ChatPrompt.wordsOf(try XCTUnwrap(Scenes.get(sc.id)), .load()), 0)
         try setSettings(["sceneWords": .number(800)])
         XCTAssertEqual(ChatPrompt.wordsOf(try XCTUnwrap(Scenes.get(sc.id)), .load()), 800)
         try Scenes.update(sc.id, ["words": .number(2500)])
         XCTAssertEqual(ChatPrompt.wordsOf(try XCTUnwrap(Scenes.get(sc.id)), .load()), 2500)
-        XCTAssertTrue(try sys().contains("2500"))
+        // 篇幅排在聊天记录下面（4.692），在末尾那一条里
+        let built = try ChatPrompt.buildScene(scene: XCTUnwrap(Scenes.get(sc.id)), chat: XCTUnwrap(Repo.chat("chat_a")),
+                                              char: XCTUnwrap(Repo.character("char_a")), list: [], settings: .load())
+        XCTAssertFalse(built.system.contains("2500"))
+        XCTAssertTrue(built.messages.contains { $0.content.contains("about 2500 characters") })
     }
 }
 

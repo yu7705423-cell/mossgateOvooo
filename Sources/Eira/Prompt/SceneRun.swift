@@ -144,6 +144,24 @@ enum SceneRun {
         return out
     }
 
+    // MARK: - 线下的一起听（网页版 scenerun 的 LISTEN_LINE、PICK_LINE，4.835）
+
+    private static let listenLine = try! NSRegularExpression(pattern: #"^\s*[\[【]\s*一起听\s*[\]】]\s*$"#)
+    private static let pickLine = try! NSRegularExpression(pattern: #"^\s*[\[【]\s*点歌\s*[:：]\s*([^\]】]+?)\s*[\]】]\s*$"#)
+
+    static func takeMusic(_ text: String) -> (text: String, acts: [ReplyParser.Part]) {
+        var acts: [ReplyParser.Part] = []
+        var keep: [String] = []
+        for line in text.components(separatedBy: "\n") {
+            if ReplyParser.matches(listenLine, line) { acts.append(.init(type: .listen, text: "")); continue }
+            if let m = ReplyParser.match(pickLine, line) { acts.append(.init(type: .pick, text: m[1].trimmingCharacters(in: .whitespaces))); continue }
+            keep.append(line)
+        }
+        guard !acts.isEmpty else { return (text, []) }
+        return (keep.joined(separator: "\n").replacingOccurrences(of: #"\n{3,}"#, with: "\n\n", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines), acts)
+    }
+
     // MARK: - 落成一段
 
     /// 一段原文落成一段正文。rewrite 是重写的那一段（往后添一版）；more 接着最后那一段往下写。回提示语
@@ -154,11 +172,17 @@ enum SceneRun {
         let (body00, trans) = splitProse(StatusBar.lift(stamped).text)
         guard let fresh = Scenes.get(sceneId) else { throw StoreError(message: "这一场已经不在了") }
         // 角色自己收场（网页版 4.723）：单独一行 [回到线上]。功能关着时照样从正文里摘掉，但不收场
-        let cut = Meet.takeSceneEnd(body00)
+        // 线下的一起听（网页版 4.835）：单独一行的 [一起听]、[点歌：…] 从正文里摘掉；给过写法才照线上同一处执行
+        let music = takeMusic(body00)
+        let cut = Meet.takeSceneEnd(music.text)
         let body0 = cut.text
+        let musicOn: Bool = {
+            guard !music.acts.isEmpty, let ch = try? Repo.chat(fresh.string("chatId")) else { return false }
+            return ChatPrompt.sceneListen(char, ch, .load()) != nil
+        }()
         let ends = cut.ending && Meet.capOn(char)
         let ex = takeExits(body0, allowed: Scenes.enterable(fresh), alias: alias(fresh))
-        if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty && !ends { throw StoreError(message: "模型返回了空内容") }
+        if ex.text.isEmpty && !ex.leave && ex.enter.isEmpty && !ends && !musicOn { throw StoreError(message: "模型返回了空内容") }
         var notes: [String] = []
         var done: Row?
         if !ex.text.isEmpty {
@@ -181,6 +205,10 @@ enum SceneRun {
         if ex.leave { try Scenes.leave(sceneId, char.id); notes.append("\(char.name)离场") }
         if !ex.unknown.isEmpty {
             Diagnostics.shared.record("scene-enter-unknown", ["names": ex.unknown.joined(separator: "、")])
+        }
+        if musicOn, let ch = try Repo.chat(fresh.string("chatId")) {
+            let turnId = "scene_\(done?.id ?? Ids.make("t"))"
+            for a in music.acts { _ = try? MusicListen.effect(a, chat: ch, char: char, turnId: turnId) }
         }
         // 和你点「只收场」一样：不调接口、不整理记忆
         if ends, (Scenes.get(sceneId)?.number("endedAt") ?? 0) == 0 {
