@@ -209,19 +209,19 @@ final class WebPrompt: @unchecked Sendable {
             feed.rows += rows.count
             feed.tables.append((name, String(decoding: d, as: UTF8.self)))
         }
-        var chatRows: [Data] = []
+        var chatList: [Data] = []
         for name in try db.collections() where name != Collections.messages {
             let rows = try db.rawRows(name)
-            if name == Collections.chats { chatRows = rows }
+            if name == Collections.chats { chatList = rows }
             add(name, rows)
         }
         // 消息：这段会话最近 chatRows 条，同一个角色的别的会话各最近 otherChatRows 条
-        var msgs = try db.rawLast(Collections.messages, where: chat.id, limit: chatRows)
-        for raw in chatRows {
+        var msgs = try db.rawLast(Collections.messages, where: chat.id, limit: Self.chatRows)
+        for raw in chatList {
             guard let o = (try? JSONSerialization.jsonObject(with: raw)) as? [String: Any],
                   let id = o["id"] as? String, id != chat.id,
                   (o["characterIds"] as? [String] ?? []).contains(char.id) else { continue }
-            msgs += try db.rawLast(Collections.messages, where: id, limit: otherChatRows)
+            msgs += try db.rawLast(Collections.messages, where: id, limit: Self.otherChatRows)
         }
         add(Collections.messages, msgs)
         for key in [KVKey.settings, KVKey.persona, KVKey.layout] {
