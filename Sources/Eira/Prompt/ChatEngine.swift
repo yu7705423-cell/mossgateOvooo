@@ -30,10 +30,10 @@ enum ChatEngine {
     }
 
     /// 这一轮里有没有角色发的图片。没有就不问
-    /// 只认有生图描述的：改成文字图的那种（4.799，prompt 为空）不会被送去生图
+    /// 改成文字图的那种（4.799，media 为 text、没有图）不算：它不会被送去生图
     static func hasImages(_ t: Turn) -> Bool { t.rows.contains(where: isDrawn) }
     static func isDrawn(_ m: Message) -> Bool {
-        m.kind == "image" && m.role == .char && !m.row.string("prompt").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        m.kind == "image" && m.role == .char && !MsgConvert.isTextImage(m)
     }
 
     static func reply(chatId: String, regenerate: Bool = false, imageKeep: ImageKeep = .all, onRow: @escaping OnRow) async throws {
