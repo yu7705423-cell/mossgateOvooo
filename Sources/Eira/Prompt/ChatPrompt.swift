@@ -126,7 +126,8 @@ enum ChatPrompt {
 
     /// 设定区里的那些注入区块（线上聊天与线下共用；线下传进来的 char、me 是这一场换过身份的）
     static func dataBlocks(chat: Chat, char: Character, me: Persona?, msgs all: [Message], lore: Lore, memories: [Memory],
-                           recent: [Memory], recalled: [Memory], rootId: String, settings s: AppSettings, now: Date) -> [String: String] {
+                           recent: [Memory], recalled: [Memory], rootId: String, settings s: AppSettings, now: Date,
+                           scene: Bool = false) -> [String: String] {
         let memoryDepth = Int(s.num("memoryDepth", 1))
         // 用户没开的新区块（网页版 4.486）下面整个滤掉，这里也不算：有的区块要读库（节日与纪念日要找第一条消息）
         func one(_ id: String, _ make: () -> String) -> String {
@@ -168,6 +169,12 @@ enum ChatPrompt {
             "plan": one("plan") { Todo.planBlock(userName: me?.name ?? "", settings: s, now: now) },
             // 你的钱（网页版 context/bill.js）：这段对话绑了账本、账本开着「把余额告诉角色」才有。数字本地按流水折好
             "bill": one("bill") { Ledger.block(chat, now: now) },
+            // 衣帽间（网页版 context/closet.js）：今天穿的、借着没还的；聊到穿搭、化妆时带清单；快用完、好久没穿的隔一段时间出现一次
+            "closet": one("closet") { Closet.block(char: char, persona: me, msgs: all, settings: s) },
+            // 心愿（网页版 context/wishes.js）：你没公开的心愿不进来。线下不给
+            "wishes": one("wishes") { scene ? "" : Wish.block(char: char, chat: chat, persona: me, now: now) },
+            // 昨夜的梦（网页版 context/dream.js）：该角色此刻还记得的那部分，梦境 app 里开了「写进对话」才有。线下不给
+            "dream": one("dream") { scene ? "" : Dream.block(char: char, chat: chat, persona: me, now: now) },
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -594,16 +601,18 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "impress", "pinned", "time", "recent", "geo", "badges",
-                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill",
+                           "closet", "wishes", "dream"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member"]
+                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member",
+                         "wish", "dream", "outfit", "closetact"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties",
-                                                 "grouppay", "groupleave", "meet", "theater"]
+                                                 "grouppay", "groupleave", "meet", "theater", "wish"]
     /// 新功能里按角色另选过的那几项（网页版 4.882）：on 里已经按这个角色（群里按各成员）算过，不再只看全局
     private static let perCharFeat: Set<String> = ["grouppay", "groupleave", "selfnick"]
 
@@ -674,6 +683,13 @@ enum ChatPrompt {
             line: "Block someone or remove them from your contacts: write a line on its own, [拉黑：name] or [删除好友：name]; undo with [解除拉黑：name] or [添加好友：name]") {
             Templates.get("skeleton.ties", settings: s)
         }
+        // 心愿（网页版 capabilities.js 的 wish，4.304）：角色卡上 canWish 没关就有；写不写由角色定
+        cap("wish", on: char.row["canWish"]?.bool != false, hot: used(#"[\[【](私下)?心愿"#),
+            line: "Record a wish of your own: write a line on its own, [心愿：the wish] (they can see it) or [私下心愿：the wish] (hidden from them)") {
+            Templates.get("skeleton.wish", settings: s)
+        }
+        // 分享梦境（4.444）：写进对话开着、一对一、今天确实有梦才有。只写格式
+        cap("dream", on: Dream.capOn(char, chat: chat), hot: used(#"[\[【]梦境"#), line: Dream.capLine) { Dream.capLine + "." }
         cap("listen", on: char.row["canListen"]?.bool != false, hot: listening || used(#"^(listen|song)$|[\[【](一起听|点歌|建歌单|加入歌单|分享歌曲)"#),
             line: "Music: [一起听] to listen together, [点歌：song title - artist] to change the track, [分享歌曲：song title - artist] to send a song, [加入歌单：playlist | song - artist] to keep songs") {
             Templates.get("skeleton.listen", settings: s)
@@ -776,6 +792,20 @@ enum ChatPrompt {
         cap("takeout", on: char.row["canTakeout"]?.bool != false, hot: used(#"^takeout$|[\[【](外卖|请客|代付)"#) || pending("takeout"),
             line: "Order delivery: [外卖：item amount] for yourself, [请客：…] for them, [代付：…] paid by them; for an order they placed, write [要了] or [不要]") {
             Templates.get("skeleton.takeout", settings: s)
+        }
+        // 衣帽间（网页版 capabilities.js 的 outfit、closetact，4.214、4.217）：一对一里才有；在聊穿搭时给全文
+        let wearTalk = msgs.filter { $0.role == .user }.suffix(3).contains { Closet.matches(Closet.wearTopic, $0.content) }
+        cap("outfit", on: chat.characterIds.count <= 1 && Closet.hasWardrobe(chat.personaId.isEmpty ? nil : chat.personaId),
+            hot: used(#"^(outfit|dresscode)$|[\[【](搭配|穿搭主题)"#) || wearTalk,
+            line: "Put together an outfit from their wardrobe: write a line on its own, [搭配：outfit name | item、item、item]") {
+            Templates.get("skeleton.outfit", settings: s)
+        }
+        cap("closetact", on: chat.characterIds.count <= 1
+                && (Closet.hasWardrobe(chat.personaId.isEmpty ? nil : chat.personaId)
+                    || Closet.itemsOf(char.id).contains { $0.string("side") == "wear" && Closet.live($0) }),
+            hot: used(#"[\[【](换上|借走|借给你|归还)|借|还给"#) || wearTalk,
+            line: "Wardrobe: write a line on its own, [换上：item] to change into one of your items, [借走：item] to borrow one of theirs, [借给你：item] to lend them one of yours, [归还：item] to return one") {
+            Templates.get("skeleton.closet-act", settings: s)
         }
         // 改自己手机的锁屏密码（网页版 4.222）：离上一次改不满设定的天数就不给，这一轮刚聊到密码时照样给。不告诉它现在的密码
         cap("lockcode", on: char.row["canChangeLock"]?.bool != false && chat.characterIds.count <= 1

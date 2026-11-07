@@ -492,6 +492,8 @@ enum MemorySummary {
             return "(id:\(m.id)) [\(tag)] \(m.content)"
         }.joined(separator: "\n")
 
+        // 心愿的达成判定搭在这一次上（网页版 4.304）：不多调接口，只在末尾多几行清单。你隐藏的心愿也在里面，判定的是总结模型
+        let wishSent = Wish.inSummary(s) ? Wish.openFor(chatId) : []
         // 自定义互动标识里「模型判断」的那几个搭在这一次上（网页版 4.320），不多调接口
         let badgeSent = BadgeDefs.inSummary(s) ? BadgeDefs.judgeFor(chat) : []
         // 用途为「记忆总结」的世界书（4.395）：拿这一批对话去扫，接在任务说明后面
@@ -499,7 +501,9 @@ enum MemorySummary {
         let system = Templates.render("task.memory-extract", [
             "today": todayText(settings: s), "who": who, "state": chat.isGroup ? "(not kept for group chats)" : stateText(char: char, key: key),
             "open": openText, "existing": existingText, "dialogue": dialogue,
-        ], settings: s) + (lore.isEmpty ? "" : "\n\n" + lore) + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
+        ], settings: s) + (lore.isEmpty ? "" : "\n\n" + lore)
+            + (wishSent.isEmpty ? "" : "\n\n" + Templates.render("task.wish-check", ["wishes": Wish.listText(wishSent)], settings: s))
+            + (badgeSent.isEmpty ? "" : "\n\n" + Templates.render("task.badge-check", ["badges": BadgeDefs.judgeText(badgeSent)], settings: s))
 
         // 先记「试过到哪一条」再发：失败也算试过，自动那一档要再攒够一个间隔才重试
         var tried = chat
@@ -517,6 +521,7 @@ enum MemorySummary {
         let at = batch.last?.createdAt ?? Date().millis
         let counts = try apply(result, charId: char.id, personaId: personaId, key: key, at: at, existing: existing,
                                owners: owners.map(\.id), state: !chat.isGroup)
+        Wish.applyJudged(result["wishesDone"], sent: wishSent, by: "summary")
         BadgeDefs.applyJudged(result["badgesEarned"], sent: badgeSent, chatId: chatId)
 
         guard var done = try Repo.chat(chatId) else { return counts }

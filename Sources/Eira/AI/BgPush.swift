@@ -302,6 +302,9 @@ final class BgPush: ObservableObject {
             await GroupProactive.tick(holds: holds)
             // 角色每天写日记（默认关）：到点先占住当天再发，不挂在发消息前面
             for c in (try? Repo.characters()) ?? [] where Diary.isAuto(c) { await Diary.ensureToday(c.id) }
+            // 每日穿搭、每晚做梦（默认关）：不聊天也每天一次，先占住当天再发
+            for c in (try? Repo.characters()) ?? [] where ClosetAI.isDaily(c) { await ClosetAI.ensureDaily(c.id) }
+            for c in (try? Repo.characters()) ?? [] where Dream.isAuto(c) { await Dream.ensureToday(c.id) }
             await MainActor.run { BgPush.shared.ticking = false }
         }
     }

@@ -70,6 +70,8 @@ enum ChatEngine {
         if !chat.isGroup { await Netease.pullIfDue(char.id) }
         // 当日日程：这个角色开了、今天还没排、今天还没自动试过，先排一次再拼上下文（默认关，一天一次）
         if !chat.isGroup { await DayPlan.ensureToday(char.id) }
+        // 每日穿搭：这个角色开了、今天还什么都没穿、今天还没自动试过，先挑一次（默认关，一天一次）
+        if !chat.isGroup { await ClosetAI.ensureDaily(char.id) }
         // 关系底色：开着且 S 级记忆变过时重压一次。不等它：这一轮用旧的，下一轮是新的（默认关）
         if !chat.isGroup && settings.raw["bondAuto"]?.bool == true {
             let cid = char.id, pid = chat.personaId
@@ -161,6 +163,8 @@ enum ChatEngine {
         if old == nil, !created.isEmpty {
             for m in (try? AutoReply.fire(chat.id, AutoReply.mine)) ?? [] { onRow(m) }
         }
+        // 心愿的单独判定（默认关，登记在 ExtraCalls）：攒够了间隔才判一次，不等它
+        Wish.autoJudge(chat.id)
     }
 
     /// 单独调用那一档：这一轮被 @ 的那几个；没 @ 人就全体按顺序说一遍（禁言、封存的不开口）
@@ -330,6 +334,8 @@ enum ChatEngine {
         try Interact.undoReactions(chatId: chatId, turnId: turnId)
         try Ties.undoTurn(turnId)
         try Drafts.undoTurn(chatId: chatId, turnId: turnId)
+        // 这一轮写下的心愿、判定的达成（私下心愿没有提示行，只能按 turnId 找）
+        try Wish.undoTurn(chatId: chatId, turnId: turnId)
         // 群里这一轮发进私聊的私信一起撤掉（网页版 clearTurn）
         if let chat = try Repo.chat(chatId), chat.isGroup {
             for c in try Repo.chats() where !c.isGroup {
@@ -597,6 +603,15 @@ enum ChatEngine {
             // 认不出名字就不换（网页版 reply.js 的 wear）。不落消息，换上的头像本身就看得见
             try AvatarPool.wear(char.id, name: p.text)
             return nil
+        case .wish, .wishDone:
+            // 心愿（网页版 4.304）：只认角色自己写的。私下的一条都不落进聊天；公开的与达成的落一行提示，重新生成时一起撤
+            return try Wish.effect(p, chat: chat, char: char, turnId: turnId)
+        case .dreamShare:
+            // 分享梦境（4.444）：一对一、写进对话开着、今天确实有梦才落一张卡片
+            return Dream.shareMessage(p.text, chat: chat, char: char, turnId: turnId)
+        case .outfit, .closetAct:
+            // 衣帽间（4.214、4.217）：搭配卡片；换上、借走、借给你、归还落一行提示，删掉这一行时那一件改回去
+            return try Closet.effect(p, chat: chat, char: char, turnId: turnId)
         case .shot:
             // 截下聊天记录（网页版 4.904）：存进角色手机的相册，聊天里什么都不留。截不下来不影响这一轮
             guard !chat.isGroup, CharShot.capOn(char) else { return nil }
@@ -728,7 +743,8 @@ enum ChatEngine {
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick, .meet, .part:
             return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot,
-             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit:
+             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit,
+             .wish, .wishDone, .dreamShare, .outfit, .closetAct:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

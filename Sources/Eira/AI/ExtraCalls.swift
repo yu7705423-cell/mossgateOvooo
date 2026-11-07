@@ -84,6 +84,18 @@ enum ExtraCalls {
         ExtraCall(id: "diaryAuto", label: "角色每天写日记",
                   isOn: { _ in liveChars().contains { $0.row["diaryAuto"]?.bool == true } },
                   when: { _ in "每个开了的角色，每天到了设定时刻之后一次（走副用接口）；当天已经有一篇时不写，失败当天不再自动试" }),
+        // 挂在角色身上（衣帽间里那个角色的页面），不是全局设置（网页版 cost.js 的 closetDaily）
+        ExtraCall(id: "closetDaily", label: "角色的每日穿搭",
+                  isOn: { _ in liveChars().contains { $0.row["closetDaily"]?.bool == true } },
+                  when: { _ in "每个开了的角色，每天一次，从该角色衣帽间已有的东西里挑；当天已经穿着东西时不生成" }),
+        // 挂在角色身上（梦境 app 里该角色的页面），不是全局设置（网页版 cost.js 的 dreamAuto，4.442）
+        ExtraCall(id: "dreamAuto", label: "角色每晚做梦",
+                  isOn: { _ in liveChars().contains { $0.row["dreamAuto"]?.bool == true } },
+                  when: { _ in "每个开了的角色，每天醒来的时刻之后一次（走副用接口）；当天已经有梦时不做" }),
+        // 心愿 app 里的开关（网页版 cost.js 的 wishJudge，4.304）
+        ExtraCall(id: "wishJudge", label: "单独判定心愿",
+                  isOn: { $0.raw["wishJudge"]?.bool == true },
+                  when: { s in "会话中有未达成的心愿时，每累计 \(Wish.judgeEvery(s)) 条角色回复一次（走副用接口）" }),
         // 挂在角色身上（会话设置里）
         ExtraCall(id: "dayOn", label: "角色的当日日程",
                   isOn: { _ in liveChars().contains { $0.row["dayOn"]?.bool == true } },

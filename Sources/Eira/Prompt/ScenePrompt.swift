@@ -130,7 +130,7 @@ extension ChatPrompt {
         let recalled = memoryOn ? recall(memories, scanText: scan, skip: Set(recent.map(\.id)),
                                          topK: Int(s.num("memoryTopK", 6)), now: now, openDays: staleDays(s)) : []
         let blocks = dataBlocks(chat: chat, char: char, me: me, msgs: online, lore: lore, memories: memories, recent: recent,
-                                recalled: recalled, rootId: rootId, settings: s, now: now)
+                                recalled: recalled, rootId: rootId, settings: s, now: now, scene: true)
 
         var P = Layout.groupPieces(blocks, order: Layout.injectOrder(s))
         P["opening"] = Templates.render("skeleton.scene-opening", names, settings: s)

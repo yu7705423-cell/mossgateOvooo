@@ -87,6 +87,37 @@ struct UsageLimitsView: View {
                 HelpNote("对话里带上你公开给角色看的日记与角色自己写的日记，按日期取最近几天（2 表示今天与昨天）。填 0 表示全部，提示词随之变长。")
             }
 
+            // 衣帽间（网页版 LimitsPage 的 closetListMax、closetMemMax）
+            Section {
+                NumberRow(title: "聊到穿搭时，衣帽间每类带几件", value: model.number("closetListMax", 8), unit: "件", placeholder: "全部")
+                NumberRow(title: "今天穿着的东西，每件带几条回忆", value: model.number("closetMemMax", 2), unit: "条", placeholder: "全部")
+            } header: {
+                Text("衣帽间")
+            } footer: {
+                Text("不增加调用次数，只增加每次请求的长度。填 0 表示全部带上。")
+                HelpNote("聊到穿搭、化妆时，把衣帽间的清单按大类带给角色，每个大类最多这么多件，按最近穿过、最近添加排在前面。只带名字与分类，不带描述全文。填 0 表示全部带上。", title: "聊到穿搭时，衣帽间每类带几件")
+                HelpNote("衣帽间里某件东西上记下的回忆，穿着或带着它的那天随请求带给角色，每件带最近这么多条。填 0 表示全部带上。", title: "今天穿着的东西，每件带几条回忆")
+            }
+
+            // 心愿的判定（网页版 LimitsPage 的 wishInSummary、wishJudge、wishJudgeEvery）
+            Section {
+                Toggle("总结记忆时判定心愿", isOn: model.bool("wishInSummary", true))
+                Toggle("单独判定心愿", isOn: model.bool("wishJudge", false))
+                if s.raw["wishJudge"]?.bool == true {
+                    NumberRow(title: "每累计多少条角色回复判定一次", value: model.number("wishJudgeEvery", 10), unit: "条", placeholder: "10", range: 1...Double(Int32.max))
+                }
+            } header: {
+                Text("心愿")
+            } footer: {
+                Text(s.raw["wishInSummary"]?.bool == false ? "总结记忆时不带心愿清单。"
+                     : "总结记忆时不额外调用接口，每次总结多出清单那几行的用量。判定的是总结模型，不是角色本人。")
+                Text(s.raw["wishJudge"]?.bool == true
+                     ? "单独判定已开启。会话中有未达成的心愿时，每累计 \(Wish.judgeEvery(s)) 条角色回复，额外调用一次接口判定是否达成。失败也算作一次，要再累计同样条数才会重试。走副用接口。"
+                     : "单独判定已关闭。开启后会额外调用接口。")
+                HelpNote("总结记忆时，把未达成的心愿（包括未公开的）附在同一次请求末尾，由总结模型判断是否达成。关闭后心愿只能手动标记或单独判定。", title: "总结记忆时判定心愿")
+                HelpNote("心愿只在总结记忆时顺带判定，或在心愿中手动标记。开启后另行调用接口判定。数值越小判定越及时，调用次数也越多，最小为 1。", title: "单独判定心愿")
+            }
+
             // 朋友圈（网页版 LimitsPage 的 momentsCount、ownMomentsCount、momentChatRecent、momentImageRate）
             Section {
                 NumberRow(title: "带上你最近几条朋友圈", value: model.number("momentsCount", 3), unit: "条", placeholder: "全部")

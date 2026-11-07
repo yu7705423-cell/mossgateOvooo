@@ -52,6 +52,13 @@ enum ReplyParser {
         case request, vote
         // 卡包（网页版 4.611、4.643、4.644）：娱乐卡的送、用、同意；门禁卡的给、刷、收回与恢复；票券的送与检；会员卡的开与消费。字段在 info 里
         case funGive, funUse, funVote, passGive, passAct, ticketGive, ticketCheck, memberOpen, memberVisit
+        // 心愿（网页版 4.304）：text 是冒号后面那一段原样（「内容|达成条件」），flag 为真是公开的心愿、假是私下心愿；心愿达成：text 是一小段原话
+        case wish, wishDone
+        // 分享梦境（4.444）：text 是角色自己那一句
+        case dreamShare
+        // 衣帽间（4.214、4.217）：搭配（text 是这一套的名字，可空；extra 是几件单品用「、」接起来）；
+        // 换上、借走、借给你、归还（text 是那一件的名字，extra 是哪一种）
+        case outfit, closetAct
     }
 
     struct Part: Equatable, Sendable {
@@ -643,6 +650,25 @@ enum ReplyParser {
                 var p = Part(type: .agenda, text: body.trimmingCharacters(in: .whitespaces))
                 p.flag = kind == "事项完成"
                 push(p)
+            case "心愿", "私下心愿":
+                var p = Part(type: .wish, text: body)
+                p.flag = kind == "心愿"
+                push(p)
+            case "心愿达成":
+                push(Part(type: .wishDone, text: body))
+            case "梦境":
+                push(Part(type: .dreamShare, text: body))
+            case "换上", "借走", "借给你", "归还":
+                var p = Part(type: .closetAct, text: body)
+                p.extra = kind
+                push(p)
+            case "搭配", "outfit":
+                // 竖线前是这一套的名字，后面是几件单品。一件都没有就整条丢掉（网页版 closet.parseOutfit）
+                if let o = Closet.parseOutfit(body) {
+                    var p = Part(type: .outfit, text: o.name)
+                    p.extra = o.names.joined(separator: "、")
+                    push(p)
+                }
             default:
                 break   // 认得但原生版还没有对应功能：吞掉
             }

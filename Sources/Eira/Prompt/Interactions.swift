@@ -246,6 +246,10 @@ enum Interact {
             $0["gift"] = .string(state)
             $0["content"] = .string(giftContent(cover: cover, inner: inner, state: state, hide: false))
         }
+        // 我送的，角色拆开了：认得出是衣帽间里的东西就直接收进它的衣帽间（网页版 closet.keepGift）
+        if open && m.role == .user {
+            do { try Closet.keepGift(m) } catch { Problems.report("礼物未能收进衣帽间：\(error.localizedDescription)") }
+        }
         let n = names(m.chatId)
         let byUser = m.role != .user
         let giver = byUser ? n.char : n.me
@@ -359,6 +363,8 @@ enum Interact {
         // 领红包、改网名那一行（网页版 4.736、4.947）：领的那一份退回去，网名退回改之前那一个
         if try GroupPay.undo(notice) { return }
         // 角色改锁屏密码的那一行：放回换之前那一份
+        // 衣帽间里换上、借走的那一行（网页版 dropMessage 的 closetUndo）：那一件改回原样
+        if notice.kind == "notice", let u = notice.row["closetUndo"], u.object != nil { try Closet.undo(u); return }
         if notice.kind == "notice", let u = notice.row["lockUndo"]?.object, let charId = u["charId"]?.string {
             try Theirs.restoreLock(charId, u["prev"])
             return
@@ -374,6 +380,8 @@ enum Interact {
             try WalletCards.Fun.unsettle(notice)
         } else if notice.row.string("settledKind") == "gift" {
             guard row.string("kind") == "gift" else { return }
+            // 自动收进衣帽间的那一件一并撤掉（网页版 gift.unsettle 的 dropAutoGift）
+            try Closet.dropAutoGift(id)
             try update(id) {
                 $0["gift"] = .string("pending")
                 $0["content"] = .string(giftContent(cover: row.string("cover"), inner: row.string("inner"), state: "pending", hide: giftBlind()))

@@ -401,3 +401,82 @@ personas：`isolate {moments, friends, wallet, album}`（4.960、4.961）：wall
 
 证件：`characters.idCard`、`personas.idCard`：`{kind work/student/other, org, title, no, dept}`，四项都空的不算有。不进提示词。
 能力 joint 是基线；funcard、pass、ticket、member 是新功能（featureOpt，app 'wallet'，第一次打开卡包时问）。
+
+## 16. closet（衣帽间，`closet.js`、`closet-kinds.js`、`closet-story.js`，4.213、4.214、4.216、4.237、4.344）
+
+原生版读写经 `Prompt/Closet.swift`、`Prompt/ClosetAI.swift`。id 前缀 `cl`，按 owner 查。单品与套装同一个域，套装 side 为 `outfit`。
+
+单品：
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| owner | 'me' | 'me' 是自己，其余是角色 id |
+| personaId | 建时的账号（自己的）/ ''（角色的） | 自己的衣帽间按身份分开；没记身份的老数据算在每个身份上 |
+| side | 按大类 | wear 衣橱 / beauty 妆台 / outfit 套装 |
+| group, sub | '' | 大类 id 与小类名字（分类表在 closet-kinds.js；自定义小类在 settings.closetSubs）。没分类的算「未整理」 |
+| name | '未命名' | |
+| desc, note, shade | '' | 描述（进提示词、生图前先去掉提到人的句子）、备注、色号 |
+| imageId | null | |
+| colors, seasons, occasions | [] | 横切标签 id |
+| source | 'self' | self / gift / made；giver、with 是 'me' 或角色 id；giftMsgId、giftChatId、giftAt（礼物联动） |
+| state | '' | '' 在用 / fav / idle / done 已用完 / gone 已送出 / sold 已卖出。后三种不显示、不告诉角色 |
+| wornOn, wornCount, lastWorn, wornDates | '', 0, 0, [] | 今天穿着（YYYY-MM-DD）、次数、上次穿的时刻、哪几天穿过 |
+| lent | 无 | `{to:'me'/角色 id, at, personaId}`，借出去的；归还清成 null |
+| channel, price | '', 0 | 购买（只给自己看） |
+| washWay, washedAt, washRule, washN | '' | 清洗：machine/hand/dry/nowash；提醒 '' / wears / days 与次数或天数 |
+| careNote, caredAt, careEvery | '', '', 0 | 保养 |
+| capacity, capUnit, dose, doseUnit, perDay, mlPer, level | 0, '毫升', 小类默认, 小类默认, 0, 0, null | 妆台余量；level `{pct, at}` 是校准 |
+| buyAt, openedAt, expireAt, pao, shelf | '', '', '', 小类默认, 0 | 保质期 |
+| alertAt, idleAt | 0 | 快用完、好久没穿最后一次告诉角色的时刻 |
+| memories | 无 | `[{id:'mm…', at, text, chatId, msgId}]`，物品的回忆，只由用户记 |
+| auto | false | 礼物自动收进的；动过一次就清掉，整轮重新生成时撤掉 |
+
+套装：`owner, personaId, side:'outfit', name（'未命名的一套'）, items（单品 id）, occasions, seasons, note, by（'me' 或角色 id）, fromMsgId, fromChatId,
+wornOn, wornCount, lastWorn`。
+
+角色身上：`closetDaily`（每日穿搭，默认关）、`closetDailyAt`、`closetDailyError`。settings：`closetOwner`、`closetSide`、`closetSubs`、`closetHidden`、
+`closetListMax`（8）、`closetLowPct`（15）、`closetExpireWarn`（30）、`closetAlertCooldown`（30）、`closetIdleDays`（60）、`closetIdleGap`（7）、
+`closetInImage`（false）、`closetMemMax`（2）。
+
+消息：kind outfit（outfitName、outfitOwner、outfitItems `[{name, id}]`、sealed、dresscodeId，content `[搭配：名字 | 甲、乙]`）、
+closetshare（itemId、itemName、shareMeta、shareNote、imageId、sharedPhoto、lookedAt）、groom（itemId、itemName、action，content `[动作：…]`）、
+dresscode（theme、outfitName、outfitOwner、outfitItems、revealed）。换上借走的那一行是 notice，带 `closetUndo`（改之前的 lent、wornOn、wornCount、lastWorn、wornDates）。
+
+## 17. wishes（心愿，`wish.js`，4.304）
+
+原生版读写经 `Prompt/Wish.swift`。id 前缀 `ws`，没有查询字段。
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| owner | | 'me' 是你，其余是角色 id |
+| charId | '' | 你的：关联的角色（空为不关联）；角色的：它自己 |
+| personaId | 当前账号 | 换账号互相看不见 |
+| chatId, turnId | | 角色写的那一轮；重新生成时按 turnId 撤回 |
+| text, cond | '', '' | 心愿与达成条件 |
+| shown | false | 给不给对方看。你的隐藏心愿永远不进角色的提示词；角色的私下心愿达成前你这边不显示 |
+| status | 'open' | open / done |
+| doneAt, doneBy, doneNote, doneTurnId | 0, '', '', '' | doneBy：manual / char / summary / judge |
+
+会话上：`wishTriedId`、`wishTriedAt`（单独判定先记试过）。settings：`wishInSummary`（true）、`wishJudge`（false）、`wishJudgeEvery`（10）。
+提示行是 notice，带 wishId，content `[某某写下了一个心愿：…]`、`[某某的心愿已达成：…]`。
+
+## 18. dreams（梦境，`dream.js`，4.442、4.444）
+
+原生版读写经 `Prompt/Dream.swift`。id 前缀 `dm`，按 charId 查。
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| charId, personaId | | 谁的梦、哪个账号下 |
+| date | 角色那边醒来的那一天 | YYYY-MM-DD，深夜算前一天 |
+| title, titleTrans, text, recall, recallTrans, mood | '' | text 是各幕用空行接起来 |
+| scenes | | `[{text, textTrans?}]` |
+| materials | [] | `[{key:'A', kind: recent/open/wish/distant/user, id, text}]` |
+| plan | | `{bizarre, scenes:[{n, keys, twists:[{op, keys, text}]}], returned:{fromId, about, text}/null}` |
+| source | 'now' | auto 每晚那一次 / now 手动 |
+| memoryId | '' | 记成的那条记忆（记忆上带 dreamId） |
+| fragments, kept | [] | 模型交回的零散画面、碎片档留下的两三个 |
+| recallLevel | 'full' | full / fragment / trace，醒来时本地掷的 |
+
+角色身上：`dreamAuto`（false）、`dreamHour`（6）、`dreamBizarre`（1）、`dreamActs`（0 为 3）、`dreamWords`（0 为 3000）、`dreamInject`（'on'/'off'，老数据 'brief'、'full' 算开）、
+`dreamMemory`（false）、`dreamFade`（true）、`dreamOdds`（`{full:20, fragment:60, trace:20}`）、`dreamAutoAt`、`dreamAutoError`。
+消息：kind dreamcard，dreamId、dreamSnap `{level, lines, mood, said}`，content `[梦境：角色那一句]`。

@@ -226,6 +226,13 @@ final class WebLogic: @unchecked Sendable {
             case "member-visit":
                 p = .init(type: .memberVisit, text: str("shop"))
                 p.info = ["shop": str("shop"), "points": WalletCards.numText(num("points") ?? 0), "note": str("note")]
+            case "wish": p = .init(type: .wish, text: str("body")); p.flag = bool("shown")
+            case "wishdone": p = .init(type: .wishDone, text: str("body"))
+            case "dreamshare": p = .init(type: .dreamShare, text: str("body"))
+            case "outfit":
+                p = .init(type: .outfit, text: str("name"))
+                p.extra = (d["names"] as? [String] ?? []).joined(separator: "、")
+            case "closetact": p = .init(type: .closetAct, text: str("name")); p.extra = s("kind")
             default:
                 unmapped.append(type)
                 continue

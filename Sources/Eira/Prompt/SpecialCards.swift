@@ -127,9 +127,15 @@ enum SpecialCards {
             return Face(icon: "cart", title: m.kind == "mallshot" ? "闲置截图" : (s(x, "title").isEmpty ? "商品" : s(x, "title")),
                         detail: x["price"].map { $0.string ?? ($0.number.map { "¥\(String(format: "%.2f", $0))" } ?? "") } ?? "", foot: "商城")
         case "dreamcard":
+            // 网页版 DreamBits：分享那一刻角色记得的部分（level、lines、mood、said），之后变淡也不变
             let x = snap("dreamSnap")
-            return Face(icon: "moon.stars", title: s(x, "title").isEmpty ? "梦境" : s(x, "title"), detail: s(x, "text"), foot: "梦境",
-                        body: s(x, "text"))
+            let level = s(x, "level").isEmpty ? "full" : s(x, "level")
+            let lines = (x["lines"]?.array ?? []).compactMap(\.string)
+            let body = level == "full" ? lines.joined(separator: "\n\n")
+                : level == "fragment" ? lines.map { "· \($0)" }.joined(separator: "\n")
+                : (s(x, "mood").isEmpty ? "想不起梦到了什么" : "只记得「\(s(x, "mood"))」")
+            return Face(icon: "moon.stars", title: "昨夜的梦", detail: s(x, "said").isEmpty ? body : s(x, "said"),
+                        foot: "梦境 · \(Dream.recallLabel(level))", body: body)
         case "quiz", "quizask":
             let x = snap("quizSnap")
             return Face(icon: "checklist", title: s(x, "title").isEmpty ? "测试" : s(x, "title"),
