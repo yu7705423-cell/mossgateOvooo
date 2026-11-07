@@ -349,6 +349,8 @@ avatar:{shape,size,show}, spacing:{gap,gapIn}, nav/composer:{style,color,alpha,f
 sys:{color,fill}, status:{fill,text,radius,border}, dark:{同上任意几组}}`。不写为跟随默认；认不得的键写回时原样留着。
 内置主题的 id 以 `builtin-` 开头，不在库里（chat.skinId 可以指向它，网页版读到时当没挂）。
 美化包（phone-skin v1）导出时多带 `native`，背景图放在 `native.wall.data`（data: 地址），导入时存成本机图片。
+编辑器（4.836）另存 `versions: [{at, gen}]`（每次打开编辑器时留一份打开前的样子，最多 5 份）；改手写 CSS 时 `late` 清成 false。
+`settings.skinAuthor`（导出时的作者名）、`settings.skinGallerySize`（美化首页的大小：lg、md、sm，默认 lg）。
 
 ## 14. books 与 entries（记账，`ledger.js`，ARCHITECTURE 4.278、4.642、4.643、4.961）
 

@@ -133,6 +133,7 @@ struct AppHost: View {
         case "closet": NavigationStack { ClosetHomeView() }
         case "wish": NavigationStack { WishHomeView() }
         case "dream": NavigationStack { DreamHomeView() }
+        case "skin": SkinAppView()
         case "sms": SmsAppView()
         case "us": UsAppView()
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)

@@ -684,10 +684,11 @@ enum ChatTheme {
     }
 
     /// 导出成一段文本（JSON）。字段与网页版 skin.pack 一致，多一项 native；背景图读出来以 data: 地址放进 wall.data
-    static func pack(_ row: Row) throws -> String {
+    /// name、author 是导出时的署名（SkinFile.signed），不改库里那一份
+    static func pack(_ row: Row, name: String? = nil, author: String = "") throws -> String {
         var o: [String: JSONValue] = [
             "kind": .string(Skins.packKind), "version": .number(Double(Skins.packVersion)),
-            "name": .string(row.string("name").isEmpty ? "未命名" : row.string("name")),
+            "name": .string(name ?? (row.string("name").isEmpty ? "未命名" : row.string("name"))),
             "tokens": row["tokens"] ?? .object([:]), "shape": .string(row.string("shape")),
             "scope": .array(scopes(row).filter { $0 == "chat" || $0 == "shell" }.map { JSONValue.string($0) }),
             "gen": row["gen"] ?? .object([:]), "frame": .string(row.string("frame")),
@@ -696,6 +697,7 @@ enum ChatTheme {
         ]
         if (o["scope"]?.array ?? []).isEmpty { o["scope"] = .array([.string("chat")]) }
         if row["late"]?.bool == true { o["late"] = .bool(true) }
+        if !author.isEmpty { o["author"] = .string(author) }
         if var n = row[field]?.object {
             if let id = n["wall"]?["image"]?.string, let url = MediaStore.url(.images, id: id), let data = try? Data(contentsOf: url) {
                 let ext = url.pathExtension.lowercased()
