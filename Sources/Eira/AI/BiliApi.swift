@@ -171,7 +171,7 @@ enum BiliApi {
             let v = (all[k] ?? "").replacingOccurrences(of: #"[!'()*]"#, with: "", options: .regularExpression)
             return "\(encode(k))=\(encode(v))"
         }.joined(separator: "&")
-        return "\(q)&w_rid=\(Netease.md5Hex(q + key))"
+        return "\(q)&w_rid=\(NeCrypto.md5Hex(q + key))"
     }
 
     static func wbiGet(_ path: String, _ params: [String: String]) async throws -> JSONValue {
