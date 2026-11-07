@@ -66,9 +66,13 @@ struct VideoLibraryView: View {
         let segs = v.outline.count
         let off = VideoLib.offset(v)
         let revs = Reviews.count(.video, v.id)
-        let sub = [v.bili != nil ? "B 站" : "", n > 0 ? "字幕 \(n) 句" : "没有字幕",
-                   off != 0 ? "偏移 \(off > 0 ? "+" : "")\(String(format: "%g", off)) 秒" : "",
-                   segs > 0 ? "提纲 \(segs) 段" : "未生成提纲", revs > 0 ? "影评 \(revs) 篇" : ""].filter { !$0.isEmpty }.joined(separator: " · ")
+        var bits: [String] = []
+        if v.bili != nil { bits.append("B 站") }
+        bits.append(n > 0 ? "字幕 \(n) 句" : "没有字幕")
+        if off != 0 { bits.append("偏移 " + VideoLib.signed(off) + " 秒") }
+        bits.append(segs > 0 ? "提纲 \(segs) 段" : "未生成提纲")
+        if revs > 0 { bits.append("影评 \(revs) 篇") }
+        let sub: String = bits.joined(separator: " · ")
         return HStack(spacing: Theme.sp3) {
             TogetherRow(icon: "film", title: v.title, sub: busy == v.id ? "正在生成提纲" : sub)
             Button("一起看") { startRow = v }.buttonStyle(.borderless).font(.footnote)
@@ -160,10 +164,10 @@ struct VideoEditView: View {
                 if !fileId.isEmpty { Button(reading ? "读取中" : "从视频中读取") { readEmbedded() }.disabled(reading) }
                 if fromBili { Button(reading ? "读取中" : "从 B 站重新读取") { rereadBili() }.disabled(reading) }
             } header: { Text("字幕") } footer: {
-                Text("支持 SRT、ASS 与 WebVTT。\(count > 0 ? "当前已识别 \(count) 句。" : "")选择 MP4 或 MOV 时会自动读取其内封字幕轨，读不到则需自行导入。角色看不到画面，台词是它唯一能读到的内容。")
+                Text(subFoot(count))
             }
             Section {
-                Stepper("字幕偏移：\(offset > 0 ? "+" : "")\(String(format: "%g", offset)) 秒", value: $offset, in: -60...60, step: 0.5)
+                Stepper("字幕偏移：" + VideoLib.signed(offset) + " 秒", value: $offset, in: -60...60, step: 0.5)
             } footer: {
                 HelpNote("字幕整体提前或推迟这么多秒，用于字幕与手中片源版本不一致的情况。正数表示字幕推迟出现，负数表示提前。观看时也可以随时调整。", title: "字幕偏移")
             }
@@ -194,6 +198,11 @@ struct VideoEditView: View {
             }
         }
         .onAppear(perform: load)
+    }
+
+    private func subFoot(_ count: Int) -> String {
+        let n: String = count > 0 ? "当前已识别 \(count) 句。" : ""
+        return "支持 SRT、ASS 与 WebVTT。" + n + "选择 MP4 或 MOV 时会自动读取其内封字幕轨，读不到则需自行导入。角色看不到画面，台词是它唯一能读到的内容。"
     }
 
     private func load() {
@@ -368,6 +377,14 @@ struct BiliHomeView: View {
         }
     }
 
+    static func meta(_ h: BiliApi.Hit) -> String {
+        var bits: [String] = [h.author, h.part]
+        if h.seconds > 0 { bits.append(Subtitle.stamp(h.seconds)) }
+        if h.progress > 0 && h.seconds > 0 { bits.append("看到 " + Subtitle.stamp(h.progress)) }
+        if h.plays >= 10000 { bits.append(String(format: "%.1f 万次播放", h.plays / 10000)) } else if h.plays > 0 { bits.append("\(Int(h.plays)) 次播放") }
+        return bits.filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
     private var loadingRow: some View {
         Section { Text(busy == "load" ? "正在读取" : "尚未读取").foregroundStyle(Theme.text2) }
     }
@@ -379,10 +396,7 @@ struct BiliHomeView: View {
                 HStack(spacing: Theme.sp3) {
                     VStack(alignment: .leading, spacing: 2) {
                         Text(h.title).lineLimit(2)
-                        Text([h.author, h.part, h.seconds > 0 ? Subtitle.stamp(h.seconds) : "",
-                              h.progress > 0 && h.seconds > 0 ? "看到 \(Subtitle.stamp(h.progress))" : "",
-                              h.plays > 0 ? (h.plays >= 10000 ? String(format: "%.1f 万次播放", h.plays / 10000) : "\(Int(h.plays)) 次播放") : ""]
-                            .filter { !$0.isEmpty }.joined(separator: " · "))
+                        Text(Self.meta(h))
                             .font(.footnote).foregroundStyle(Theme.text2)
                     }
                     Spacer(minLength: 0)
@@ -491,7 +505,7 @@ struct BiliFavView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(h.title).lineLimit(2)
-                                Text([h.author, h.seconds > 0 ? Subtitle.stamp(h.seconds) : ""].filter { !$0.isEmpty }.joined(separator: " · "))
+                                Text(BiliHomeView.meta(h))
                                     .font(.footnote).foregroundStyle(Theme.text2)
                             }
                             Spacer(minLength: 0)

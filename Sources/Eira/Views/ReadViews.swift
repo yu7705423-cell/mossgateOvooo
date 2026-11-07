@@ -67,6 +67,15 @@ struct BookLibraryView: View {
 struct BookRow: View {
     let b: Books.Book
 
+    static func meta(_ b: Books.Book) -> String {
+        var bits: [String] = []
+        if !b.author.isEmpty { bits.append(b.author) }
+        bits.append("\(b.chars) 字")
+        bits.append("\(b.chapters.count) 章")
+        if b.at > 0 { bits.append("读到 \(Books.percent(b))%") }
+        return bits.joined(separator: " · ")
+    }
+
     var body: some View {
         HStack(spacing: Theme.sp3) {
             // 有封面才画；没有就收成紧凑的一行，不画空框占位
@@ -77,7 +86,7 @@ struct BookRow: View {
             }
             VStack(alignment: .leading, spacing: 2) {
                 Text(b.title).lineLimit(2)
-                Text((b.author.isEmpty ? "" : "\(b.author) · ") + "\(b.chars) 字 · \(b.chapters.count) 章" + (b.at > 0 ? " · 读到 \(Books.percent(b))%" : ""))
+                Text(Self.meta(b))
                     .font(.footnote).foregroundStyle(Theme.text2)
             }
         }
@@ -133,13 +142,19 @@ struct BookDetailView: View {
     @State private var picking = false
     @State private var problem: String?
 
+    private func progress(_ b: Books.Book) -> String {
+        guard b.at > 0 else { return "从头开始" }
+        let ch: String = Books.chapterAt(b)?.chapter.title ?? ""
+        return "读到 \(Books.percent(b))%" + (ch.isEmpty ? "" : " · " + ch)
+    }
+
     var body: some View {
         List {
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             if let b = book {
                 Section {
                     Button { reading = ReadTarget(bookId: b.id, chatId: nil) } label: {
-                        TogetherRow(icon: "book", title: "继续阅读", sub: b.at > 0 ? "读到 \(Books.percent(b))%" + (Books.chapterAt(b).map { " · \($0.chapter.title)" } ?? "") : "从头开始")
+                        TogetherRow(icon: "book", title: "继续阅读", sub: progress(b))
                     }
                     .buttonStyle(.plain)
                     Button { picking = true } label: { TogetherRow(icon: "users", title: "和角色一起读", sub: "") }.buttonStyle(.plain)
@@ -457,9 +472,12 @@ struct BookReaderView: View {
 
     private func bottomBar(_ b: Books.Book) -> some View {
         let len = Books.slice(text, at, Books.page).utf16.count
-        let pct = text.length > 0 ? min(100, Int((Double(at + len) / Double(text.length) * 100).rounded())) : 0
+        let total: Double = Double(max(1, text.length))
+        let ratio: Double = Double(at + len) / total * 100
+        let pct: Int = text.length > 0 ? min(100, Int(ratio.rounded())) : 0
         let st = ReadTogether.state
         let look = ReaderLook.load(model.s)
+        let metaLine: String = together ? "\(st.pages) 页 · 角色发言 \(st.said) 次" : "\(at + 1) – \(at + len) / \(text.length) 字"
         return HStack(spacing: Theme.sp3) {
             Button { turn(-1, look) } label: { SvgIcon(name: "chevronLeft", size: 19, color: look.ink) }
                 .accessibilityLabel("上一页").disabled(at <= 0)
@@ -472,7 +490,7 @@ struct BookReaderView: View {
             Spacer()
             VStack(spacing: 1) {
                 Text("\(pct)%").font(.system(size: 13))
-                Text(together ? "\(st.pages) 页 · 角色发言 \(st.said) 次" : "\(at + 1) – \(at + len) / \(text.length) 字")
+                Text(metaLine)
                     .font(.system(size: 11)).opacity(0.7)
             }
             .foregroundStyle(look.ink)
@@ -562,7 +580,7 @@ struct BookReaderView: View {
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(c.title)
-                                Text("\(Int((Double(c.start) / Double(max(1, b?.chars ?? 1)) * 100).rounded()))%").font(.footnote).foregroundStyle(Theme.text2)
+                                Text("\(ReadAheadLine.percent(bookId, c.start))%").font(.footnote).foregroundStyle(Theme.text2)
                             }
                             Spacer()
                             if cur == i { SvgIcon(name: "check", size: 16) }
@@ -717,16 +735,24 @@ struct ReadAheadLine: View {
                     Button("先不用", role: .cancel) { snoozed = s.at }
                 }
             } message: {
-                Text(finished ? "已经读到这本书的结尾，没有更多可读的内容了。"
-                     : ReadAhead.hitCap(bookId) ? "已经连续自动读了 \(s.runs) 次，达到设定的上限。继续将重新开始计数，每次读一段都会调用一次接口。"
-                     : "你已经读到 \(s.char.name) 读过的位置。让角色继续往下读一段，会调用一次接口。选择「一直继续」后最多再自动读 \(ReadAhead.maxRuns()) 次，达到上限会再次询问。")
+                Text(askText(s, finished: finished))
             }
         }
     }
 
-    private func pct(_ at: Int) -> Int {
-        let total = Books.get(bookId)?.chars ?? 0
-        return total > 0 ? min(100, Int((Double(at) / Double(total) * 100).rounded())) : 0
+    private func pct(_ at: Int) -> Int { Self.percent(bookId, at) }
+
+    static func percent(_ bookId: String, _ at: Int) -> Int {
+        let total: Int = Books.get(bookId)?.chars ?? 0
+        guard total > 0 else { return 0 }
+        let r: Double = Double(at) / Double(total) * 100
+        return min(100, Int(r.rounded()))
+    }
+
+    private func askText(_ s: ReadAhead.State, finished: Bool) -> String {
+        if finished { return "已经读到这本书的结尾，没有更多可读的内容了。" }
+        if ReadAhead.hitCap(bookId) { return "已经连续自动读了 \(s.runs) 次，达到设定的上限。继续将重新开始计数，每次读一段都会调用一次接口。" }
+        return "你已经读到 \(s.char.name) 读过的位置。让角色继续往下读一段，会调用一次接口。选择「一直继续」后最多再自动读 \(ReadAhead.maxRuns()) 次，达到上限会再次询问。"
     }
 
     private func check() {
@@ -779,7 +805,7 @@ struct ReadAheadSheet: View {
                         Avatar(imageId: s.char.avatar, name: s.char.name, size: 34)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(s.char.displayName)
-                            Text("已读到 \(pct(s.at))%" + (s.always ? " · 已选择一直继续，最多再自动读 \(max(0, ReadAhead.maxRuns() - s.runs)) 次" : ""))
+                            Text(stateText(s))
                                 .font(.footnote).foregroundStyle(Theme.text2)
                         }
                         Spacer()
@@ -809,9 +835,10 @@ struct ReadAheadSheet: View {
         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("关闭") { dismiss() } } }
     }
 
-    private func pct(_ at: Int) -> Int {
-        let total = Books.get(bookId)?.chars ?? 0
-        return total > 0 ? min(100, Int((Double(at) / Double(total) * 100).rounded())) : 0
+    private func stateText(_ s: ReadAhead.State) -> String {
+        let left: Int = max(0, ReadAhead.maxRuns() - s.runs)
+        let tail: String = s.always ? " · 已选择一直继续，最多再自动读 \(left) 次" : ""
+        return "已读到 \(ReadAheadLine.percent(bookId, s.at))%" + tail
     }
 
     private func go(_ charId: String) {
@@ -850,24 +877,22 @@ struct ParaPageView: View {
     var body: some View {
         let isVideo = ParaNotes.parse(subject).kind == .video
         let crew = ParaNotes.crew(subject)
+        let foot: String = title.isEmpty ? "" : (isVideo ? "《\(title)》 · " + Subtitle.stamp(Double(at)) : "《\(title)》")
+        let mode: String = SettingsModel.shared.s.raw["translateShow"]?.string ?? "both"
+        let crewTitle: String = busy == "crew" ? "正在生成" : (isVideo ? "多人同看" : "多人共读")
+        let names: String = crew.map(\.displayName).joined(separator: "、")
+        let crewSub: String = crew.isEmpty ? "先选定参与的角色，之后每一段点一下即可" : "\(names) 各写一条 · 本次调用 \(ParaNotes.callsForCrew(crew.count)) 次"
+        let readersTitle: String = busy == "readers" ? "正在生成" : "随机评论"
+        let crewCount: String = crew.isEmpty ? "尚未选择" : "\(crew.count) 人"
         List {
             if let problem { Text(problem).foregroundStyle(Theme.danger) }
             if let notice { Text(notice).font(.footnote).foregroundStyle(Theme.text2) }
             Section {
                 Text(passage.isEmpty ? "这一处没有内容" : passage).font(.system(size: 15, design: .serif))
-            } footer: { Text(title.isEmpty ? "" : "《\(title)》" + (isVideo ? " · \(Subtitle.stamp(Double(at)))" : "")) }
+            } footer: { Text(foot) }
             Section(notes.isEmpty ? "这一段还没有评论" : "\(notes.count) 条评论") {
                 ForEach(notes) { n in
-                    HStack(alignment: .top, spacing: Theme.sp3) {
-                        let ch = n.kind == ParaNotes.charKind && !n.authorId.isEmpty ? ((try? Repo.character(n.authorId)) ?? nil) : nil
-                        Avatar(imageId: ch?.avatar ?? "", name: n.authorName, size: 32)
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(n.authorName.isEmpty ? "未署名" : n.authorName).font(.system(size: 13)).foregroundStyle(Theme.text2)
-                            let p = MessageActions.transPair(n.text, n.textTrans, mode: SettingsModel.shared.s.raw["translateShow"]?.string ?? "both")
-                            Text(p.main)
-                            if !p.sub.isEmpty { Text(p.sub).font(.footnote).foregroundStyle(Theme.text3) }
-                        }
-                    }
+                    ParaNoteRow(note: n, mode: mode)
                     .swipeActions { Button("删除", role: .destructive) { dropping = n } }
                 }
             }
@@ -878,22 +903,20 @@ struct ParaPageView: View {
                         run("crew") { try await ParaNotes.crewComments(subject, at: at, charIds: ids) }
                     }
                 } label: {
-                    TogetherRow(icon: "users", title: busy == "crew" ? "正在生成" : (isVideo ? "多人同看" : "多人共读"),
-                                sub: crew.isEmpty ? "先选定参与的角色，之后每一段点一下即可"
-                                    : crew.map(\.displayName).joined(separator: "、") + " 各写一条 · 本次调用 \(ParaNotes.callsForCrew(crew.count)) 次")
+                    TogetherRow(icon: "users", title: crewTitle, sub: crewSub)
                 }
                 .buttonStyle(.plain).disabled(!busy.isEmpty)
                 Button { run("readers") { try await ParaNotes.readers(subject, at: at) } } label: {
-                    TogetherRow(icon: "message", title: busy == "readers" ? "正在生成" : "随机评论", sub: "临时生成 \(ParaNotes.crowdCount()) 位读者的评论，调用 1 次")
+                    TogetherRow(icon: "message", title: readersTitle, sub: "临时生成 \(ParaNotes.crowdCount()) 位读者的评论，调用 1 次")
                 }
                 .buttonStyle(.plain).disabled(!busy.isEmpty)
                 Button { writing = true } label: { TogetherRow(icon: "edit", title: "自己写一条", sub: "写下你自己的想法，不调用接口") }.buttonStyle(.plain)
-                Button { crewing = true } label: { TogetherRow(icon: "settings", title: "共读名单", sub: crew.isEmpty ? "尚未选择" : "\(crew.count) 人") }.buttonStyle(.plain)
+                Button { crewing = true } label: { TogetherRow(icon: "settings", title: "共读名单", sub: crewCount) }.buttonStyle(.plain)
             } footer: { HelpNote("随机评论的读者不会存入联系人", title: "段评") }
         }
         .navigationTitle(isVideo ? Subtitle.stamp(Double(at)) : "这一段")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { if !notes.isEmpty { ToolbarItem(placement: .topBarTrailing) { Button("清空") { clearing = true } } } }
+        .toolbar { ToolbarItem(placement: .topBarTrailing) { if !notes.isEmpty { Button("清空") { clearing = true } } } }
         .onAppear(perform: load)
         .sheet(isPresented: $writing) {
             NavigationStack {
@@ -1022,6 +1045,12 @@ struct ExcerptView: View {
     @State private var picking = false
     @State private var problem: String?
 
+    private func foot(_ b: Books.Book?) -> String {
+        let title: String = b?.title ?? "这本书"
+        let author: String = b?.author ?? ""
+        return "摘自《\(title)》" + (author.isEmpty ? "" : " · " + author) + "。发出去之后是会话里的一条消息，不调用接口。"
+    }
+
     var body: some View {
         let b = Books.get(bookId)
         Form {
@@ -1029,7 +1058,7 @@ struct ExcerptView: View {
             Section {
                 TextEditor(text: $quote).frame(minHeight: 140)
             } header: { Text("摘录") } footer: {
-                Text("摘自《\(b?.title ?? "这本书")》" + ((b?.author ?? "").isEmpty ? "" : " · \(b?.author ?? "")") + "。发出去之后是会话里的一条消息，不调用接口。")
+                Text(foot(b))
             }
             Section {
                 TextField("可留空", text: $note)
@@ -1122,19 +1151,27 @@ struct ReviewsView: View {
 struct ReviewDetailView: View {
     let review: Reviews.Review
     let kind: Reviews.Kind
+
+    private var head: String {
+        var t = ReviewsView.when(review.createdAt)
+        if kind == .book && review.at > 0 {
+            t += " · 读到 \(Books.percent(Books.get(review.subjectId), at: Int(review.at)))%"
+        }
+        return t
+    }
     @Environment(\.dismiss) private var dismiss
     @State private var dropping = false
     @State private var problem: String?
 
     var body: some View {
         let c = (try? Repo.character(review.charId)) ?? nil
+        let paras: [String] = review.text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
         ScrollView {
             VStack(alignment: .leading, spacing: Theme.sp3) {
                 if let problem { Text(problem).foregroundStyle(Theme.danger) }
-                Text(ReviewsView.when(review.createdAt) + (kind == .book && review.at > 0
-                    ? " · 读到 \(Books.percent(Books.get(review.subjectId), at: Int(review.at)))%" : ""))
+                Text(head)
                     .font(.footnote).foregroundStyle(Theme.text2)
-                ForEach(Array(review.text.components(separatedBy: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.enumerated()), id: \.offset) { _, p in
+                ForEach(Array(paras.enumerated()), id: \.offset) { _, p in
                     Text(p).font(.system(size: 16, design: .serif)).lineSpacing(6)
                 }
                 Button("删除这一篇", role: .destructive) { dropping = true }.foregroundStyle(Theme.dangerText).padding(.top, Theme.sp4)
@@ -1149,5 +1186,25 @@ struct ReviewDetailView: View {
                 do { try Reviews.remove(review.id); dismiss() } catch { problem = error.localizedDescription }
             }
         } message: { Text("只删这一篇，同一部的其他几篇不受影响。") }
+    }
+}
+
+/// 段评的一条：头像（角色有头像就用）、署名、正文与译文
+struct ParaNoteRow: View {
+    let note: ParaNotes.Note
+    let mode: String
+
+    var body: some View {
+        let ch: Character? = note.kind == ParaNotes.charKind && !note.authorId.isEmpty ? ((try? Repo.character(note.authorId)) ?? nil) : nil
+        let p = MessageActions.transPair(note.text, note.textTrans, mode: mode)
+        let name: String = note.authorName.isEmpty ? "未署名" : note.authorName
+        return HStack(alignment: .top, spacing: Theme.sp3) {
+            Avatar(imageId: ch?.avatar ?? "", name: note.authorName, size: 32)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(name).font(.system(size: 13)).foregroundStyle(Theme.text2)
+                Text(p.main)
+                if !p.sub.isEmpty { Text(p.sub).font(.footnote).foregroundStyle(Theme.text3) }
+            }
+        }
     }
 }

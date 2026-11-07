@@ -61,10 +61,11 @@ struct TogetherHomeView: View {
     @ViewBuilder private var videoSide: some View {
         let s = Watch.state
         if s.active, let row = Watch.current() {
-            let char = (try? Repo.character(s.charId)) ?? nil
+            let who: String = ((try? Repo.character(s.charId)) ?? nil)?.displayName ?? "某个角色"
+            let line: String = "和 " + who + " · " + (s.playing ? "播放中" : "已暂停")
             Section("正在看") {
                 Button { watchChat = WatchTarget(id: s.chatId) } label: {
-                    TogetherRow(icon: "film", title: row.title, sub: "和 \(char?.displayName ?? "某个角色") · \(s.playing ? "播放中" : "已暂停")")
+                    TogetherRow(icon: "film", title: row.title, sub: line)
                 }
                 .buttonStyle(.plain)
             }
@@ -78,8 +79,7 @@ struct TogetherHomeView: View {
                 ForEach(all.prefix(5)) { v in
                     Button { startRow = v } label: {
                         HStack {
-                            TogetherRow(icon: "film", title: v.title,
-                                        sub: VideoLib.hasSubtitle(v) ? "字幕 \(VideoLib.lines(v).count) 句" : "没有字幕。角色只知道进度，不知道演了什么")
+                            VideoRowLabel(v: v)
                             Text("一起看").font(.footnote).foregroundStyle(Theme.text2)
                         }
                     }
@@ -100,10 +100,11 @@ struct TogetherHomeView: View {
     @ViewBuilder private var bookSide: some View {
         let s = ReadTogether.state
         if s.active, let b = Books.get(s.bookId) {
-            let char = (try? Repo.character(s.charId)) ?? nil
+            let who: String = ((try? Repo.character(s.charId)) ?? nil)?.displayName ?? "某个角色"
+            let line: String = "和 " + who + " · 已翻 \(s.pages) 页"
             Section("正在读") {
                 Button { reading = ReadTarget(bookId: s.bookId, chatId: s.chatId) } label: {
-                    TogetherRow(icon: "book", title: b.title, sub: "和 \(char?.displayName ?? "某个角色") · 已翻 \(s.pages) 页")
+                    TogetherRow(icon: "book", title: b.title, sub: line)
                 }
                 .buttonStyle(.plain)
             }
@@ -117,7 +118,7 @@ struct TogetherHomeView: View {
             Section("在读") {
                 ForEach(Array(inRead)) { b in
                     NavigationLink { BookDetailView(bookId: b.id) } label: {
-                        TogetherRow(icon: "book", title: b.title, sub: (b.author.isEmpty ? "" : "\(b.author) · ") + "读到 \(Books.percent(b))%")
+                        TogetherRow(icon: "book", title: b.title, sub: BookRow.meta(b))
                     }
                 }
             }

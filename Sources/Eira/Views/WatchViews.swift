@@ -257,13 +257,18 @@ struct WatchPickView: View {
 struct VideoRowLabel: View {
     let v: VideoLib.Video
 
+    private func sub(_ n: Int) -> String {
+        guard n > 0 else { return "没有字幕。角色将只知道进度，不知道演了什么" }
+        return "字幕 \(n) 句" + (VideoLib.hasOutline(v) ? " · 已有剧情提纲" : "")
+    }
+
     var body: some View {
         let n = VideoLib.lines(v).count
         HStack(spacing: Theme.sp3) {
             SvgIcon(name: "film", size: 18, color: Theme.text2)
             VStack(alignment: .leading, spacing: 2) {
                 Text(v.title).lineLimit(2)
-                Text(n > 0 ? "字幕 \(n) 句" + (VideoLib.hasOutline(v) ? " · 已有剧情提纲" : "") : "没有字幕。角色将只知道进度，不知道演了什么")
+                Text(sub(n))
                     .font(.footnote).foregroundStyle(Theme.text2)
             }
             Spacer(minLength: 0)
@@ -511,7 +516,7 @@ struct WatchScreen: View {
         return HStack(spacing: Theme.sp3) {
             Text("字幕").foregroundStyle(Theme.text2)
             Button("提前") { nudge(-0.5) }.accessibilityLabel("字幕提前半秒")
-            Text("\(off > 0 ? "+" : "")\(String(format: "%g", off)) 秒").monospacedDigit()
+            Text(VideoLib.signed(off) + " 秒").monospacedDigit()
             Button("推迟") { nudge(0.5) }.accessibilityLabel("字幕推迟半秒")
             if off != 0 { Button("归零") { nudge(-off) } }
             Spacer()

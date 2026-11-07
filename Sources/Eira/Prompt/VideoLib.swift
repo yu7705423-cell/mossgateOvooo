@@ -144,6 +144,9 @@ enum VideoLib {
         return max(-60, min(60, (v * 10).rounded() / 10))
     }
 
+    /// 偏移写给人看：+1.5 / -0.5 / 0
+    static func signed(_ v: Double) -> String { (v > 0 ? "+" : "") + String(format: "%g", v) }
+
     static func offset(_ v: Video?) -> Double { offsetOf(v?.row.number("offset") ?? 0) }
 
     static func lines(_ v: Video?) -> [Subtitle.Line] {
