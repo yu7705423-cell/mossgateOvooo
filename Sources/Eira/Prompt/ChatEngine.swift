@@ -336,6 +336,8 @@ enum ChatEngine {
         try Drafts.undoTurn(chatId: chatId, turnId: turnId)
         // 这一轮写下的心愿、判定的达成（私下心愿没有提示行，只能按 turnId 找）
         try Wish.undoTurn(chatId: chatId, turnId: turnId)
+        // 这一轮发到短信里的那几条，以及短信里「认出」那一句（网页版 clearTurn，4.307）
+        try Sms.undoTurn(chatId: chatId, turnId: turnId)
         // 群里这一轮发进私聊的私信一起撤掉（网页版 clearTurn）
         if let chat = try Repo.chat(chatId), chat.isGroup {
             for c in try Repo.chats() where !c.isGroup {
@@ -485,6 +487,10 @@ enum ChatEngine {
         case let t where LedgerChat.types.contains(t):
             // 情侣账户与卡包（网页版 request.js、funcard.js、pass.js、ticket.js、member.js）
             return try LedgerChat.effect(p, chat: chat, char: char, turnId: turnId)
+        case .sms:
+            // 短信（网页版 4.307）：认出只在短信里有效；发短信落在那一段短信里，这一段一个字都不落
+            try Sms.effect(p, chat: chat, char: char, turnId: turnId)
+            return nil
         case .redpacket, .rpclaim, .leave, .selfnick:
             // 群红包、领红包、退群、改网名（网页版 4.736、4.733、4.947）
             return try GroupPay.effect(p, chat: chat, char: char, turnId: turnId)
@@ -743,7 +749,7 @@ enum ChatEngine {
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick, .meet, .part:
             return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot,
-             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit,
+             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit, .sms,
              .wish, .wishDone, .dreamShare, .outfit, .closetAct:
             return nil
         }

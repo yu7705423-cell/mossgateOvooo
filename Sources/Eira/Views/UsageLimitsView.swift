@@ -200,6 +200,10 @@ struct UsageLimitsView: View {
                 NumberRow(title: "往回带几段正文", value: model.number("sceneWindow", 0), unit: "段", placeholder: "全部")
                 NumberRow(title: "世界书与记忆按最近几段扫", value: model.number("sceneScan", 4), unit: "段", placeholder: "全部")
                 NumberRow(title: "每段大约多少字", value: model.number("sceneWords", 0), unit: "字", placeholder: "不写")
+                Toggle("「我们」一篇收尾时生成摘要", isOn: model.bool("workSummary", false))
+                HelpNote("「我们」里点「收篇」时把这一篇压成一段摘要，后面几篇的设定区里带的就是它；关闭时「收篇」不调用接口，后面几篇带的是前一篇正文的末尾。走记忆接口，没单独配时走副用。", title: "「我们」一篇收尾时生成摘要")
+                NumberRow(title: "「我们」前面几篇各带多少字", value: model.number("workPrevChars", 600), unit: "字", placeholder: "整篇")
+                HelpNote("写新的一篇时，前面每一篇带上摘要；没有摘要时带最后一段末尾这么多字。填 0 表示整段带上。", title: "「我们」前面几篇各带多少字")
             } header: {
                 Text("线下")
             } footer: {

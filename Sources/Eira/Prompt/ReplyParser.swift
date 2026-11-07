@@ -59,6 +59,8 @@ enum ReplyParser {
         // 衣帽间（4.214、4.217）：搭配（text 是这一套的名字，可空；extra 是几件单品用「、」接起来）；
         // 换上、借走、借给你、归还（text 是那一件的名字，extra 是哪一种）
         case outfit, closetAct
+        // 短信（网页版 4.307）：认出、发短信、借号发短信。extra 是哪一种，text 是冒号后面那一段原样
+        case sms
     }
 
     struct Part: Equatable, Sendable {
@@ -585,6 +587,11 @@ enum ReplyParser {
                     p.extra = songs
                     push(p)
                 }
+            case "认出", "发短信", "借号发短信":
+                // 网页版 SMS_KINDS：原样交给短信那一套，竖线在那边拆
+                var p = Part(type: .sms, text: body)
+                p.extra = kind
+                push(p)
             case "拉黑", "解除拉黑", "删除好友", "添加好友", "通过好友申请":
                 var p = Part(type: .tie, text: body.trimmingCharacters(in: .whitespaces))
                 p.extra = Ties.kinds[kind] ?? ""
