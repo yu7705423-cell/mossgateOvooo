@@ -1,0 +1,21 @@
+{
+  "_note": "美化生成器的样本（docs/jscore-skin.md）。手写的设置，不是网页版的代码。sync-weblogic skin 用网页版的 skin-gen.js 直接编出 skingen-expected.json（不进仓库），SkinGenTests 拿 JavaScriptCore 里跑出来的逐字对照。",
+  "cases": [
+    { "name": "空的", "gen": {} },
+    { "name": "气泡底色与圆角", "gen": { "bubble": { "bg": "#E6E6E6", "fg": "#111111", "r": 4, "px": 10, "py": 6, "fs": 15 } } },
+    { "name": "只改角色一边", "gen": { "bubble": { "side": "theirs", "bg": "#FFFFFF", "r": 18 } } },
+    { "name": "自己的气泡单独一组", "gen": { "bubble": { "bg": "#F0F0F0" }, "bubbleMine": { "bg": "#222222", "fg": "#FAFAFA", "bw": 1, "bc": "#444444", "bStyle": "dashed", "shadow": 6 } } },
+    { "name": "头像", "gen": { "avatar": { "show": "theirs", "size": 32, "round": 50, "bw": 2, "bc": "#999999", "gap": 4, "run": "first" } } },
+    { "name": "顶栏与底栏", "gen": { "nav": { "bg": "#FAFAFA", "h": 52, "line": true, "titleColor": "#333333", "titleSize": 17, "blur": 12 }, "composer": { "bg": "#F5F5F5", "inBg": "#FFFFFF", "inR": 18, "inBd": "#DDDDDD", "inBdW": 1, "sendBg": "#333333", "btn": 34 } } },
+    { "name": "消息区", "gen": { "msg": { "top": 12, "bottom": 8, "sideP": 10, "gap": 20, "gapIn": 3, "align": "center", "width": 72, "bg": "#EDEDED" } } },
+    { "name": "边框与阴影", "gen": { "border": { "w": 1, "c": "#CCCCCC", "bStyle": "dotted", "rTL": 2, "rBR": 12, "shadow": 8, "shColor": "#000000", "shOp": 15, "shY": 2 } } },
+    { "name": "小尾巴", "gen": { "tail": { "shape": "curve" } } },
+    { "name": "时刻与旁白", "gen": { "meta": { "pos": "below", "color": "#888888", "size": 10, "readText": "已看", "hideRead": false, "sepColor": "#999999", "sepBg": "#E0E0E0", "sepR": 8 }, "narr": { "color": "#555555", "italic": true, "fx": "glow", "fxColor": "#FFFFFF", "fxSize": 2, "names": "林 #666666\n周 #777777" } } },
+    { "name": "群聊名字与卡片", "gen": { "who": { "color": "#777777", "size": 11, "bold": true }, "transfer": { "side": "mine", "bg": "#F2F2F2", "fg": "#222222", "r": 10, "bw": 1, "bc": "#D0D0D0" }, "quote": { "at": "inside", "bg": "#EEEEEE", "fs": 12 } } },
+    { "name": "字体与动画", "gen": { "font": { "family": "Serif Demo", "url": "https://example.com/demo.woff2", "where": "bubble", "ls": 0.5, "mineFamily": "Mono Demo" }, "anim": { "kind": "rise", "dur": 240 } } },
+    { "name": "渐变与叠加", "gen": { "bubble": { "paint": { "v": 1, "layers": [ { "k": "linear", "a": 135, "stops": [ { "c": "#FFFFFF", "p": 0 }, { "c": "#CCCCCC", "p": 100 } ], "op": 90 }, { "k": "solid", "c": "#888888", "op": 100, "blend": "multiply" } ] }, "glass": "light" } } },
+    { "name": "贴图与九宫格", "gen": { "deco1": { "img": "https://example.com/a.png", "host": "row", "pos": "tr", "size": 28, "rot": 15, "op": 80 }, "bubbleMine": { "nine": "https://example.com/frame.png", "nineSlice": 24, "nineW": 12 } } },
+    { "name": "每一块自己的 CSS", "gen": { "nav": { "css": "height: 60px; box-shadow: none" }, "bubble": { "css": ".ph-bubble-mine { letter-spacing: 1px; }" } } },
+    { "name": "老的两色渐变与回应", "gen": { "bubble": { "grad": true, "bg": "#FFFFFF", "bg2": "#DDDDDD", "gradAngle": 90 }, "react": { "plain": true, "bg": "#EEEEEE" } } }
+  ]
+}

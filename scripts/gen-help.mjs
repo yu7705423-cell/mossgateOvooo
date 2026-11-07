@@ -28,8 +28,9 @@ const APPS = {
   'DailyViews.swift': '日常', 'UserSchedViews.swift': '日常', 'DiaryViews.swift': '日记', 'TodoViews.swift': '待办', 'MusicViews.swift': '音乐', 'HomeEditViews.swift': '主屏', 'HomeArrangeViews.swift': '主屏', 'HomeScreen.swift': '主屏', 'CustomWidget.swift': '主屏', 'CustomWidgetData.swift': '主屏',
   'SpaceViews.swift': '情侣空间', 'AlbumViews.swift': '相册', 'HealthViews.swift': '健康', 'TheirsViews.swift': '角色手机',
   'BillViews.swift': '记账', 'WalletViews.swift': '卡包', 'LedgerBubbles.swift': '聊天',
+  'SkinAppView.swift': '美化', 'SkinOneView.swift': '美化', 'SkinEditorView.swift': '美化', 'SkinControls.swift': '美化',
 };
-const ORDER = ['聊天', '联系', '设定集', '日常', '日记', '待办', '记账', '卡包', '音乐', '相册', '情侣空间', '健康', '角色手机', '主屏', '设置'];
+const ORDER = ['聊天', '联系', '设定集', '日常', '日记', '待办', '记账', '卡包', '音乐', '相册', '情侣空间', '健康', '角色手机', '美化', '主屏', '设置'];
 
 /** 从 i（指向开引号）读一个字符串字面量，返回 [文字, 结束位置] */
 function literal(s, i) {

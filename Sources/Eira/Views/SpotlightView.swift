@@ -268,6 +268,7 @@ struct FindPlaceView: View {
         "api", "routes", "memoryApi", "voice", "image", "music", "weather", "vision", "asr", "translateApi",
         "notify", "bgpush", "limits", "holidays", "appearance", "lockpin", "storage", "help", "feedback", "terms",
         "time", "stickers", "personas", "favorites", "menuorder", "sent", "convorder", "ooc", "theater", "mcp", "chatThemes", "billCats",
+        "skinApp", "skinLibrary", "skinAI",
     ]
 
     /// 这一项能不能点过去：没有页面的不能；搜索聊天记录要能打开会话
@@ -336,6 +337,9 @@ struct FindPlaceView: View {
         case "holidays": HolidaySettingsView()
         case "appearance": AppearanceView()
         case "chatThemes": ThemeGalleryView(chatId: nil)
+        case "skinApp": SkinHomeView().navigationDestination(for: SkinRoute.self) { SkinRouteView(route: $0) }
+        case "skinLibrary": SkinLibraryView(chatId: nil)
+        case "skinAI": SkinAIView()
         case "lockpin": LockPinView()
         case "storage": StorageView()
         case "help": HelpView(openChat: openChat)

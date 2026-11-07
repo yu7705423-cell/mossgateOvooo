@@ -1,0 +1,4 @@
+{
+  "_note": "Native-only templates for features the web app does not have yet (docs/jscore-skin.md). Hand-written in English, facts only (web CLAUDE.md 14 and 16). When the web app adds a template with the same id, the web one is used and the entry here should be deleted.",
+  "task.skinGen": "Write settings for the theme editor of a chat page as JSON.\n\nThe user describes the look:\n{{request}}\n\nOutput one JSON object and nothing else:\n{\"name\": \"…\", \"gen\": {\"<group id>\": {\"<item id>\": value}}}\n\n- name: a short name for this theme, in the language of the description.\n- Use only the group ids and item ids listed below. Items that are left out keep their defaults.\n- color: \"#RRGGBB\" or \"#RRGGBBAA\". num: a plain number in the unit shown. switch: true or false. pick: one of the ids in the brackets. text: a string.\n- \"theirs\" is the character's side, \"mine\" is the user's side.\n\nSettings:\n{{schema}}"
+}

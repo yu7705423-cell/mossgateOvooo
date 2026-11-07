@@ -14,15 +14,19 @@ import SwiftUI
 enum Skins {
     static let collection = "skins"
 
-    /// 与网页版 TOKENS 同一份（id、名字、默认值、范围）
-    struct Token { let id: String; let label: String; let def: Double; let min: Double; let max: Double }
+    /// 与网页版 TOKENS 同一份（id、CSS 变量、名字、默认值、范围）。没设过的项整条不发
+    struct Token { let id: String; let label: String; let def: Double; let min: Double; let max: Double; var css = ""; var desc = "" }
     static let tokens: [Token] = [
-        Token(id: "gap", label: "消息间距", def: 16, min: 0, max: 48),
-        Token(id: "gapIn", label: "同一轮内间距", def: 5, min: 0, max: 24),
-        Token(id: "bubbleR", label: "气泡圆角", def: 14, min: 0, max: 30),
-        Token(id: "bubblePX", label: "气泡左右内距", def: 12, min: 2, max: 32),
-        Token(id: "bubblePY", label: "气泡上下内距", def: 8, min: 2, max: 28),
-        Token(id: "bubbleFS", label: "气泡字号", def: 14, min: 11, max: 24),
+        Token(id: "navH", label: "顶栏高度", def: 48, min: 28, max: 88, css: "--ph-navbar-h"),
+        Token(id: "barH", label: "底栏按钮大小", def: 38, min: 26, max: 60, css: "--ph-composer-h",
+              desc: "输入框的最小高度也是它。底栏偏高多半调这一项"),
+        Token(id: "barPad", label: "底栏内边距", def: 8, min: 0, max: 24, css: "--ph-composer-pad"),
+        Token(id: "gap", label: "消息间距", def: 16, min: 0, max: 48, css: "--ph-bubble-gap"),
+        Token(id: "gapIn", label: "同一轮内间距", def: 5, min: 0, max: 24, css: "--ph-bubble-gap-in"),
+        Token(id: "bubbleR", label: "气泡圆角", def: 14, min: 0, max: 30, css: "--ph-bubble-r"),
+        Token(id: "bubblePX", label: "气泡左右内距", def: 12, min: 2, max: 32, css: "--ph-bubble-px"),
+        Token(id: "bubblePY", label: "气泡上下内距", def: 8, min: 2, max: 28, css: "--ph-bubble-py"),
+        Token(id: "bubbleFS", label: "气泡字号", def: 14, min: 11, max: 24, css: "--ph-bubble-fs"),
     ]
 
     static let shapes: [(id: String, label: String)] = [("", "跟随默认"), ("round", "圆形"), ("square", "方形"), ("soft", "圆角方形")]
@@ -312,10 +316,11 @@ enum Skins {
     private static let cssLock = NSLock()
     nonisolated(unsafe) private static var cssCache: [String: CssCompiled] = [:]
 
-    /// 这一份的手写 CSS 读成原生样式。按 CSS 原文缓存：同一段只读一次。没写 CSS 为 nil
+    /// 这一份最终生效的 CSS（令牌、头像框、生成器编出来的、手写的，`effectiveCss`）读成原生样式。
+    /// 按 CSS 原文缓存：同一段只读一次。一样都没有为 nil
     static func compiled(_ row: Row?) -> CssCompiled? {
         guard let row else { return nil }
-        let css = row.string("css")
+        let css = effectiveCss(row)
         guard !css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return nil }
         return compiled(css: css)
     }
@@ -479,7 +484,7 @@ enum Skins {
         guard let row, let v = row["nativeRaster"], v.object != nil, let data = try? v.encoded(),
               let set = try? JSONDecoder().decode(CssRasterSet.self, from: data) else { return nil }
         if current {
-            guard set.engine == CssRasterPlan.engine, set.cssHash == CssRasterPlan.hash(row.string("css")) else { return nil }
+            guard set.engine == CssRasterPlan.engine, set.cssHash == CssRasterPlan.hash(effectiveCss(row)) else { return nil }
         }
         return set
     }

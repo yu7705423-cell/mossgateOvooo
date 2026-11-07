@@ -1041,14 +1041,15 @@ enum CssRasterizer {
     /// 不是最新的才画一次
     private static func once(_ skinId: String, fetchRemote: Bool) async {
         guard let row = Skins.get(skinId) else { return }
-        let css = row.string("css")
+        // 最终生效的那一段（令牌、生成器、手写 CSS，Skins.effectiveCss）
+        let css = Skins.effectiveCss(row)
         guard !css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let existing = Skins.raster(row, current: false)
         guard CssRasterPlan.isStale(existing, css: css, fetchRemote: fetchRemote) else { return }
         let set = await render(css: css, compiled: Skins.compiled(css: css), existing: existing, fetchRemote: fetchRemote)
         // 画的过程中这一份删了：不存。CSS 又改了：这一份作废，按新的再画一轮
         guard let now = Skins.get(skinId) else { return }
-        guard CssRasterPlan.hash(now.string("css")) == set.cssHash else {
+        guard CssRasterPlan.hash(Skins.effectiveCss(now)) == set.cssHash else {
             again[skinId] = (again[skinId] ?? false) || fetchRemote
             return
         }

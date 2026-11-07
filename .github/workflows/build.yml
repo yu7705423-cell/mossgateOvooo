@@ -54,6 +54,13 @@ jobs:
             echo "::warning::网页版提示词拼装打包失败，这次的 app 照旧原生拼装。看 scripts/sync-weblogic.mjs 与 check-weblogic.mjs 的输出"
             rm -f Resources/weblogic/prompt.bundle.js
           fi
+          # 美化生成器（docs/jscore-skin.md）：编辑器的设置编成 CSS。打不出来时编辑器退回原生那几项，不拦编译
+          if node scripts/sync-weblogic.mjs "$RUNNER_TEMP/web" skin && node scripts/check-weblogic.mjs skin; then
+            echo "网页版美化生成器已打包"
+          else
+            echo "::warning::网页版美化生成器打包失败，这次的 app 里美化编辑器只有原生的几项。看 scripts/sync-weblogic.mjs 与 check-weblogic.mjs 的输出"
+            rm -f Resources/weblogic/skin.bundle.js Tests/Fixtures/skingen-expected.json
+          fi
           rm -rf "$RUNNER_TEMP/web"
 
       - name: 生成工程
