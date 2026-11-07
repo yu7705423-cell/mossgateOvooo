@@ -52,6 +52,8 @@ enum ReplyParser {
         case request, vote
         // 卡包（网页版 4.611、4.643、4.644）：娱乐卡的送、用、同意；门禁卡的给、刷、收回与恢复；票券的送与检；会员卡的开与消费。字段在 info 里
         case funGive, funUse, funVote, passGive, passAct, ticketGive, ticketCheck, memberOpen, memberVisit
+        // 短信（网页版 4.307）：认出、发短信、借号发短信。extra 是哪一种，text 是冒号后面那一段原样
+        case sms
     }
 
     struct Part: Equatable, Sendable {
@@ -578,6 +580,11 @@ enum ReplyParser {
                     p.extra = songs
                     push(p)
                 }
+            case "认出", "发短信", "借号发短信":
+                // 网页版 SMS_KINDS：原样交给短信那一套，竖线在那边拆
+                var p = Part(type: .sms, text: body)
+                p.extra = kind
+                push(p)
             case "拉黑", "解除拉黑", "删除好友", "添加好友", "通过好友申请":
                 var p = Part(type: .tie, text: body.trimmingCharacters(in: .whitespaces))
                 p.extra = Ties.kinds[kind] ?? ""
