@@ -224,6 +224,7 @@ final class WebLogic: @unchecked Sendable {
             case "member-open":
                 p = .init(type: .memberOpen, text: str("shop"))
                 p.info = ["shop": str("shop"), "note": str("note")]
+            case "sms": p = .init(type: .sms, text: str("body")); p.extra = s("kind")
             case "member-visit":
                 p = .init(type: .memberVisit, text: str("shop"))
                 p.info = ["shop": str("shop"), "points": WalletCards.numText(num("points") ?? 0), "note": str("note")]

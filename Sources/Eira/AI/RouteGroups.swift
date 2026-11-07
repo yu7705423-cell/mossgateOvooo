@@ -23,7 +23,9 @@ struct RouteGroup: Identifiable, Sendable {
         .init(id: "fit", label: "起居（周计划、周回顾、提示）", tasks: ["fit.plan", "fit.meal", "fit.sched", "fit.review", "fit.tips"], def: spare),
         .init(id: "letter", label: "角色写信", tasks: ["letter.write"], def: spare),
         .init(id: "impress", label: "整理与对照对我的印象", tasks: ["impress.organize", "impress.compare"], def: spare),
-        .init(id: "scene", label: "线下、长篇与番外的正文", tasks: ["scene.write"], def: "默认用主用接口，主用没配时用副用"),
+        .init(id: "scene", label: "线下的正文", tasks: ["scene.write"], def: "默认用主用接口，主用没配时用副用"),
+        // 长篇与番外的正文和线下同一个任务 scene.write，没有自己的任务 id：写的时候点名这一组（WorkRun.group）。没选时跟着上一组（网页版 4.1091）
+        .init(id: "work", label: "长篇与番外的正文", tasks: [], def: "默认与「线下的正文」相同"),
         .init(id: "novel", label: "长篇的简介、大纲、走向与改写身份", tasks: ["work.synopsis", "work.outline", "work.branch", "work.identity"], def: spare),
         .init(id: "inner", label: "心声（单独生成那一档）", tasks: ["inner.voice"], def: spare),
         .init(id: "theater", label: "小剧场（单独生成那一档）", tasks: ["theater.page"], def: spare),

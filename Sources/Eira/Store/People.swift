@@ -52,6 +52,11 @@ enum People {
     static func deleteChat(_ id: String) throws {
         // 线下各场的正文挂在场次上（按 sceneId），先删掉，不留成孤儿
         for sc in try Database.shared.all("scenes", where: id) { try Database.shared.deleteAll("beats", where: sc.id) }
+        // 「我们」里挂在这段会话上的作品：每一章与它的正文一并删掉（网页版 purge.dropChat）
+        for w in try Database.shared.all(Works.works, where: id) {
+            for ch in try Database.shared.all(Works.chapters, where: w.id) { try Database.shared.deleteAll(Scenes.beats, where: ch.id) }
+            try Database.shared.deleteAll(Works.chapters, where: w.id)
+        }
         for collection in Collections.indexField.filter({ $0.value == "chatId" }).map(\.key) {
             try Database.shared.deleteAll(collection, where: id)
         }

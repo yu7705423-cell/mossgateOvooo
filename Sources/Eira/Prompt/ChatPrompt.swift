@@ -152,6 +152,8 @@ enum ChatPrompt {
             "music": one("music") { Netease.block(char, now: now.millis) },
             "moments": one("moments") { Moments.block(char: char, userName: me?.name ?? "对方", now: now) },
             "ties": one("ties") { Ties.block(char, chat: chat, userName: me?.name ?? "the user") },
+            // 短信（网页版 context/sms.js）：和哪些号码有过往来、哪次发送失败、能借的号码。没有往来就为空
+            "sms": one("sms") { Sms.block(char: char, chat: chat, me: me) },
             // 情侣空间：在一起多少天、快到的纪念日、没完成的约定。在空间里单独开启，默认不注入
             "space": one("space") { Space.block(chat, now: now) },
             // 共享位置：会话里开了、两端都填了才有；距离本机算好（网页版 context/geo.js）
@@ -596,16 +598,18 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "impress", "pinned", "time", "recent", "geo", "badges",
-                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill", "watch"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill", "sms", "watch"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member", "watch"]
+                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member", "smssend", "smsid", "watch"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
     private static let groupCaps: Set<String> = ["image", "video", "voice", "sticker", "quote", "dice", "time", "translate", "award", "groupnick", "groupadmin", "dm", "narration", "inner", "ties",
                                                  "grouppay", "groupleave", "meet", "theater"]
+    /// 短信里说得通的那几样（网页版 SMS_CAPS，4.307）；「认出」只在短信里有
+    private static let smsCaps: Set<String> = ["image", "time", "quote", "smssend", "smsid", "translate"]
     /// 新功能里按角色另选过的那几项（网页版 4.882）：on 里已经按这个角色（群里按各成员）算过，不再只看全局
     private static let perCharFeat: Set<String> = ["grouppay", "groupleave", "selfnick"]
 
@@ -625,6 +629,9 @@ enum ChatPrompt {
             guard on, !off.contains(id) || protocolCaps.contains(id) || ownSwitchCaps.contains(id) else { return }
             guard perCharFeat.contains(id) || NewFeat.capOn(id, s, char: char) else { return }
             if chat.isGroup && !groupCaps.contains(id) { return }
+            let inSms = chat.row["sms"]?.object != nil
+            if inSms && !smsCaps.contains(id) { return }
+            if !inSms && id == "smsid" { return }
             // 见面时只给当面说得通的那几样（网页版 face.CAPS）
             if Face.on(chat) && !Face.caps.contains(id) { return }
             if !lean || hot || line == nil { details.append(detail()) } else if let line { lines.append(line) }
@@ -675,6 +682,15 @@ enum ChatPrompt {
         cap("ties", on: true, hot: used(#"[\[【](拉黑|解除拉黑|删除好友|添加好友|通过好友申请)"#),
             line: "Block someone or remove them from your contacts: write a line on its own, [拉黑：name] or [删除好友：name]; undo with [解除拉黑：name] or [添加好友：name]") {
             Templates.get("skeleton.ties", settings: s)
+        }
+        // 发短信（网页版 capabilities.js 的 smssend）：和它有过短信往来的号码才发得了；短信里认出对方（smsid）只在短信里、身份没确认时有
+        cap("smssend", on: !Sms.knownNumbers(char, personaId: chat.personaId).isEmpty, hot: used(#"[\[【](借号)?发短信"#),
+            line: "Send an SMS to a number you have exchanged SMS with: write a line on its own, [发短信：number|text]") {
+            Templates.get("skeleton.sms-send", settings: s)
+        }
+        let smsThread = chat.row["sms"]?.object.map { Row(fields: $0) }
+        cap("smsid", on: smsThread.map { !Sms.isKnown($0) } ?? false, hot: true, line: nil) {
+            Templates.render("skeleton.sms-id", ["number": smsThread?.string("mine") ?? ""], settings: s)
         }
         cap("listen", on: char.row["canListen"]?.bool != false, hot: listening || used(#"^(listen|song)$|[\[【](一起听|点歌|建歌单|加入歌单|分享歌曲)"#),
             line: "Music: [一起听] to listen together, [点歌：song title - artist] to change the track, [分享歌曲：song title - artist] to send a song, [加入歌单：playlist | song - artist] to keep songs") {
@@ -1484,5 +1500,22 @@ extension ChatPrompt {
             if !r.isEmpty { add(nil, recallText(r, now: now)); ids = r.map(\.id) }
         }
         return (lines.joined(separator: "\n\n"), ids)
+    }
+}
+
+// MARK: - 短信（网页版 engine.js 的 streamSms，4.307）
+//
+// 能力与历史用线上聊天的那一套：能力只给短信里说得通的几样（smsCaps），历史就是这一段短信（被拦截的不进）。
+// 设定区由 Sms.build 照网页版 buildSmsSystem 拼。
+extension ChatPrompt {
+    static func smsCapabilities(char: Character, chat: Chat, msgs: [Message], settings s: AppSettings) -> String {
+        capabilities(char: char, chat: chat, msgs: msgs, facts: Facts(), settings: s)
+    }
+
+    static func smsHistory(chat: Chat, char: Character, msgs: [Message], settings s: AppSettings,
+                           tail: String, tailDepth: Int, lore: [(Int, String)]) throws -> ([AIMessage], [String]) {
+        let src = Source(msgs: keep(msgs, chat: chat, excludeTurn: nil, ties: false), complete: true)
+        return try history(src, beats: [], chat: chat, char: char, settings: s, tail: tail, tailDepth: tailDepth, lore: lore,
+                           older: { _ in nil })
     }
 }
