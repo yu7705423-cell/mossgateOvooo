@@ -1166,7 +1166,11 @@ struct UsWorkEditView: View {
 /// 一篇自己的设定：题目、地点、时刻、情境、摘要
 struct UsChapterEditView: View {
     let chapterId: String
-    @State private var title = "", place = "", at = "", note = "", summary = ""
+    @State private var title = ""
+    @State private var place = ""
+    @State private var at = ""
+    @State private var note = ""
+    @State private var summary = ""
     @State private var loaded = false
     @State private var problem: String?
     @Environment(\.dismiss) private var dismiss
