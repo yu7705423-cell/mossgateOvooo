@@ -285,7 +285,6 @@ struct UsageLimitsView: View {
             "card.examples": "生成对话示例",
             "card.appearance": "从人设中提取外貌",
             "card.npc": "批量生成 NPC",
-            "skin.gen": "按描述生成美化",
             "self.import": "按分区拆分我的人设",
             "impress.organize": "整理对我的印象",
             "impress.compare": "对照几位角色的印象",

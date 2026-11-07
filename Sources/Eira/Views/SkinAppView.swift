@@ -4,7 +4,7 @@ import UniformTypeIdentifiers
 // 「美化」app（网页版 apps/skin：Gallery.js 的文件夹首页、App.js 的美化库与每一份的详情）。
 //
 // 与会话菜单「主题」的分工（一个功能一个入口，网页版第 28 条第 3 项）：
-//   美化 app 是美化库：新建、导入、按描述生成、编辑器、自定义 CSS、导出、删除，以及别处能写样式的地方的汇总；
+//   美化 app 是美化库：新建、导入、编辑器、自定义 CSS、导出、删除，以及别处能写样式的地方的汇总；
 //   会话菜单「主题」（ThemeGalleryView）只管「这段会话挂哪一份」：挂上、换一份、取下。要改一份主题本身，从那里点进来
 //   的是这里的同一个详情页（SkinOneView），不另画一份。全部会话的默认也只有一页（ThemeGalleryView(chatId: nil)），
 //   这里的「应用美化」与「设置 - 主题 - 聊天主题」都跳到它。
@@ -15,7 +15,6 @@ import UniformTypeIdentifiers
 enum SkinRoute: Hashable {
     case go(SkinPlaces.Go)
     case library
-    case ai
     case editor(String)
     case one(String)
 }
@@ -35,7 +34,6 @@ struct SkinRouteView: View {
     var body: some View {
         switch route {
         case .library: SkinLibraryView(chatId: nil)
-        case .ai: SkinAIView()
         case .editor(let id): SkinEditorView(id: id)
         case .one(let id): SkinOneView(id: id)
         case .go(let g):
@@ -176,11 +174,6 @@ struct SkinHomeView: View {
             NavigationLink(value: SkinRoute.library) {
                 IconRow(title: "导入美化包与全部美化", icon: "download", value: "\(Skins.all().count) 份")
                     .padding(.horizontal, Theme.sp3)
-            }
-            .buttonStyle(.plain)
-            Divider().padding(.leading, 44)
-            NavigationLink(value: SkinRoute.ai) {
-                IconRow(title: "按描述生成", icon: "sparkle").padding(.horizontal, Theme.sp3)
             }
             .buttonStyle(.plain)
         }
@@ -473,70 +466,6 @@ struct SkinLibraryView: View {
         }
         .navigationDestination(isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } })) {
             if let importing { SkinImportView(chatId: chatId ?? "", pack: importing) { tick += 1 } }
-        }
-    }
-}
-
-// MARK: - 按描述生成
-
-struct SkinAIView: View {
-    @State private var text = ""
-    @State private var busy = false
-    @State private var problem: String?
-    @State private var made: String?
-    @State private var task: Task<Void, Never>?
-
-    var body: some View {
-        Form {
-            if let problem { Text(problem).foregroundStyle(Theme.danger) }
-            if !SkinGen.shared.available {
-                Text("这个版本没有带上美化编辑器的设置清单，无法按描述生成。").foregroundStyle(Theme.text2)
-            } else {
-                Section {
-                    TextEditor(text: $text).frame(minHeight: 160)
-                } header: { GroupTitle("想要的样子") } footer: {
-                    HelpNote("写下想要的颜色、气泡形状、字体与氛围。模型按美化编辑器的设置清单填写，结果存成新的一份，之后在编辑器里照常调整。图片与多色渐变不交给模型。", title: "按描述生成美化")
-                }
-                Section {
-                    if busy {
-                        HStack {
-                            Text("正在生成")
-                            Spacer()
-                            ProgressView()
-                        }
-                        Button("取消") { task?.cancel() }
-                    } else {
-                        Button("生成") { start() }
-                            .disabled(text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                } footer: {
-                    Text("点一次调用一次副用接口（没有配置副用时使用主用），失败不自动重试。")
-                }
-            }
-        }
-        .navigationTitle("按描述生成")
-        .navigationBarTitleDisplayMode(.inline)
-        .navigationDestination(isPresented: Binding(get: { made != nil }, set: { if !$0 { made = nil } })) {
-            if let made { SkinEditorView(id: made) }
-        }
-        .onDisappear { task?.cancel() }
-    }
-
-    private func start() {
-        busy = true
-        problem = nil
-        let ask = text
-        task = Task { @MainActor in
-            defer { busy = false }
-            do {
-                let m = try await SkinAI.generate(ask)
-                let r = try SkinAI.save(m)
-                made = r.id
-            } catch is CancellationError {
-                problem = "已取消。"
-            } catch {
-                problem = "未能生成：\(error.localizedDescription)"
-            }
         }
     }
 }

@@ -3,7 +3,7 @@ import XCTest
 
 /// 美化 app（docs/jscore-skin.md）：网页版 skin-gen.js 在 JavaScriptCore 里编出来的与网页版原文件编的逐字相同；
 /// 最终生效的 CSS 的先后（令牌、头像框、生成器、手写、late 那一段）与原生读出来的结果；包不在时退回原生的几项；
-/// 美化包的 TXT、DOCX、JSON 来回；首页的文件夹；按描述生成时交回来的设置怎么核
+/// 美化包的 TXT、DOCX、JSON 来回；首页的文件夹
 final class SkinGenTests: StoreTestCase {
     override func setUpWithError() throws {
         try super.setUpWithError()
@@ -218,49 +218,5 @@ final class SkinGenTests: StoreTestCase {
         let off = SkinPlaces.categories(settings: .load())
         XCTAssertTrue(off.first { $0.id == "app" }?.using.isEmpty ?? false)
         XCTAssertFalse(off.first { $0.id == "chat" }?.using.contains { $0.key == "builtin-paper" } ?? true)
-    }
-
-    // MARK: - 按描述生成：交回来的设置怎么核
-
-    func testAIResultIsCheckedAgainstGroups() throws {
-        let item = { (id: String, type: String, opts: [String]) in
-            SkinGen.Item(id: id, label: id, type: type, def: .string(""), unit: "px", min: 0, max: 40, desc: "", more: false,
-                         rows: nil, cond: false, options: opts.map { SkinGen.Option(id: $0, label: $0) })
-        }
-        let groups = [SkinGen.Group(id: "bubble", label: "气泡", short: "气泡", icon: "", desc: "", scene: "", items: [
-            item("side", "pick", ["all", "theirs", "mine"]), item("bg", "color", []), item("r", "num", []),
-            item("grad", "switch", []), item("img", "image", []), item("css", "text", []),
-        ])]
-        let raw: JSONValue = .object([
-            "bubble": .object(["side": .string("left"), "bg": .string("#12345"), "r": .number(120), "grad": .bool(true),
-                               "img": .string("https://a.example/x.png"), "css": .string("  "), "nope": .number(1)]),
-            "unknown": .object(["x": .number(1)]),
-        ])
-        let out = SkinAI.clean(raw, groups)
-        // 认不出的组、项、值丢掉；图片不收；数字不按滑杆的范围截
-        XCTAssertEqual(out, ["bubble": .object(["r": .number(120), "grad": .bool(true)])])
-        let ok = SkinAI.clean(.object(["bubble": .object(["side": .string("mine"), "bg": .string("#ABCDEF80")])]), groups)
-        XCTAssertEqual(ok["bubble"]?["side"], .string("mine"))
-        XCTAssertEqual(ok["bubble"]?["bg"], .string("#ABCDEF80"))
-        let schema = SkinAI.schema(groups)
-        XCTAssertTrue(schema.contains("side (side): pick [all, theirs, mine]"))
-        XCTAssertTrue(schema.contains("r (r): num 0..40 px"))
-        XCTAssertFalse(schema.contains("img (img)"))
-        XCTAssertFalse(Templates.get(SkinAI.template, settings: .load()).isEmpty)
-    }
-}
-
-/// 按描述生成美化：用户点了才调，接口一直失败时点一次只打一次，不换接口；不是自动触发的，不进 ExtraCalls
-extension CostTests {
-    func testSkinGenFailingIsOneRequestPerTap() async throws {
-        try XCTSkipUnless(SkinGen.bundled, "没有 skin.bundle.js")
-        MockNet.reset { _, _ in .init(status: 500, body: #"{"error":{"message":"boom"}}"#) }
-        let before = await Usage.shared.today(task: SkinAI.task)
-        do { _ = try await SkinAI.generate("黑白灰，圆角小一些"); XCTFail("应当失败") } catch {}
-        XCTAssertEqual(MockNet.count, 1)
-        let after = await Usage.shared.today(task: SkinAI.task)
-        XCTAssertEqual(after - before, 1)
-        XCTAssertFalse(ExtraCalls.all.contains { $0.id == SkinAI.task })
-        XCTAssertEqual(Skins.all().count, 0)
     }
 }

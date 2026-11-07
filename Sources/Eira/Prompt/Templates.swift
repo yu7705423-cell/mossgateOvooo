@@ -13,22 +13,9 @@ enum Templates {
         return dict
     }()
 
-    /// 网页版还没有、只有原生版有的功能的模板（`Resources/native-templates.json`，手写）。同一个 id 网页版有了就用网页版的
-    static let nativeDefaults: [String: String] = {
-        for bundle in [Bundle.main, Bundle(for: BundleToken.self)] {
-            if let url = bundle.url(forResource: "native-templates", withExtension: "json"), let data = try? Data(contentsOf: url),
-               let dict = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                return dict.compactMapValues { $0 as? String }
-            }
-        }
-        return [:]
-    }()
-
-    private final class BundleToken {}
-
     static func get(_ id: String, settings: AppSettings) -> String {
         if let mine = settings.raw["promptTemplates"]?.object?[id]?.string, !mine.isEmpty { return mine }
-        return defaults[id] ?? nativeDefaults[id] ?? ""
+        return defaults[id] ?? ""
     }
 
     /// `{{name}}` 换成 vars 里的值；没给的换成空串。
