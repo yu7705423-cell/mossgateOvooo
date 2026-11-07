@@ -176,9 +176,9 @@ struct ConversationView: View {
         let shot = raster.map { r -> String in
             "\(r.cssHash)|\(r.engine)|" + r.images.keys.sorted().map { "\($0)=\(r.images[$0]?.imageId ?? "")" }.joined(separator: ",")
         } ?? ""
-        cssTag = row.map { "\($0.id)|\($0.number("updatedAt") ?? 0)|\($0.string("css").hashValue)|\(shot.hashValue)" } ?? ""
+        cssTag = row.map { "\($0.id)|\($0.number("updatedAt") ?? 0)|\(Skins.effectiveCss($0).hashValue)|\(shot.hashValue)" } ?? ""
         guard let row, t.webCss else { return }
-        let asked = "\(row.id)|\(row.string("css").hashValue)"
+        let asked = "\(row.id)|\(Skins.effectiveCss(row).hashValue)"
         guard asked != rasterAsked else { return }
         rasterAsked = asked
         let skinId = row.id

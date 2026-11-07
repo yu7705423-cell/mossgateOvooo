@@ -345,10 +345,9 @@ struct BookReaderView: View {
         }
         .eiraLook()
         .onAppear(perform: appear)
-        .onDisappear {
-            EdgeBack.blocked = max(0, EdgeBack.blocked - 1)
-            if together { ReadTogether.away() }
-        }
+        // 翻页的阅读页不认左缘右滑返回（用户定的：边缘滑动永远不离开阅读页），左上角有返回键
+        .background(RefuseEdgeBack(active: true))
+        .onDisappear { if together { ReadTogether.away() } }
         .onChange(of: look.fullscreen) { _, v in bare = v }
     }
 
@@ -378,7 +377,6 @@ struct BookReaderView: View {
     }
 
     private func appear() {
-        EdgeBack.blocked += 1
         bare = ReaderLook.load(model.s).fullscreen
         if let chatId {
             do {

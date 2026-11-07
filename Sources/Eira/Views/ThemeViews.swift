@@ -95,7 +95,8 @@ struct ThemeGalleryView: View {
         .navigationDestination(isPresented: Binding(get: { importing != nil }, set: { if !$0 { importing = nil } })) {
             if let importing { SkinImportView(chatId: chatId ?? "", pack: importing) { tick += 1 } }
         }
-        .navigationDestination(item: $editing) { t in ThemeEditView(id: t.id) }
+        // 改一份主题本身：进「美化」app 里同一个详情页（编辑器、主题格子、自定义 CSS、导出都在那里）
+        .navigationDestination(item: $editing) { t in SkinOneView(id: t.id) }
         .alert(copyFrom == nil ? "新建主题" : "复制主题", isPresented: $naming) {
             TextField("名称", text: $newName)
             Button("取消", role: .cancel) { copyFrom = nil }
@@ -194,15 +195,13 @@ struct ThemeGalleryView: View {
         }
     }
 
+    /// 导入、编辑器、导出都在「美化」app 的美化库里（一个功能一个入口，网页版第 28 条第 3 项）：这里跳过去，
+    /// 从会话菜单进来时导入的那一份一并挂在这段会话上
     private var importSection: some View {
         Section {
-            Button { picking = true } label: { Label("从文件导入", systemImage: "doc") }
-            NavigationLink { SkinImportView(chatId: chatId ?? "") } label: { Label("粘贴导入", systemImage: "doc.on.clipboard") }
-            NavigationLink { SkinImportView(chatId: chatId ?? "", mode: .css) } label: {
-                Label("粘贴 CSS", systemImage: "chevron.left.forwardslash.chevron.right")
-            }
-        } header: { GroupTitle("导入") } footer: {
-            HelpNote("读取本应用导出的主题或美化包：JSON、TXT、DOCX 文件，或复制的一段文字（连同 BEGIN 与 END 两行标记）。也可以直接粘贴一段 CSS，作为一份只含自定义 CSS 的美化。导入后新建一份，不覆盖现有的主题；从会话菜单进来时一并挂在这段会话上。只认本应用自己的格式。", title: "导入主题与美化包")
+            NavigationLink { SkinLibraryView(chatId: chatId) } label: { IconRow(title: "导入与全部美化", icon: "download") }
+        } footer: {
+            HelpNote("导入美化包、粘贴 CSS 与全部美化的列表在「美化」应用中，这里进去的是同一页；从会话菜单进来时，导入的那一份一并挂在这段会话上。", title: "主题：导入与全部美化")
         }
     }
 

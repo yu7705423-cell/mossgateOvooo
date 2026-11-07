@@ -9,8 +9,8 @@ import UIKit
 struct EdgeBack: UIViewRepresentable {
     var close: () -> Void
 
-    /// 翻页的阅读页开着时为正：左缘右滑一律不退（用户定的：边缘滑动永远不离开阅读页，由页面上的返回键退出）
-    @MainActor static var blocked = 0
+    /// 正在拒绝左缘右滑的页面数（`RefuseEdgeBack`）。大于 0 时这里不关浮层、不回主屏
+    @MainActor static var refusals = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(close: close) }
 
@@ -59,7 +59,9 @@ struct EdgeBack: UIViewRepresentable {
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
         @objc func fire(_ g: UIScreenEdgePanGestureRecognizer) {
-            guard g.state == .ended, EdgeBack.blocked == 0, let w = g.view as? UIWindow else { return }
+            guard g.state == .ended, let w = g.view as? UIWindow else { return }
+            // 自己用左边缘的页面（美化预览放大之后）：一律不离开这一页（网页版 4.1024，用户定的「完全不退出」）
+            if EdgeBack.refusals > 0 { return }
             let t = g.translation(in: w), v = g.velocity(in: w)
             guard t.x > 60 || v.x > 600, abs(t.y) < max(80, t.x) else { return }
             // 打开的 app 是根上弹出来的第一层；再往上是 app 里弹出来的
@@ -79,6 +81,57 @@ struct EdgeBack: UIViewRepresentable {
             }
             if let t = vc as? UITabBarController, let s = t.selectedViewController { return depth(s) }
             return vc.children.map(depth).max() ?? 0
+        }
+    }
+}
+
+/// 这一块挂着时左缘右滑一律不离开这一页（网页版 4.1024 的 data-edge="off"）：系统的退一级手势停用，
+/// EdgeBack 也不关浮层、不回主屏。active 变假或这一块卸下时恢复
+struct RefuseEdgeBack: UIViewRepresentable {
+    var active: Bool
+
+    func makeUIView(context: Context) -> Probe { Probe() }
+
+    func updateUIView(_ v: Probe, context: Context) { v.set(active) }
+
+    static func dismantleUIView(_ v: Probe, coordinator: ()) { v.set(false) }
+
+    final class Probe: UIView {
+        private var on = false
+        private weak var nav: UINavigationController?
+
+        override init(frame: CGRect) {
+            super.init(frame: frame)
+            isUserInteractionEnabled = false
+        }
+
+        required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+        override func didMoveToWindow() {
+            super.didMoveToWindow()
+            if window == nil { set(false) } else if on { apply(true) }
+        }
+
+        @MainActor func set(_ v: Bool) {
+            guard v != on else { return }
+            on = v
+            EdgeBack.refusals = max(0, EdgeBack.refusals + (v ? 1 : -1))
+            apply(v)
+        }
+
+        private func apply(_ v: Bool) {
+            if nav == nil { nav = Self.findNav(from: self) }
+            nav?.interactivePopGestureRecognizer?.isEnabled = !v
+        }
+
+        /// 往上找最近的导航控制器（SwiftUI 的 NavigationStack 底下是它）
+        static func findNav(from view: UIView) -> UINavigationController? {
+            var r: UIResponder? = view
+            while let cur = r {
+                if let vc = cur as? UIViewController, let n = vc.navigationController ?? (vc as? UINavigationController) { return n }
+                r = cur.next
+            }
+            return nil
         }
     }
 }

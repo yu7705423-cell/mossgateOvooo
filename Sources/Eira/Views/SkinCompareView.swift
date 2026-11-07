@@ -407,7 +407,7 @@ struct SkinCompareView: View {
     @MainActor
     private func load() async {
         guard let row else { return }
-        let css = row.string("css")
+        let css = Skins.effectiveCss(row)
         guard !css.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         let remote = Skins.raster(row, current: false)?.remote ?? [:]
         if let hit = SkinCompareShot.cached(css: css, remote: remote, dark: dark) {

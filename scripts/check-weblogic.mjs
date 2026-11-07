@@ -4,6 +4,7 @@
 //   node scripts/check-weblogic.mjs            两个包都查（回复解析一定要有；提示词拼装有就查）
 //   node scripts/check-weblogic.mjs reply      只查回复解析：跑样本、核对几项、打印耗时
 //   node scripts/check-weblogic.mjs prompt     只查提示词拼装：拿 Tests/Fixtures/data.json 拼一次，核对几项、打印耗时
+//   node scripts/check-weblogic.mjs skin       只查美化生成器：包里编出来的 CSS 与网页版原文件编的（skingen-expected.json）逐字相同
 //   node scripts/check-weblogic.mjs --dump     另外把每条样本的结果、拼出来的提示词打印出来
 //   node scripts/check-weblogic.mjs prompt --raw <目录>   另拿那个目录里原样（没去注释）的 prompt.bundle.js 跑同一批样本，结果要逐字相同
 //
@@ -233,6 +234,44 @@ if ((which === 'all' || which === 'prompt') && fs.existsSync(promptBundle)) {
   const perFull = Number(process.hrtime.bigint() - t1) / 1e6 / n;
   const kb = (fs.statSync(promptBundle).size / 1024).toFixed(0);
   console.log(`提示词拼装：包 ${kb} KB，加载 ${loadMs.toFixed(0)} ms；data.json 拼 ${n} 次，常驻 ${per.toFixed(2)} ms/次，整表重灌 ${perFull.toFixed(2)} ms/次；网页版提交 ${vm.runInContext('__wl.commit', fresh.ctx)}`);
+}
+// ---- 美化生成器（docs/jscore-skin.md）：shims.js + skin-host.js + skin.bundle.js，另一个上下文
+const skinBundle = path.join(dir, 'skin.bundle.js');
+if (which === 'skin' && !fs.existsSync(skinBundle)) { console.error('没有 skin.bundle.js，先跑 sync-weblogic'); process.exit(1); }
+if ((which === 'all' || which === 'skin') && fs.existsSync(skinBundle)) {
+  const openSkin = (bundleDir = dir) => {
+    const sctx = vm.createContext({});
+    vm.runInContext('delete globalThis.console', sctx);
+    for (const [f, d] of [['shims.js', dir], ['skin-host.js', dir], ['skin.bundle.js', bundleDir]]) {
+      vm.runInContext(fs.readFileSync(path.join(d, f), 'utf8'), sctx, { filename: f });
+    }
+    return { ctx: sctx, S: vm.runInContext('weblogic.skin', sctx) };
+  };
+  const { ctx: sctx, S } = openSkin();
+  const { cases } = JSON.parse(fs.readFileSync(path.join(root, 'Tests/Fixtures/skingen-cases.json'), 'utf8'));
+  const expFile = path.join(root, 'Tests/Fixtures/skingen-expected.json');
+  const expected = fs.existsSync(expFile) ? JSON.parse(fs.readFileSync(expFile, 'utf8')).cases : null;
+  const groups = JSON.parse(S.groups());
+  check(groups.ok && groups.groups.length > 10, `groups：${groups.error || groups.groups?.length}`);
+  check(groups.ok && groups.groups.some(g => g.id === 'bubble' && g.items.some(it => it.id === 'bg' && it.type === 'color')), 'groups 里有气泡的底色');
+  let same = 0;
+  cases.forEach((c, i) => {
+    const r = JSON.parse(S.emit(JSON.stringify(c.gen)));
+    const st = JSON.parse(S.state(JSON.stringify(c.gen)));
+    check(r.ok, `${c.name}：emit 抛错 ${r.error}`);
+    check(st.ok, `${c.name}：state 抛错 ${st.error}`);
+    if (expected) { if (expected[i]?.css === r.css) same += 1; else check(false, `${c.name}：包里编出来的与网页版原文件编的不同`); }
+    if (dump) console.log(c.name, '=>', r.css);
+  });
+  const rawAt = process.argv.indexOf('--raw');
+  if (rawAt > 0) {
+    const { S: R } = openSkin(process.argv[rawAt + 1]);
+    for (const c of cases) check(S.emit(JSON.stringify(c.gen)) === R.emit(JSON.stringify(c.gen)), `${c.name}：去过注释的包与原样的包结果不同`);
+    check(S.groups() === R.groups(), 'groups：去过注释的包与原样的包不同');
+  }
+  const hits = vm.runInContext('__wl.stubHits.slice()', sctx);
+  check(hits.length === 0, `美化生成器调到了存根：${hits.join('、')}`);
+  console.log(`美化生成器：${cases.length} 个样本${expected ? `，与网页版原文件逐字相同 ${same} 个` : '（没有 skingen-expected.json，未对照）'}；${groups.groups.length} 组；网页版提交 ${vm.runInContext('__wl.commit', sctx)}`);
 }
 if (bad) { console.error(`${bad} 项不通过`); process.exit(1); }
 console.log('全部通过');

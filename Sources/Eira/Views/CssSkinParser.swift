@@ -1108,6 +1108,8 @@ struct CssCompiler {
     static func isRoot(_ c: Compound) -> Bool {
         !c.items.isEmpty && c.items.allSatisfy {
             ($0.kind == .pclass && $0.name == "root") || ($0.kind == .tag && ($0.name == "html" || $0.name == "body"))
+                // 美化里手写 CSS 之后又动过生成器（late）：生成器那一段前面加的一层（Skins.boost）。任何祖先都满足，只多一个 id 的特异度
+                || ($0.kind == .pclass && $0.name == "not" && $0.arg.map { CssScan.trim($0) } == "#skin-late")
         }
     }
 

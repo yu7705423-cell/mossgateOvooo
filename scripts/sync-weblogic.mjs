@@ -4,6 +4,7 @@
 //   node scripts/sync-weblogic.mjs <网页版仓库目录>            两个都打
 //   node scripts/sync-weblogic.mjs <网页版仓库目录> reply      只打回复解析
 //   node scripts/sync-weblogic.mjs <网页版仓库目录> prompt     只打提示词拼装
+//   node scripts/sync-weblogic.mjs <网页版仓库目录> skin       只打美化生成器（skin-gen.js：设置编成 CSS）
 //   --no-strip   不去注释与缩进（查问题时看原样的代码）
 //
 // 默认去掉注释与缩进（scripts/jsstrip.mjs，省一半以上的体积与加载时间）。去之前后各做一次语法检查，
@@ -112,6 +113,30 @@ const PROMPT = {
   expose: { 'src/system/ai/engine.js': ['scanTextOf', 'budgets'] },
 };
 
+// ---- 美化生成器（docs/jscore-skin.md）：skin-gen.js 把编辑器的设置编成一段 CSS，原生再交给 CssSkin.compile。
+// 纯函数、不碰库，白名单两个模块。宿主入口在 Resources/weblogic/skin-host.js 的 weblogic.skin
+
+const SKIN = {
+  name: 'skin',
+  file: 'skin.bundle.js',
+  entries: ['src/system/skin-gen.js'],
+  real: ['src/system/skin-gen.js', 'src/system/skin-paint.js'],
+  shimmed: [],
+  shimDeps: [],
+  dynamicOk: new Set(),
+  // 打包之前先用网页版的 skin-gen.js 直接（Node 里 import 原文件，不经打包）编一遍样本，写成 skingen-expected.json：
+  // check-weblogic 与 SkinGenTests 拿包里跑出来的逐字对照。只写编出来的 CSS（网页版代码的输出），不写代码
+  async before() {
+    const { pathToFileURL } = await import('node:url');
+    const m = await import(pathToFileURL(path.join(web, 'src/system/skin-gen.js')).href);
+    const { cases } = JSON.parse(fs.readFileSync(path.join(native, 'Tests/Fixtures/skingen-cases.json'), 'utf8'));
+    const out = { _note: '由 scripts/sync-weblogic.mjs skin 生成，不进仓库', commit: '', cases: cases.map(c => ({ name: c.name, css: m.emit(c.gen) })) };
+    try { out.commit = execFileSync('git', ['-C', web, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(); } catch {}
+    fs.writeFileSync(path.join(native, 'Tests/Fixtures/skingen-expected.json'), JSON.stringify(out, null, 1));
+    console.log(`已写 Tests/Fixtures/skingen-expected.json：${cases.length} 个样本`);
+  },
+};
+
 const fail = msg => { console.error(`sync-weblogic: ${msg}`); process.exit(1); };
 const rel = f => path.relative(web, f).split(path.sep).join('/');
 const read = id => fs.readFileSync(path.join(web, id), 'utf8');
@@ -160,6 +185,8 @@ function transform(id, src, target) {
   const getters = [];      // [导出名, 表达式]
   const star = [];         // export * from 的模块变量
   const lazy = target.dynamicOk === 'lazy';
+  // `export // 说明` 换行再写 `const …`（skin-gen.js 里有一处）：注释挪到 export 前面，声明照旧
+  src = src.replace(/^export[ \t]*(\/\/[^\n]*)\n(?=(?:const|let|var|function|class|async)\s)/gm, '$1\nexport ');
   if (/\bimport\.meta\b/.test(src)) {
     if (!lazy) fail(`${id}: 不支持 import.meta`);
     src = src.replace(/\bimport\.meta\b/g, `__wl.meta(${JSON.stringify(id)})`);
@@ -347,4 +374,8 @@ ${autoStubs.map(m => `//   ${m}`).join('\n')}
   console.log(`已生成 ${path.relative(native, file)}：${modules.size} 个模块，${autoStubs.length} 个存根，${fs.statSync(file).size} 字节，网页版 ${commit.slice(0, 10)}`);
 }
 
-for (const t of [REPLY, PROMPT]) if (only === 'all' || only === t.name) bundle(t);
+for (const t of [REPLY, PROMPT, SKIN]) {
+  if (only !== 'all' && only !== t.name) continue;
+  if (t.before) await t.before();
+  bundle(t);
+}

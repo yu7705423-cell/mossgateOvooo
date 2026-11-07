@@ -130,6 +130,7 @@ struct AppHost: View {
         case "todo": NavigationStack { TodoHomeView() }
         case "bill": NavigationStack { BillHomeView() }
         case "wallet": NavigationStack { WalletHomeView() }
+        case "skin": SkinAppView()
         case "sms": SmsAppView()
         case "us": UsAppView()
         case "theater": NavigationStack { TogetherHomeView() }
