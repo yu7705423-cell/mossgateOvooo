@@ -403,3 +403,66 @@ personas：`isolate {moments, friends, wallet, album}`（4.960、4.961）：wall
 
 证件：`characters.idCard`、`personas.idCard`：`{kind work/student/other, org, title, no, dept}`，四项都空的不算有。不进提示词。
 能力 joint 是基线；funcard、pass、ticket、member 是新功能（featureOpt，app 'wallet'，第一次打开卡包时问）。
+
+## 16. smsThreads 与号码（短信，`sms.js`、`phonenum.js`，ARCHITECTURE 4.307、4.392）
+
+原生版读写经 `Prompt/Sms.swift`（Sms、PhoneNum）。短信不进 chats：线程另存一域，消息仍在 messages 里，chatId 是线程 id。
+
+smsThreads（id 前缀 `sms`，没有查询字段）：
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| personaId | 当前身份 | 这一段属于哪个身份。空着的按当前身份算 |
+| mine / theirs | | 你的号码 / 对面的号码。比较时只看数字（写法不同的同一个号码算同一个） |
+| charId | 号码的主人（本体） | 由谁来回。借号发来的仍是借号的那个角色；空着是没人用的号码，不会有回复 |
+| characterIds | [charId] | 给引擎当会话用的那一份 |
+| via | '' | 借了哪个 NPC 的号码（NPC 的角色 id） |
+| confirmed / confirmedAt | false / | 你表明过身份。只对这一段有效 |
+| guess / guessAt / guessTurn | '' | 角色写 [认出：名字] 时猜的是谁（最多 40 字），界面上问一句；重新生成那一轮撤回 |
+| failures | [] | 被拦截时记的那几笔 `[{at}]`，最多留 5 笔 |
+| lastMessageAt / unread | | |
+| summary、memoryUpTo… | | 记忆整理用，同会话 |
+
+messages 里短信多两个字段：`intercepted`（被拦截的号码发来的，只在「已拦截」里看得见，不进提示词）、`fromChat`（角色在哪一段会话的回复里写的
+[发短信]，重新生成那一轮按它与 turnId 撤回）。
+
+characters：`phoneNumber`（本体一个，小号用本体的；第一次用到时按 timezone 生成并存下）。
+personas：`phones`（你的号码，第一个自动生成）、`phoneSaved`（`{ 号码的数字: [角色 id（本体）] }`，存过就等同于表明身份）、`smsBlocked`（拦截的号码）。
+
+能力 smssend、smsid 与区块 sms 都是基线。标记 `[发短信：号码|内容]`、`[借号发短信：名字|号码|内容]`、`[认出：名字]` 与网页版一字不差。
+
+## 17. works 与 chapters（「我们」，`work.js`、`novel.js`，ARCHITECTURE 4.117、4.263、4.264、4.283、4.396）
+
+原生版读写经 `Prompt/Works.swift` 与 `Prompt/Novel.swift`。每一篇的正文就是 beats 里 sceneId 为这一篇 id 的那几行（与线下同一套字段）。
+
+works（id 前缀 `wk`，按 chatId 查）：
+
+| 字段 | 缺省 | 说明 |
+|---|---|---|
+| chatId | '' | 挂的会话。番外一定有；长篇可以不挂（直接选人物） |
+| kind | extra | saga（长篇）/ extra（番外） |
+| title、premise | '' | 标题；长篇的主线或简介、番外的设定 |
+| castIds | 会话的成员 | 第一个是写正文的那个角色 |
+| charAs / meAs | `{name:'', persona:''}` | 这部作品里的身份，留空沿用角色卡与账号资料 |
+| carry | 番外 true；长篇按建时的选择，没挂会话的一律 false | 带不带原来那段关系 |
+| carryChat / carryMemory / carryOther | false / true / false（没设过的按这个读） | 带上原来那段关系时另外带哪几样 |
+| solo | false | 整篇由它写 |
+| endNext | 没有（即 false） | 结尾给出后续走向（反馈 10） |
+| opening | char | 新的一篇由谁开场 |
+| tones / toneText | [] / '' | 文风，同线下 |
+| cover | null | 封面图 id |
+| genres / length / inspiration / secret | [] / null / '' / '' | 长篇向导：体裁标签、篇幅 `{chapters, perChapter}`、灵感、作者私纲 |
+| outline | null | 大纲 `{mode visible/hidden/none, master {mainline, subline, ending, twists[], arcs[]}, volumes [{no, title, goal, from, to, reveal}], chapters {卷号: [{no, title, line}]}, revealed none/written/all, drift, madeAt}` |
+| lorebookIds | [] | 这部作品自己挂的世界书 |
+| words、apiId、withTrans、stage | | 篇幅、正文用的接口、附带译文、这一部单独的外观 |
+| state、fromScene | writing / | |
+
+chapters（id 前缀 `cp`，按 workId 查）：`workId, no（编号）, title, place, at, note, opening, plan（选定的走向）, planFrom（'end' 是上一篇末尾选的）,
+fromChapterId, summary（收篇摘要）, endedAt, stage, openedAt（自动开场过的时刻，写之前记）, endNext {beatId, ver, items[], picked}`。
+
+settings：`workToneLast`、`workSummary`（收篇摘要，默认关，登记在 ExtraCalls）、`workPrevChars`（600）、`novelTags`、`novelBranchCount`（3）、
+`synopsisMin` / `synopsisMax`（400 / 800）、`snipLen`（0 为全文）、`taskRoutes.work`（长篇与番外的正文，没选时跟着 `taskRoutes.scene`）。
+
+照网页版原样的一处：不带原来那段关系时，作品自己挂的世界书只注入 `skeleton.world` 那一段抬头，条目正文没有拼进去（网页版 engine.js
+buildWorkSystem 把正文当作模板变量 text 传进去，而那份模板里没有 `{{text}}`）。原生版照搬，等网页版改了再跟。
+

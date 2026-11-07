@@ -131,6 +131,8 @@ struct AppHost: View {
         case "bill": NavigationStack { BillHomeView() }
         case "wallet": NavigationStack { WalletHomeView() }
         case "skin": SkinAppView()
+        case "sms": SmsAppView()
+        case "us": UsAppView()
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }
