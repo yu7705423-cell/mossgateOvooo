@@ -4,7 +4,7 @@ import Foundation
 ///
 /// 格子多了一屏放不下，分两层：常用的留在面板上，其余收进「更多」。哪些留在面板上、按什么顺序由用户自己定，代码只给默认。
 /// 顺序（settings.panelOrder）与「在不在更多里」（settings.panelMore）分开存，和网页版同两个键：挪进挪出都不动顺序。
-/// 原生版还没有的格子（一起看、生成视频……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
+/// 原生版还没有的格子（一起玩、生成视频……）不列；网页版存下的顺序里有它们也不碍事，读的时候跳过。
 enum Panel {
     struct Item: Identifiable, Equatable {
         let id: String
@@ -25,6 +25,8 @@ enum Panel {
         Item(id: "location", icon: "map", label: "位置"),
         Item(id: "listen", icon: "headphone", label: "一起听"),
         Item(id: "song", icon: "music", label: "分享音乐"),
+        // 一起看（网页版 4.102）：点了进这段会话的一起看，挑一部片开场
+        Item(id: "watch", icon: "film", label: "一起看"),
         Item(id: "takeout", icon: "bag", label: "外卖"),
         // 情侣账户与亲属卡的申请（网页版 4.278）：这段对话要先关联账本
         Item(id: "request", icon: "users", label: "申请"),

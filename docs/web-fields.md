@@ -401,3 +401,31 @@ personas：`isolate {moments, friends, wallet, album}`（4.960、4.961）：wall
 
 证件：`characters.idCard`、`personas.idCard`：`{kind work/student/other, org, title, no, dept}`，四项都空的不算有。不进提示词。
 能力 joint 是基线；funcard、pass、ticket、member 是新功能（featureOpt，app 'wallet'，第一次打开卡包时问）。
+
+## 16. 一起看与一起读（`video.js`、`watch.js`、`book.js`、`read.js`、`review.js`、`paracomment.js`、`readahead.js`、`shelf.js`、`bili.js`，4.102、4.883、4.932、4.1056）
+
+videos（前缀 `vid`）：`title, url（地址，B 站的为空）, fileId（files 域里的视频，没有为 null）, bili {bvid, cid, part}（B 站的一部，播放地址开播时现取）,
+subtitle（字幕原文，SRT / ASS / VTT）, seconds, offset（字幕整体偏移，秒，读出来时才加，夹在 ±60）, outline [{from, to, text}]（秒）, outlineAt, crew（同看名单，角色 id）`。
+换了字幕 outline 清空。
+
+ebooks（前缀 `ebk`）：`title, author, kind（txt / epub）, fileId（正文另存成 files 域里的 txt）, cover（图片 id 或 null）, chars, chapters [{title, start, end}],
+at（读到第几个字）, lastAt, readAhead {charId, at, runs, always}（让角色先读，没有为 null）, crew`。**字数、位置一律按 UTF-16 计**（JS 字符串的长度）。
+
+reviews（前缀 `rev`）：`kind（video / book）, subjectId, charId, at, title, text`。每写一篇存一篇。
+
+readnotes（前缀 `rn`）：`subject（book:id / video:id；早先的只有 bookId）, bookId 或 videoId, at（书是段落在全书正文里的起点，影片是那一句台词的开始秒）,
+kind（char / reader / me）, authorId, authorName, text, textTrans`。
+
+characters：`shelf [{id（shf）, title, author, coverUrl, cover, note, bookId（接上的真书，占位为 null）, impression, impressionTrans, impressionAt}]`、`watchedBefore`（这部片它看过）。
+
+chats：`watchSeconds, watchCount`（一起看累积）、`watchHow`（online / face）、`watchReply`（auto / manual）、`readHow`、`readReply`。
+
+messages：kind `notice` 的「[开始一起看《片名》]」；kind `watch`：`seconds, videoId, at`，content `[一起看了 N 分钟]\n片名　看到 m:ss`；
+kind `read`：`bookId, at, pages`，content `[一起读了 N 页]\n《书名》　读到 P%　章名`；kind `excerpt`：`bookId, bookTitle, bookAuthor, quote, note, at`，
+content `[书摘：《书名》]\n「摘录」\n留言`。
+
+settings：`watchGap`（网页版默认 90；原生版没填按 0，即默认不自己开口）、`watchLines`（8）、`readGap`（网页版默认 1；原生版没填按 0）、`readChars`（900）、
+`watchAwayEnd`（15）、`watchRotate`（90 / -90 / 0）、`watchDanmaku`（true）、`injectChars`（6000）、`injectMaxRuns`（3）、`crowdSeparate`（false）、`crowdCount`（6）、
+`reviewAuto`（false）、`reader {effect, fullscreen, paper, bgColor, bgImage, textColor, fontSize, lineHeight, fontUrl, fontFamily, tapTurn}`、
+`services.bili {cookie, buvid3, wbi {img, sub, at}, nick, mid}`（cookie 是账号权限，只在本机）。
+能力 watch 与区块 watch 都是基线，不经新功能。

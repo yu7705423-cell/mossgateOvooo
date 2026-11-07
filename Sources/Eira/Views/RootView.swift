@@ -130,6 +130,7 @@ struct AppHost: View {
         case "todo": NavigationStack { TodoHomeView() }
         case "bill": NavigationStack { BillHomeView() }
         case "wallet": NavigationStack { WalletHomeView() }
+        case "theater": NavigationStack { TogetherHomeView() }
         default: UnsupportedAppView(name: Shell.app(appId)?.name ?? appId)
         }
     }

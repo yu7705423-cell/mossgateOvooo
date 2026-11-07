@@ -55,6 +55,7 @@ struct ConversationView: View {
     @State private var dicing = false
     /// 加号面板的分享音乐、发文件
     @State private var songPicking = false
+    @State private var watching = false
     @State private var filePicking = false
     @State private var typingPhoto = false
     @State private var bindingSticker: Message?
@@ -601,6 +602,8 @@ struct ConversationView: View {
         .sheet(isPresented: $songPicking) {
             NavigationStack { SongPickView(chatId: chatId) { songPicking = false; reload() } }
         }
+        // 一起看（网页版 4.102）：选片页与放映页，整页打开
+        .fullScreenCover(isPresented: $watching, onDismiss: reload) { WatchEntryView(chatId: chatId) }
         .documentPicker(isPresented: $filePicking, types: ChatFiles.exts.compactMap { UTType(filenameExtension: $0) }) { urls in
             guard let url = urls.first else { return }
             do { try ChatFiles.send(url, chatId: chatId); reload() }
@@ -1038,6 +1041,7 @@ struct ConversationView: View {
         case "voice": panelButton("mic", "语音") { recordingVoice = true }
         case "dice": panelButton("grid", "骰子") { dicing = true }
         case "song": panelButton("music", "分享音乐") { songPicking = true }
+        case "watch": panelButton("film", "一起看") { watching = true }
         case "offline": panelButton("book", "线下") { if chat?.isGroup == true { showScenes = true } else { choosingOffline = true } }
         case "lore": panelButton("book", "世界书") { showLore = true }
         case "listen":

@@ -52,6 +52,8 @@ enum ReplyParser {
         case request, vote
         // 卡包（网页版 4.611、4.643、4.644）：娱乐卡的送、用、同意；门禁卡的给、刷、收回与恢复；票券的送与检；会员卡的开与消费。字段在 info 里
         case funGive, funUse, funVote, passGive, passAct, ticketGive, ticketCheck, memberOpen, memberVisit
+        // 一起看（网页版 reply.js 的 playback）：text 是 pause / resume / seek，倒回时 extra 是写的时刻
+        case playback
     }
 
     struct Part: Equatable, Sendable {
@@ -113,10 +115,11 @@ enum ReplyParser {
     // 从前原样变成一条文字（网页版 reply.js 里各自是一件事，不占气泡）
     // 「来电」是用户那边收到的结果。两个词都认，免得模型偶尔写回旧的那个
     static let ringLine = lineMark("(视频)?(?:去电|来电|打电话|拨打|通话|call)")
+    // 一起看时动播放器（网页版 PAUSE_LINE、RESUME_LINE、REWIND_LINE）
+    static let pauseLine = regex(#"^[\[【(（]\s*(?:暂停|暂停一下)\s*[\]】)）]$"#, [])
+    static let resumeLine = regex(#"^[\[【(（]\s*(?:继续|继续播放|接着看)\s*[\]】)）]$"#, [])
+    static let rewindLine = regex(#"^[\[【(（]\s*(?:倒回|回到|快进)\s*[:：]\s*([\d:：.]+)\s*[\]】)）]$"#, [])
     private static let unsupportedLines: [NSRegularExpression] = [
-        regex(#"^[\[【(（]\s*(?:暂停|暂停一下)\s*[\]】)）]$"#, []),
-        regex(#"^[\[【(（]\s*(?:继续|继续播放|接着看)\s*[\]】)）]$"#, []),
-        regex(#"^[\[【(（]\s*(?:倒回|回到|快进)\s*[:：]\s*([\d:：.]+)\s*[\]】)）]$"#, []),
         regex(#"^[\[【(（]\s*(?:同行|一起去|去)\s*[\]】)）]$"#, []),
         regex(#"^[\[【(（]\s*(?:不去|去不了|算了)\s*[\]】)）]$"#, []),
         lineMark("开设情侣账户|开情侣账户|开通情侣账户|开通共同账户|开共同账户"),
@@ -707,6 +710,15 @@ enum ReplyParser {
                 return
             }
             if ReplyParser.matches(ReplyParser.partLine, t) { push(Part(type: .part, text: "")); return }
+            // 一起看时动播放器。同样是一件事，不占气泡
+            if ReplyParser.matches(ReplyParser.pauseLine, t) { push(Part(type: .playback, text: "pause")); return }
+            if ReplyParser.matches(ReplyParser.resumeLine, t) { push(Part(type: .playback, text: "resume")); return }
+            if let m = ReplyParser.match(ReplyParser.rewindLine, t) {
+                var p = Part(type: .playback, text: "seek")
+                p.extra = m.count > 1 ? m[1] : ""
+                push(p)
+                return
+            }
             if let m = ReplyParser.match(ReplyParser.settleLine, t) {
                 var p = Part(type: .settle, text: "")
                 p.flag = !m[1].contains("退")

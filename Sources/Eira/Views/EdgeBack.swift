@@ -9,6 +9,9 @@ import UIKit
 struct EdgeBack: UIViewRepresentable {
     var close: () -> Void
 
+    /// 翻页的阅读页开着时为正：左缘右滑一律不退（用户定的：边缘滑动永远不离开阅读页，由页面上的返回键退出）
+    @MainActor static var blocked = 0
+
     func makeCoordinator() -> Coordinator { Coordinator(close: close) }
 
     func makeUIView(context: Context) -> Probe {
@@ -56,7 +59,7 @@ struct EdgeBack: UIViewRepresentable {
         func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
         @objc func fire(_ g: UIScreenEdgePanGestureRecognizer) {
-            guard g.state == .ended, let w = g.view as? UIWindow else { return }
+            guard g.state == .ended, EdgeBack.blocked == 0, let w = g.view as? UIWindow else { return }
             let t = g.translation(in: w), v = g.velocity(in: w)
             guard t.x > 60 || v.x > 600, abs(t.y) < max(80, t.x) else { return }
             // 打开的 app 是根上弹出来的第一层；再往上是 app 里弹出来的

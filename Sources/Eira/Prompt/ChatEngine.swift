@@ -513,6 +513,10 @@ enum ChatEngine {
             return Interact.pat(chatId: chat.id, role: .char, turnId: turnId)
         case .listen, .pick, .newlist:
             return try MusicListen.effect(p, chat: chat, char: char, turnId: turnId)
+        case .playback:
+            // 一起看：暂停、继续、倒回。不落消息，动的是播放器；这一场没开着就当没说过（网页版 reply.js 的 playback）
+            Watch.playback(Watch.Act(rawValue: p.text) ?? .pause, to: p.extra ?? "", chatId: chat.id)
+            return nil
         case .dm:
             // 群里的成员单独发给你的一句：落进他与你的私聊（没有就建一段），群里不显示。
             // 私聊里写了这个标记就当普通的一句；群里关了「成员可以给你发私信」就不落（网页版 reply.js 的 dm）
@@ -728,7 +732,7 @@ enum ChatEngine {
         case .mute, .unmute, .muteAll, .nick, .redpacket, .rpclaim, .leave, .selfnick, .meet, .part:
             return nil
         case .silence, .settle, .unwrap, .pat, .react, .remark, .wear, .meal, .agenda, .listen, .pick, .newlist, .dm, .recallPost, .tie, .pact, .pactDone, .letter, .lockcode, .keep, .ring, .draft, .todo, .shot, .sendshot,
-             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit:
+             .request, .vote, .funGive, .funUse, .funVote, .passGive, .passAct, .ticketGive, .ticketCheck, .memberOpen, .memberVisit, .playback:
             return nil
         }
         if let t = p.translation, !t.isEmpty, t != p.text { m.row["translation"] = .string(t) }

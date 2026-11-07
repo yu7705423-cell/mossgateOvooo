@@ -168,6 +168,8 @@ enum ChatPrompt {
             "plan": one("plan") { Todo.planBlock(userName: me?.name ?? "", settings: s, now: now) },
             // 你的钱（网页版 context/bill.js）：这段对话绑了账本、账本开着「把余额告诉角色」才有。数字本地按流水折好
             "bill": one("bill") { Ledger.block(chat, now: now) },
+            // 正在一起看 / 一起读（网页版 context/watch.js）：只在这段会话正开着那一场时有
+            "watch": one("watch") { Watch.block(chatId: chat.id, settings: s) },
         ]
         // 本轮相关记忆：深度 0 时留在设定区，否则贴着对话末尾（固定在聊天记录下面，不参与排序）
         if memoryDepth == 0 && !recalled.isEmpty { blocks["memory"] = recallText(recalled, now: now) }
@@ -594,11 +596,11 @@ enum ChatPrompt {
     /// 群聊里说得通的那几样（网页版 GROUP_CAPS）。转账、礼物这些是「你和我」之间的事，群里没有一个对象可以接。
     /// 拼进提示词的区块 id（RuleFixTests 核对它们都登记过）
     static let blockIds = ["lorebook", "bond", "state", "character", "loreAfter", "user", "impress", "pinned", "time", "recent", "geo", "badges",
-                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill"]
+                           "dates", "diary", "day", "music", "moments", "ties", "memory", "space", "health", "plan", "bill", "watch"]
     /// 拼进提示词的能力 id（RuleFixTests 核对它们都登记过）
     static let capIds = ["image", "voice", "ties", "listen", "ring", "todo", "drafts", "agenda", "pact", "sticker", "keepphoto", "quote", "transfer", "gift", "location", "takeout",
                          "lockcode", "pat", "dice", "avatar", "remark", "react", "silence", "recall", "card", "award", "groupnick", "groupadmin", "dm", "narration", "time", "translate",
-                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member"]
+                         "grouppay", "groupleave", "selfnick", "charshot", "theater", "mcp", "meet", "joint", "funcard", "pass", "ticket", "member", "watch"]
     static let protocolCaps: Set<String> = ["time", "translate"]
     static let ownSwitchCaps: Set<String> = ["narration", "inner", "dm", "alt", "drafts"]
 
@@ -829,6 +831,8 @@ enum ChatPrompt {
             line: "Give them a badge: write a line on its own, [授予：badge name｜reason]") {
             Templates.get("skeleton.award", settings: s)
         }
+        // 一起看（网页版 capabilities.js 的 watch）：这段会话正在一起看才有，没开的时候一个字都不提
+        cap("watch", on: Watch.inChat(chat.id), hot: true, line: nil) { Templates.get("skeleton.watch", settings: s) }
         // HTML 卡片（网页版 capabilities.js 的 card）：世界书里的卡片条目，常驻的或这一轮扫到关键词的才有，有就给整段
         let cardHits = phase("caps.cards") { HtmlCard.hits(for: char, scanText: scanTextOf(msgs, window: Int(s.num("scanWindow", 6))), s) }
         cap("card", on: !cardHits.isEmpty, hot: true, line: nil) {

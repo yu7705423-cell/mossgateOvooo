@@ -111,6 +111,20 @@ enum ExtraCalls {
                       let n = McpTools.followMax(s)
                       return "角色调用的工具有了结果之后一次（走主用接口）；" + (n > 0 ? "你每发一条消息，最多接着回复 \(n) 次" : "不限次数")
                   }),
+        // 一起看与一起读（网页版 watch.js、read.js、review.js、readahead.js）。开关都在「一起看 - 设置」
+        ExtraCall(id: "watchAuto", label: "一起看时角色自行开口",
+                  isOn: { ($0.raw["watchGap"]?.number ?? 0) > 0 },
+                  when: { s in "一起看播放中，距角色上次开口满 \(Int(Watch.gapOf(s))) 秒时一次（对手戏正密时等到两倍）；失败后也要再等一个间隔（走主用接口）" }),
+        ExtraCall(id: "readAuto", label: "一起读时翻页后角色自行开口",
+                  isOn: { ($0.raw["readGap"]?.number ?? 0) > 0 },
+                  when: { s in "一起读时，距角色上次开口翻过 \(ReadTogether.gapOf(s)) 页时一次；失败后要再翻够页数才再试（走主用接口）" }),
+        ExtraCall(id: "reviewAuto", label: "看完自动写一篇评",
+                  isOn: { Reviews.autoOn($0) },
+                  when: { _ in "一起看或一起读收场时，各多写一篇（走副用接口）" }),
+        // 挂在书上（让角色先读的弹窗里选了「一直继续」），不是全局设置
+        ExtraCall(id: "readAheadAuto", label: "让角色先读：自动续读",
+                  isOn: { s in ReadAhead.maxRuns(s) > 0 && Books.all().contains { $0.row["readAhead"]?["always"]?.bool == true } },
+                  when: { s in "选了「一直继续」的书，你追上角色读到的位置时自动再读一段，每段一次，最多连续 \(ReadAhead.maxRuns(s)) 次（走副用接口）" }),
         ExtraCall(id: "retryMax", label: "自动重试",
                   isOn: { $0.retryMax > 0 },
                   when: { s in "接口返回 429 或 5xx 时，最多再试 \(s.retryMax) 次" }),

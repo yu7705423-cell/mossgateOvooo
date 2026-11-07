@@ -202,6 +202,7 @@ final class WebLogic: @unchecked Sendable {
                 p.bad = nonEmpty(s("bad"))
             case "meet": p = .init(type: .meet, text: str("place"))
             case "part": p = .init(type: .part, text: "")
+            case "playback": p = .init(type: .playback, text: str("act")); p.extra = s("to")
             case "request": p = .init(type: .request, text: str("note")); p.amount = num("amount"); p.extra = s("kind")
             case "vote": p = .init(type: .vote, text: ""); p.flag = bool("ok")
             case "funcard-give":
