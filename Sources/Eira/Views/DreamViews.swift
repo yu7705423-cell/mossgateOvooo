@@ -194,7 +194,7 @@ struct DreamReadView: View {
             Section {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("醒来时：\(Dream.recallLabel(level))")
-                    let lines = [
+                    let lines: [String] = [
                         Dream.recallLabel(now.level) != Dream.recallLabel(level) ? "此刻：\(Dream.recallLabel(now.level))（随时间变淡）" : "",
                         level == "full" ? d.string("recall") : "",
                         level == "fragment" ? d.strings("kept").map { "· \($0)" }.joined(separator: "\n") : "",

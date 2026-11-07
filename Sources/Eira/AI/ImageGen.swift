@@ -84,7 +84,7 @@ extension AppSettings {
 ///
 /// 一个 `[图片：…]` 一次请求，是角色发图这件事本身的花法；失败不重试、不换接口，记在那条消息上，由用户点「重新生成」。
 /// 「生图前翻译」那一档每张含中文的图在生成之前多一次文字请求，默认关，登记在 ExtraCalls。
-/// 锁脸（参考图、读脸）、生图世界书、衣帽间原生版还没有，提示词里只拼画面描述、点名角色的外貌、角色与全局的固定提示词、画风预设。
+/// 提示词里拼画面描述、生图世界书、点名角色的外貌、今天穿的（衣帽间，默认关）、角色与全局的固定提示词、画风预设。
 enum ImageGen {
     // MARK: - 尺寸
 
@@ -185,6 +185,8 @@ enum ImageGen {
                 raw.append(("「\(name)」的外貌", "\(name.isEmpty ? "The other person" : name): \(l)"))
             }
         }
+        // 画面里有谁就带上谁今天穿的（衣帽间设置里开，默认关；只传文字，衣物照片不当参考图，4.215）
+        raw += ClosetAI.wearParts(text, char: char, me: me, settings: s)
         let own = char?.row.string("imagePrompt").trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !own.isEmpty { raw.append(("这个角色的固定提示词", own)) }
         for st in stylesOn(s) {
