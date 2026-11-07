@@ -896,7 +896,7 @@ struct ParaPageView: View {
                     .swipeActions { Button("删除", role: .destructive) { dropping = n } }
                 }
             }
-            Section("评价者") {
+            Section {
                 Button {
                     if crew.isEmpty { crewing = true } else {
                         let ids = crew.map(\.id)
@@ -912,7 +912,7 @@ struct ParaPageView: View {
                 .buttonStyle(.plain).disabled(!busy.isEmpty)
                 Button { writing = true } label: { TogetherRow(icon: "edit", title: "自己写一条", sub: "写下你自己的想法，不调用接口") }.buttonStyle(.plain)
                 Button { crewing = true } label: { TogetherRow(icon: "settings", title: "共读名单", sub: crewCount) }.buttonStyle(.plain)
-            } footer: { HelpNote("随机评论的读者不会存入联系人", title: "段评") }
+            } header: { Text("评价者") } footer: { HelpNote("随机评论的读者不会存入联系人", title: "段评") }
         }
         .navigationTitle(isVideo ? Subtitle.stamp(Double(at)) : "这一段")
         .navigationBarTitleDisplayMode(.inline)
